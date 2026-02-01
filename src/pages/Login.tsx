@@ -126,7 +126,7 @@ export default function Login() {
 
         {/* Footer */}
         <p className="text-center text-xs text-muted-foreground mt-6">
-          © 2024 ViolationLedger. All rights reserved.
+          © 2026 ViolationLedger. All rights reserved.
         </p>
       </div>
     </div>
