@@ -11,7 +11,7 @@ router.use(auditLog);
 router.get('/', requireRole('admin'), (req, res) => {
   try {
     const users = db.prepare(`
-      SELECT id, email, name, role, createdAt 
+      SELECT id, email, name, role, viberNumber, createdAt 
       FROM users 
       ORDER BY createdAt DESC
     `).all();
@@ -26,7 +26,7 @@ router.get('/', requireRole('admin'), (req, res) => {
 router.get('/:id', requireRole('admin'), (req, res) => {
   try {
     const user = db.prepare(`
-      SELECT id, email, name, role, createdAt 
+      SELECT id, email, name, role, viberNumber, createdAt 
       FROM users 
       WHERE id = ?
     `).get(req.params.id);
@@ -44,7 +44,7 @@ router.get('/:id', requireRole('admin'), (req, res) => {
 
 router.post('/', requireRole('admin'), (req, res) => {
   try {
-    const { email, password, name, role } = req.body;
+    const { email, password, name, role, viberNumber } = req.body;
     
     if (!email || !password) {
       return res.status(400).json({ error: 'Email and password are required' });
@@ -53,6 +53,10 @@ router.post('/', requireRole('admin'), (req, res) => {
     // Allow admin to create encoder or barangay_user (never admin via UI)
     const allowedRoles = ['encoder', 'barangay_user'];
     const userRole = role && allowedRoles.includes(role) ? role : 'encoder';
+    
+    if (userRole === 'barangay_user' && (!viberNumber || !String(viberNumber).trim())) {
+      return res.status(400).json({ error: 'Viber number is required for Barangay users (used for notifications when plate is not visible)' });
+    }
     
     // Check if email already exists
     const existingUser = db.prepare('SELECT id FROM users WHERE email = ?').get(email.toLowerCase().trim());
@@ -67,16 +71,18 @@ router.post('/', requireRole('admin'), (req, res) => {
     const userId = `USER-${Date.now()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
     const now = new Date().toISOString();
     
-    // Insert user into database
+    // Insert user into database (viberNumber for barangay_user only)
+    const userViber = userRole === 'barangay_user' && viberNumber ? String(viberNumber).trim() : null;
     db.prepare(`
-      INSERT INTO users (id, email, password, name, role, createdAt)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO users (id, email, password, name, role, viberNumber, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(
       userId,
       email.toLowerCase().trim(),
       passwordHash,
       name || email.split('@')[0],
       userRole,
+      userViber,
       now
     );
     
@@ -88,7 +94,7 @@ router.post('/', requireRole('admin'), (req, res) => {
     
     // Return user without password
     const newUser = db.prepare(`
-      SELECT id, email, name, role, createdAt 
+      SELECT id, email, name, role, viberNumber, createdAt 
       FROM users 
       WHERE id = ?
     `).get(userId);
@@ -102,13 +108,21 @@ router.post('/', requireRole('admin'), (req, res) => {
 
 router.put('/:id', requireRole('admin'), (req, res) => {
   try {
-    const { email, password, name, role } = req.body;
+    const { email, password, name, role, viberNumber } = req.body;
     const userId = req.params.id;
     
     // Check if user exists
     const existingUser = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
     if (!existingUser) {
       return res.status(404).json({ error: 'User not found' });
+    }
+    
+    // Barangay users must have viberNumber
+    if (existingUser.role === 'barangay_user') {
+      const newViber = viberNumber !== undefined ? String(viberNumber).trim() : existingUser.viberNumber;
+      if (!newViber) {
+        return res.status(400).json({ error: 'Viber number is required for Barangay users (used for notifications when plate is not visible)' });
+      }
     }
     
     // Only allow updating to encoder role - no role changes to admin/barangay_user
@@ -139,6 +153,11 @@ router.put('/:id', requireRole('admin'), (req, res) => {
       values.push(name || null);
     }
     
+    if (viberNumber !== undefined) {
+      updates.push('viberNumber = ?');
+      values.push(String(viberNumber).trim() || null);
+    }
+    
     if (role === 'encoder') {
       updates.push('role = ?');
       values.push('encoder');
@@ -164,7 +183,7 @@ router.put('/:id', requireRole('admin'), (req, res) => {
     
     // Return updated user
     const updatedUser = db.prepare(`
-      SELECT id, email, name, role, createdAt 
+      SELECT id, email, name, role, viberNumber, createdAt 
       FROM users 
       WHERE id = ?
     `).get(userId);

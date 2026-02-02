@@ -7,6 +7,7 @@ import { existsSync } from 'fs';
 import { analyzeImageWithAI, processDetectionResults } from '../ai_detection_service.js';
 import { createViolationFromDetection } from './violations.js';
 import { shouldCreateNotification } from './notifications.js';
+import { sendViberMessage } from '../utils/viberService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -331,6 +332,24 @@ router.post('/analyze', async (req, res) => {
               console.log(`🔔 Notification ALWAYS sent to authorities: ${notificationId} - ${plateStatusText}`);
             } catch (notifError) {
               console.error(`Failed to create notification:`, notifError);
+            }
+            // Send Viber to barangay users (when no plate visible - notification goes to their Viber number)
+            try {
+              const barangayUsers = db.prepare(`
+                SELECT id, viberNumber FROM users WHERE role = 'barangay_user' AND viberNumber IS NOT NULL AND viberNumber != ''
+              `).all();
+              for (const u of barangayUsers) {
+                if (u.viberNumber) {
+                  const viberResult = await sendViberMessage(u.viberNumber, plateMessage);
+                  if (viberResult.success) {
+                    console.log(`✅ Viber sent to Barangay user ${u.id} (plate not visible)`);
+                  } else {
+                    console.warn(`⚠️ Viber not sent to Barangay user ${u.id}: ${viberResult.error}`);
+                  }
+                }
+              }
+            } catch (viberErr) {
+              console.error(`Failed to send Viber to Barangay users:`, viberErr);
             }
           } else {
             console.error(`❌ No user found - cannot send notification to authorities`);

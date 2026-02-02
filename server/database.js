@@ -324,6 +324,16 @@ async function initDatabase() {
     // Ignore errors
   }
   
+  // Migrate users table to add viberNumber (for barangay_user - used when plate not visible)
+  try {
+    db.run('ALTER TABLE users ADD COLUMN viberNumber TEXT');
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: viberNumber column migration:', errorMsg);
+    }
+  }
+  
   // Seed Barangay user if it doesn't exist (will be done after crypto import)
   // This is handled in a separate function after database initialization
   

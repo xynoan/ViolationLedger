@@ -281,9 +281,9 @@ export const analyticsAPI = {
 export const usersAPI = {
   getAll: () => fetchAPI('/users', { cache: false }),
   getById: (id: string) => fetchAPI(`/users/${id}`, { cache: false }),
-  create: (data: { email: string; password: string; name?: string; role?: string }) =>
+  create: (data: { email: string; password: string; name?: string; role?: string; viberNumber?: string }) =>
     fetchAPI('/users', { method: 'POST', body: JSON.stringify(data) }),
-  update: (id: string, data: { email?: string; password?: string; name?: string; role?: string }) =>
+  update: (id: string, data: { email?: string; password?: string; name?: string; role?: string; viberNumber?: string }) =>
     fetchAPI(`/users/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   delete: (id: string) => fetchAPI(`/users/${id}`, { method: 'DELETE' }),
 };
