@@ -1,5 +1,6 @@
 import db from '../database.js';
 import { normalizePhoneNumber } from './phoneUtils.js';
+import { GRACE_PERIOD_MINUTES } from '../routes/violations.js';
 
 const INFOBIP_BASE_URL = process.env.INFOBIP_BASE_URL || 'api.infobip.com';
 const INFOBIP_API_KEY = process.env.INFOBIP_API_KEY || '4c3957d8340aba10e5f48bff2b1f7236-fd58a93c-79b7-4abe-b929-42e2caabdab1'; // from Karl
