@@ -4,6 +4,9 @@ import { sendViolationViber } from '../utils/viberService.js';
 
 const router = express.Router();
 
+/** Grace period in minutes before a warning becomes a ticket. Change this to adjust the grace period everywhere. */
+export const GRACE_PERIOD_MINUTES = 30;
+
 export async function createViolationFromDetection(plateNumber, cameraLocationId, detectionId = null) {
   try {
     if (!plateNumber || plateNumber.toUpperCase() === 'NONE' || plateNumber.toUpperCase() === 'BLUR') {
@@ -43,9 +46,9 @@ export async function createViolationFromDetection(plateNumber, cameraLocationId
     // Set status to 'warning' (automatic violations start as warnings)
     const status = 'warning';
     
-    // Set warningExpiresAt to 30 minutes from now
+    // Set warningExpiresAt to grace period from now
     const expiresDate = new Date();
-    expiresDate.setMinutes(expiresDate.getMinutes() + 30); // 30 minutes grace period
+    expiresDate.setMinutes(expiresDate.getMinutes() + GRACE_PERIOD_MINUTES);
     const expiresAt = expiresDate.toISOString();
     
     // Create violation only if it's a new violation
@@ -84,7 +87,7 @@ export async function createViolationFromDetection(plateNumber, cameraLocationId
         
         const warningNotificationId = `NOTIF-WARNING-${violationId}-${Date.now()}`;
         const warningTitle = `New Warning - ${plateNumber}`;
-        const warningMessage = `Illegal parking detected for vehicle ${plateNumber} at ${cameraLocationId}. 30-minute grace period started.${messageSent ? ' Viber message sent to owner.' : ' Viber message could not be sent to owner.'}`;
+        const warningMessage = `Illegal parking detected for vehicle ${plateNumber} at ${cameraLocationId}. ${GRACE_PERIOD_MINUTES}-minute grace period started.${messageSent ? ' Viber message sent to owner.' : ' Viber message could not be sent to owner.'}`;
         
         db.prepare(`
           INSERT INTO notifications (
@@ -204,10 +207,10 @@ router.get('/', (req, res) => {
       });
     }
     
-    // Batch fetch recent detections (last 30 minutes for all violations)
+    // Batch fetch recent detections (last grace period for all violations)
     const detectionsMap = new Map();
     if (locationIds.length > 0) {
-      const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+      const gracePeriodAgo = new Date(Date.now() - GRACE_PERIOD_MINUTES * 60 * 1000).toISOString();
       const cameraIds = Array.from(camerasMap.values());
       if (cameraIds.length > 0) {
         const placeholders = cameraIds.map(() => '?').join(',');
@@ -218,7 +221,7 @@ router.get('/', (req, res) => {
           WHERE d.cameraId IN (${placeholders})
           AND d.timestamp >= ?
           ORDER BY d.timestamp DESC
-        `).all(...cameraIds, thirtyMinutesAgo);
+        `).all(...cameraIds, gracePeriodAgo);
         
         // Group detections by violation key (plateNumber-locationId)
         detections.forEach(detection => {
@@ -378,12 +381,12 @@ router.post('/', async (req, res) => {
 
     const timeDetected = new Date().toISOString();
     
-    // If status is 'warning' and warningExpiresAt is not provided, set it to 30 minutes from now
+    // If status is 'warning' and warningExpiresAt is not provided, set it to grace period from now
     let expiresAt = warningExpiresAt;
     
     if (status === 'warning' && !expiresAt) {
       const expiresDate = new Date();
-      expiresDate.setMinutes(expiresDate.getMinutes() + 30); // 30 minutes grace period
+      expiresDate.setMinutes(expiresDate.getMinutes() + GRACE_PERIOD_MINUTES);
       expiresAt = expiresDate.toISOString();
     }
     

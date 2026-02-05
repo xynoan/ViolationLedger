@@ -1,5 +1,6 @@
 import db from './database.js';
 import { shouldCreateNotification } from './routes/notifications.js';
+import { GRACE_PERIOD_MINUTES } from './routes/violations.js';
 
 /**
  * Monitoring service that runs every 15 seconds to:
@@ -138,9 +139,9 @@ class MonitoringService {
 
       // Include manual-upload detections: violations from image upload have
       // detections with cameraId = 'MANUAL-UPLOAD-CAM' (no cameras row), so they
-      // were excluded above. Treat them as "still present" for the full 30-min grace period.
-      const thirtyMinutesAgo = new Date();
-      thirtyMinutesAgo.setMinutes(thirtyMinutesAgo.getMinutes() - 30);
+      // were excluded above. Treat them as "still present" for the full grace period.
+      const gracePeriodAgo = new Date();
+      gracePeriodAgo.setMinutes(gracePeriodAgo.getMinutes() - GRACE_PERIOD_MINUTES);
       for (const warning of activeWarnings) {
         const hasManualUploadDetection = db.prepare(`
           SELECT 1 FROM detections
@@ -148,7 +149,7 @@ class MonitoringService {
           AND plateNumber = ?
           AND timestamp > ?
           AND (plateNumber NOT IN ('NONE', 'BLUR'))
-        `).get(warning.plateNumber, thirtyMinutesAgo.toISOString());
+        `).get(warning.plateNumber, gracePeriodAgo.toISOString());
         if (hasManualUploadDetection) {
           const key = `${warning.plateNumber}-${warning.cameraLocationId}`;
           detectionMap.set(key, true);
@@ -179,7 +180,7 @@ class MonitoringService {
             console.error(`❌ Error marking violation ${warning.id} as resolved:`, error);
           }
         }
-        // Case 2: Vehicle still present after 30 minutes - notify Barangay
+        // Case 2: Vehicle still present after grace period - notify Barangay
         else if (isExpired && isStillPresent) {
           // Check if notification already exists for this violation
           const existingNotification = db.prepare(`
@@ -233,7 +234,7 @@ class MonitoringService {
               // Create notification
               const notificationId = `NOTIF-${Date.now()}-${warning.id}`;
               const notificationTitle = 'Vehicle Still Present After Warning';
-              const notificationMessage = `Vehicle with plate ${warning.plateNumber} is still illegally parked at ${warning.cameraLocationId} after the 30-minute grace period. Immediate Barangay action required.`;
+              const notificationMessage = `Vehicle with plate ${warning.plateNumber} is still illegally parked at ${warning.cameraLocationId} after the ${GRACE_PERIOD_MINUTES}-minute grace period. Immediate Barangay action required.`;
 
               try {
                 db.prepare(`
@@ -255,12 +256,12 @@ class MonitoringService {
                   imageBase64,
                   warning.plateNumber,
                   warning.timeDetected,
-                  'Vehicle still present after 30 minutes',
+                  `Vehicle still present after ${GRACE_PERIOD_MINUTES} minutes`,
                   new Date().toISOString(),
                   0 // not read
                 );
                 notifiedCount++;
-                console.log(`🔔 Created notification ${notificationId} - Vehicle still present after 30 minutes`);
+                console.log(`🔔 Created notification ${notificationId} - Vehicle still present after ${GRACE_PERIOD_MINUTES} minutes`);
               } catch (notifError) {
                 console.error(`❌ Error creating notification for violation ${warning.id}:`, notifError);
               }
