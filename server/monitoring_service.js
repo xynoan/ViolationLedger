@@ -136,6 +136,25 @@ class MonitoringService {
         }
       });
 
+      // Include manual-upload detections: violations from image upload have
+      // detections with cameraId = 'MANUAL-UPLOAD-CAM' (no cameras row), so they
+      // were excluded above. Treat them as "still present" for the full 30-min grace period.
+      const thirtyMinutesAgo = new Date();
+      thirtyMinutesAgo.setMinutes(thirtyMinutesAgo.getMinutes() - 30);
+      for (const warning of activeWarnings) {
+        const hasManualUploadDetection = db.prepare(`
+          SELECT 1 FROM detections
+          WHERE cameraId = 'MANUAL-UPLOAD-CAM'
+          AND plateNumber = ?
+          AND timestamp > ?
+          AND (plateNumber NOT IN ('NONE', 'BLUR'))
+        `).get(warning.plateNumber, thirtyMinutesAgo.toISOString());
+        if (hasManualUploadDetection) {
+          const key = `${warning.plateNumber}-${warning.cameraLocationId}`;
+          detectionMap.set(key, true);
+        }
+      }
+
       let resolvedCount = 0;
       let notifiedCount = 0;
 

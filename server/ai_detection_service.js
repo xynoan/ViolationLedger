@@ -106,7 +106,7 @@ export async function analyzeImageWithAI(imageBase64 = null, imagePath = null) {
       env: {
         ...process.env,
         // Use environment variable if set, otherwise use fallback (matches Python service)
-        GEMINI_API_KEY: process.env.GEMINI_API_KEY || 'AIzaSyD8nAPVUIUnNABP7mjHU9HDTnSk0rh1ZBI',
+        GEMINI_API_KEY: process.env.GEMINI_API_KEY,
         PYTHONUNBUFFERED: '1' // Ensure real-time output
       }
     });

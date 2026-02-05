@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { FileText, Search, Filter, Download, Calendar, MapPin, BarChart3, TrendingUp } from 'lucide-react';
+import { FileText, Search, Filter, Download, Calendar, MapPin, BarChart3, TrendingUp, CheckCircle } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
 import { trackAction } from '@/lib/auditTracking';
@@ -57,6 +57,7 @@ export default function ViolationsHistory() {
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState<string>('');
+  const [clearingId, setClearingId] = useState<string | null>(null);
 
   useEffect(() => {
     loadCameras();
@@ -140,6 +141,27 @@ export default function ViolationsHistory() {
       console.error('Error loading stats:', error);
     } finally {
       setIsLoadingStats(false);
+    }
+  };
+
+  const handleClearViolation = async (id: string) => {
+    try {
+      setClearingId(id);
+      await violationsAPI.update(id, { status: 'cleared' });
+      toast({
+        title: "Violation Cleared",
+        description: "The violation has been marked as cleared.",
+      });
+      await loadViolations();
+      await loadStats();
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to clear violation",
+        variant: "destructive",
+      });
+    } finally {
+      setClearingId(null);
     }
   };
 
@@ -357,6 +379,7 @@ export default function ViolationsHistory() {
                     <TableHead className="text-muted-foreground">Time Detected</TableHead>
                     <TableHead className="text-muted-foreground">Time Issued</TableHead>
                     <TableHead className="text-muted-foreground">Ticket ID</TableHead>
+                    <TableHead className="text-muted-foreground text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -381,6 +404,25 @@ export default function ViolationsHistory() {
                       </TableCell>
                       <TableCell className="font-mono text-sm">
                         {violation.ticketId || '-'}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {(violation.status === 'warning' || violation.status === 'pending') && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleClearViolation(violation.id)}
+                            disabled={clearingId === violation.id}
+                          >
+                            {clearingId === violation.id ? (
+                              <>Clearing...</>
+                            ) : (
+                              <>
+                                <CheckCircle className="h-4 w-4 mr-1" />
+                                Clear
+                              </>
+                            )}
+                          </Button>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}
