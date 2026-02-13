@@ -5,7 +5,7 @@ import { sendViolationViber } from '../utils/viberService.js';
 const router = express.Router();
 
 /** Grace period in minutes before a warning becomes a ticket. Change this to adjust the grace period everywhere. */
-export const GRACE_PERIOD_MINUTES = 30;
+export const GRACE_PERIOD_MINUTES = 5;
 
 export async function createViolationFromDetection(plateNumber, cameraLocationId, detectionId = null) {
   try {

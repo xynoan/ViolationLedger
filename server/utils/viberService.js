@@ -1,5 +1,6 @@
 import db from '../database.js';
 import { normalizePhoneNumber } from './phoneUtils.js';
+import { GRACE_PERIOD_MINUTES } from '../routes/violations.js';
 
 const INFOBIP_BASE_URL = process.env.INFOBIP_BASE_URL || 'api.infobip.com';
 const INFOBIP_API_KEY = process.env.INFOBIP_API_KEY || '4c3957d8340aba10e5f48bff2b1f7236-fd58a93c-79b7-4abe-b929-42e2caabdab1'; // from Karl
@@ -521,23 +522,18 @@ export async function sendViolationViber(plateNumber, locationId, violationId) {
       hour12: true
     });
     
-    const message = `🅿️ PARKING VIOLATION ALERT 🅿️
+    const message = `Hi ${vehicle.ownerName},
 
-Vehicle: ${plateNumber}
-Location: ${locationId}
-Time Detected: ${currentTime}
+⚠️ Your vehicle with plate number ${plateNumber} has been detected illegally parked at ${locationId} on ${currentTime}.
 
-⚠️ Your vehicle has been detected illegally parked at the above location.
-
-Please remove your vehicle immediately to avoid penalties and towing.
+Please remove your vehicle immediately within the next ${GRACE_PERIOD_MINUTES} minutes to avoid ticket.
 
 For inquiries or to report an error, please contact your local Barangay office.
 
 Thank you for your cooperation.
 
----
-Park Smart Monitor
-Automated Parking Enforcement System`;
+----
+ViolationLedger`;
 
     const viberResult = await sendViberMessage(vehicle.contactNumber, message, {
       isPromotional: false
