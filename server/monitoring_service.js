@@ -1,6 +1,7 @@
 import db from './database.js';
 import { shouldCreateNotification } from './routes/notifications.js';
 import { GRACE_PERIOD_MINUTES } from './routes/violations.js';
+import { analyzeVideoStream, processVideoDetectionResults } from './ai_detection_service.js';
 
 /**
  * Monitoring service that runs every 15 seconds to:
@@ -22,6 +23,7 @@ class MonitoringService {
 
     console.log('🔄 Monitoring service started');
     this.isRunning = true;
+    this.startVideoAnalysis();
     
     // Run immediately on start, then every 15 seconds
     this.checkAndUpdate();
@@ -37,6 +39,54 @@ class MonitoringService {
     }
     this.isRunning = false;
     console.log('🛑 Monitoring service stopped');
+  }
+
+  async startVideoAnalysis() {
+    console.log('📹 Starting video analysis for all active cameras...');
+    try {
+      const cameras = db.prepare('SELECT * FROM cameras WHERE status = ?').all('active');
+      for (const camera of cameras) {
+        if (camera.streamUrl) {
+          console.log(`[${camera.id}] Starting analysis for stream: ${camera.streamUrl}`);
+          // We run this in the background and don't wait for it to finish
+          analyzeVideoStream(camera.streamUrl, camera)
+            .then(result => this.processVideoDetections(result, camera.id))
+            .catch(error => console.error(`[${camera.id}] Video analysis failed:`, error));
+        }
+      }
+    } catch (error) {
+      console.error('❌ Error starting video analysis:', error);
+    }
+  }
+
+  processVideoDetections(result, cameraId) {
+    if (result.error) {
+      console.error(`[${cameraId}] Video analysis returned an error:`, result.error);
+      return;
+    }
+    
+    console.log(`[${cameraId}] Processing ${result.detections.length} detections from video analysis.`);
+    
+    const detections = processVideoDetectionResults(result, cameraId);
+    
+    if (detections.length > 0) {
+      const insert = db.prepare(`
+        INSERT INTO detections (id, cameraId, plateNumber, timestamp, confidence, imageUrl, bbox, class_name, imageBase64, plateVisible)
+        VALUES (@id, @cameraId, @plateNumber, @timestamp, @confidence, @imageUrl, @bbox, @class_name, @imageBase64, @plateVisible)
+      `);
+      
+      db.transaction((detections) => {
+        for (const detection of detections) {
+          try {
+            insert.run(detection);
+          } catch (error) {
+            console.error(`Error inserting detection ${detection.id}:`, error);
+          }
+        }
+      })(detections);
+      
+      console.log(`[${cameraId}] Saved ${detections.length} new detections to the database.`);
+    }
   }
 
   /**

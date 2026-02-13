@@ -9,6 +9,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const AI_SERVICE_PATH = join(__dirname, 'ai_service.py');
+const VIDEO_ANALYSIS_SERVICE_PATH = join(__dirname, 'video_analysis_service.py');
 
 /**
  * Call Python AI service to analyze an image
@@ -219,6 +220,134 @@ Full error: ${stderr.substring(0, 300)}`;
   });
 }
 
+export async function analyzeVideoStream(videoStreamUrl, cameraConfig) {
+  return new Promise(async (resolve, reject) => {
+    // Check if Python service exists
+    if (!fs.existsSync(VIDEO_ANALYSIS_SERVICE_PATH)) {
+      console.warn('⚠️  Video analysis service not found, skipping');
+      return resolve({
+        detections: [],
+        error: 'Video analysis service not available',
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const args = ['--stream-url', videoStreamUrl, '--config', JSON.stringify(cameraConfig)];
+    const AI_PROCESS_TIMEOUT = 300000; // 5 minutes timeout for video analysis
+    let timeoutId = null;
+    let processCompleted = false;
+
+    const cleanup = () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    };
+
+    // Try python3 first, fallback to python
+    const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+    
+    console.log(`📹 Starting video analysis with ${pythonCmd}...`);
+    
+    // Spawn Python process
+    const pythonProcess = spawn(pythonCmd, [VIDEO_ANALYSIS_SERVICE_PATH, ...args], {
+      cwd: __dirname,
+      env: {
+        ...process.env,
+        PYTHONUNBUFFERED: '1' // Ensure real-time output
+      }
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    // Set timeout for the process
+    timeoutId = setTimeout(async () => {
+      if (!processCompleted) {
+        processCompleted = true;
+        console.error('⏱️  Video analysis timeout after 5 minutes');
+        
+        try {
+          pythonProcess.kill('SIGTERM');
+          setTimeout(() => {
+            if (!pythonProcess.killed) {
+              pythonProcess.kill('SIGKILL');
+            }
+          }, 5000);
+        } catch (killError) {
+          console.error('Error killing Python process:', killError);
+        }
+        
+        cleanup();
+        resolve({
+          detections: [],
+          error: 'Video analysis timed out after 5 minutes.',
+          timestamp: new Date().toISOString()
+        });
+      }
+    }, AI_PROCESS_TIMEOUT);
+
+    pythonProcess.stdout.on('data', (data) => {
+      stdout += data.toString();
+      console.log('📹 Video Analysis stdout:', data.toString().substring(0, 100));
+    });
+
+    pythonProcess.stderr.on('data', (data) => {
+      stderr += data.toString();
+      console.error('⚠️  Video Analysis stderr:', data.toString().substring(0, 200));
+    });
+
+    pythonProcess.on('close', async (code) => {
+      if (processCompleted) return;
+      processCompleted = true;
+      
+      cleanup();
+
+      if (code !== 0) {
+        console.error(`❌ Video Analysis Error (exit code ${code}):`, stderr);
+        return resolve({
+          detections: [],
+          error: stderr.substring(0, 500),
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      try {
+        if (!stdout || stdout.trim() === '') {
+          throw new Error('Empty response from video analysis service');
+        }
+        const result = JSON.parse(stdout);
+        console.log('✅ Video analysis completed successfully');
+        resolve(result);
+      } catch (parseError) {
+        console.error('❌ Failed to parse video analysis service output:', parseError);
+        console.error('Output was:', stdout.substring(0, 500));
+        resolve({
+          detections: [],
+          error: `Failed to parse video analysis service response: ${parseError.message}`,
+          timestamp: new Date().toISOString()
+        });
+      }
+    });
+
+    pythonProcess.on('error', async (error) => {
+      if (processCompleted) return;
+      processCompleted = true;
+      
+      cleanup();
+
+      console.error('❌ Failed to spawn Python process for video analysis:', error);
+      if (error.code === 'ENOENT') {
+        console.warn('⚠️  Python3 not found. Install Python 3.9+ to enable video analysis.');
+      }
+      resolve({
+        detections: [],
+        error: `Python process error: ${error.message}`,
+        timestamp: new Date().toISOString()
+      });
+    });
+  });
+}
+
 /**
  * Process detection results and create detection records
  * @param {Object} aiResult - Result from AI service
@@ -280,6 +409,34 @@ export function processDetectionResults(aiResult, cameraId, imageUrl, imageBase6
       class_name: vehicle.class_name || 'vehicle',
       imageBase64,
       plateVisible
+    });
+  });
+
+  return detections;
+}
+
+export function processVideoDetectionResults(videoResult, cameraId) {
+  const detections = [];
+  const timestamp = new Date().toISOString();
+  const timestampId = timestamp.replace(/[-:]/g, '').split('.')[0];
+
+  if (!videoResult.detections || videoResult.detections.length === 0) {
+    return detections;
+  }
+
+  videoResult.detections.forEach((detection, index) => {
+    const detectionId = `DET-${cameraId}-${timestampId}-${index}`;
+    detections.push({
+      id: detectionId,
+      cameraId,
+      plateNumber: detection.plateNumber,
+      timestamp,
+      confidence: detection.confidence,
+      imageUrl: detection.imageUrl,
+      bbox: detection.bbox ? JSON.stringify(detection.bbox) : null,
+      class_name: detection.class_name,
+      imageBase64: null, // No base64 from video service
+      plateVisible: detection.plateVisible
     });
   });
 
