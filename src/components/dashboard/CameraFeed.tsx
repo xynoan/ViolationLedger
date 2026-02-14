@@ -2,7 +2,6 @@ import { useState, useCallback, memo, useRef } from 'react';
 import { Camera as CameraIcon } from 'lucide-react';
 import { Camera } from '@/types/parking';
 import { cn } from '@/lib/utils';
-import { capturesAPI } from '@/lib/api';
 import { useCameraStream } from '@/hooks/useCameraStream';
 import { useDetections } from '@/hooks/useDetections';
 import { VideoPlayer, VideoPlayerHandle } from './VideoPlayer';
