@@ -4,33 +4,22 @@ import { Button } from '@/components/ui/button';
 
 interface CameraFooterProps {
   isOnline: boolean;
-  captureStatus: 'counting' | 'sending' | 'waiting' | 'processing';
-  nextCaptureTime: number;
+  lastCapture?: Date | string | null;
   onRefresh: () => void;
   onFullscreen: () => void;
 }
 
-const formatTime = (seconds: number) => {
-  const mins = Math.floor(seconds / 60);
-  const secs = seconds % 60;
-  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-};
-
 export const CameraFooter = memo(function CameraFooter({
   isOnline,
-  captureStatus,
-  nextCaptureTime,
+  lastCapture,
   onRefresh,
   onFullscreen,
 }: CameraFooterProps) {
+  const lastCaptureStr = lastCapture != null
+    ? new Date(lastCapture).toLocaleString()
+    : 'Never';
   const statusText = isOnline
-    ? captureStatus === 'sending'
-      ? 'Sending Captured image...'
-      : captureStatus === 'processing'
-        ? `AI Processing... ${formatTime(nextCaptureTime)}`
-        : captureStatus === 'waiting'
-          ? `Next capture in ${formatTime(nextCaptureTime)}`
-          : `Capturing in ${formatTime(nextCaptureTime)}`
+    ? `Live • Capture on vehicle detection (YOLO) • Last: ${lastCaptureStr}`
     : 'Camera offline';
 
   return (

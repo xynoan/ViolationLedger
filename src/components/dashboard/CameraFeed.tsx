@@ -4,7 +4,6 @@ import { Camera } from '@/types/parking';
 import { cn } from '@/lib/utils';
 import { capturesAPI } from '@/lib/api';
 import { useCameraStream } from '@/hooks/useCameraStream';
-import { useCaptureTimer } from '@/hooks/useCaptureTimer';
 import { useDetections } from '@/hooks/useDetections';
 import { VideoPlayer, VideoPlayerHandle } from './VideoPlayer';
 import { CameraHeader } from './CameraHeader';
@@ -60,66 +59,12 @@ export const CameraFeed = memo(function CameraFeed({
     isOnline,
   });
 
-  const handleCapture = useCallback(async () => {
-    try {
-      // Try to capture frame from video element
-      const videoPlayer = isFullscreen ? fullscreenVideoPlayerRef.current : videoPlayerRef.current;
-      let imageData: string | null = null;
-
-      if (videoPlayer) {
-        imageData = await videoPlayer.captureFrame();
-      }
-
-      // Send capture request with image data and wait for AI processing to complete
-      console.log('📸 Sending capture request and waiting for AI processing...');
-      const response = await capturesAPI.trigger(camera.id, imageData || undefined);
-      
-      // Wait for AI processing to complete before showing results
-      if (response && response.aiProcessingComplete !== false) {
-        console.log('✅ AI processing complete, refreshing results...');
-        // Small delay to ensure database writes are complete
-        await new Promise(resolve => setTimeout(resolve, 500));
-        if (onRefresh) {
-          onRefresh();
-        }
-      } else {
-        // If AI processing not complete, wait a bit longer
-        console.log('⏳ Waiting for AI processing to complete...');
-        await new Promise(resolve => setTimeout(resolve, 3000));
-        if (onRefresh) {
-          onRefresh();
-        }
-      }
-    } catch (error) {
-      console.error('Error capturing image:', error);
-      // Still try to trigger capture without image
-      try {
-        await capturesAPI.trigger(camera.id);
-        // Wait for processing even on error
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        if (onRefresh) {
-          onRefresh();
-        }
-      } catch (retryError) {
-        console.error('Error on retry capture:', retryError);
-      }
-    }
-  }, [camera.id, onRefresh, isFullscreen]);
-
-  const { captureStatus, nextCaptureTime, resetTimer } = useCaptureTimer({
-    cameraId: camera.id,
-    isOnline,
-    lastCapture: camera.lastCapture,
-    onCapture: handleCapture,
-  });
-
   const handleRefresh = useCallback(() => {
     refreshStream();
-    resetTimer();
     if (onRefresh) {
       onRefresh();
     }
-  }, [refreshStream, resetTimer, onRefresh]);
+  }, [refreshStream, onRefresh]);
 
   const handleDelete = useCallback(() => {
     if (onDelete) {
@@ -150,8 +95,7 @@ export const CameraFeed = memo(function CameraFeed({
 
         <CameraFooter
           isOnline={isOnline}
-          captureStatus={captureStatus}
-          nextCaptureTime={nextCaptureTime}
+          lastCapture={camera.lastCapture}
           onRefresh={handleRefresh}
           onFullscreen={() => setIsFullscreen(true)}
         />
