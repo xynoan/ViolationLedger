@@ -260,6 +260,15 @@ export const uploadAPI = {
   }),
 };
 
+// OCR API (live plate recognition)
+export const ocrAPI = {
+  plate: (imageBase64: string) => fetchAPI('/ocr/plate', {
+    method: 'POST',
+    body: JSON.stringify({ imageBase64 }),
+    timeout: 60000,
+  }),
+};
+
 // Health API
 export const healthAPI = {
   getStatus: () => fetchAPI('/health/status', { cache: false, timeout: 15000 }),

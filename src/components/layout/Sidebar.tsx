@@ -28,7 +28,7 @@ const navItems = [
   { path: '/vehicles', icon: Car, label: 'Vehicles', adminOnly: false },
   { path: '/hosts', icon: Home, label: 'Hosts', adminOnly: false },
   { path: '/cameras', icon: Camera, label: 'Cameras', adminOnly: false },
-  { path: '/upload', icon: Upload, label: 'Upload Image', adminOnly: false },
+  // { path: '/upload', icon: Upload, label: 'Upload Image', adminOnly: false },
   { path: '/warnings', icon: AlertTriangle, label: 'Warnings', adminOnly: false },
   { path: '/tickets', icon: FileText, label: 'Capture Results', adminOnly: false },
   { path: '/violations', icon: History, label: 'Violations History', adminOnly: false },

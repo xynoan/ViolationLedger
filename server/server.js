@@ -27,6 +27,7 @@ import analyticsRouter from './routes/analytics.js';
 import usersRouter from './routes/users.js';
 import auditLogsRouter from './routes/audit_logs.js';
 import hostsRouter from './routes/hosts.js';
+import ocrRouter from './routes/ocr.js';
 import { auditLog } from './middleware/audit.js';
 import db from './database.js';
 import monitoringService from './monitoring_service.js';
@@ -85,6 +86,7 @@ app.use('/api/analytics', analyticsRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/audit-logs', auditLogsRouter);
 app.use('/api/hosts', hostsRouter);
+app.use('/api/ocr', ocrRouter);
 
 function startServer(port, isRetry = false) {
   const server = app.listen(port, () => {

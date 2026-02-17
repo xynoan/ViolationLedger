@@ -3,11 +3,13 @@ import { Camera as CameraIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Camera } from '@/types/parking';
 import { useYoloFaceDetection } from '@/hooks/useYoloFaceDetection';
+import { usePlateRecognition } from '@/hooks/usePlateRecognition';
 
 export interface Detection {
   bbox: number[];
   class_name: string;
   confidence: number;
+  plateNumber?: string;
 }
 
 interface VideoPlayerProps {
@@ -18,6 +20,7 @@ interface VideoPlayerProps {
   vehicleCount: number;
   fullscreen?: boolean;
   enableFaceDetection?: boolean;
+  enablePlateRecognition?: boolean;
 }
 
 export interface VideoPlayerHandle {
@@ -32,6 +35,7 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
   vehicleCount,
   fullscreen = false,
   enableFaceDetection = false,
+  enablePlateRecognition = false,
 }, ref) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hasStream = stream !== null && camera.deviceId;
@@ -39,8 +43,20 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
     videoRef,
     enableFaceDetection && !!hasStream
   );
-  const detections = enableFaceDetection ? faceDetections : apiDetections;
-  const count = enableFaceDetection ? faceCount : vehicleCount;
+  const { detections: plateDetections, plateCount } = usePlateRecognition(
+    videoRef,
+    enablePlateRecognition && !!hasStream
+  );
+  const detections = enablePlateRecognition
+    ? plateDetections
+    : enableFaceDetection
+      ? faceDetections
+      : apiDetections;
+  const count = enablePlateRecognition
+    ? plateCount
+    : enableFaceDetection
+      ? faceCount
+      : vehicleCount;
 
   // Expose capture function via ref
   useImperativeHandle(ref, () => ({
@@ -207,17 +223,22 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         const height = (y2 - y1) * scaleY;
 
         const colorClass =
-          detection.class_name === 'face'
-            ? 'border-cyan-400 bg-cyan-400/20'
-            : detection.class_name === 'car'
-              ? 'border-blue-500 bg-blue-500/20'
-              : detection.class_name === 'motorcycle'
-                ? 'border-yellow-500 bg-yellow-500/20'
-                : detection.class_name === 'truck'
-                  ? 'border-red-500 bg-red-500/20'
-                  : detection.class_name === 'bus'
-                    ? 'border-green-500 bg-green-500/20'
-                    : 'border-orange-500 bg-orange-500/20';
+          detection.class_name === 'plate'
+            ? 'border-violet-400 bg-violet-400/20'
+            : detection.class_name === 'face'
+              ? 'border-cyan-400 bg-cyan-400/20'
+              : detection.class_name === 'car'
+                ? 'border-blue-500 bg-blue-500/20'
+                : detection.class_name === 'motorcycle'
+                  ? 'border-yellow-500 bg-yellow-500/20'
+                  : detection.class_name === 'truck'
+                    ? 'border-red-500 bg-red-500/20'
+                    : detection.class_name === 'bus'
+                      ? 'border-green-500 bg-green-500/20'
+                      : 'border-orange-500 bg-orange-500/20';
+        const label = 'plateNumber' in detection && detection.plateNumber
+          ? detection.plateNumber
+          : `${detection.class_name} ${(detection.confidence * 100).toFixed(0)}%`;
 
         return (
           <div
@@ -236,7 +257,7 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
                 fullscreen ? 'text-xs' : 'text-[10px]'
               )}
             >
-              {detection.class_name} {(detection.confidence * 100).toFixed(0)}%
+              {label}
             </div>
           </div>
         );
@@ -248,9 +269,11 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           <div className="flex items-center gap-2 bg-foreground/80 backdrop-blur-sm rounded-lg px-3 py-2">
             <span className="status-indicator status-warning" />
             <span className={cn('font-mono text-background', fullscreen ? 'text-sm' : 'text-xs')}>
-              {enableFaceDetection
-                ? `${count} ${count === 1 ? 'face' : 'faces'} detected`
-                : `${count} ${count === 1 ? 'vehicle' : 'vehicles'} detected`}
+              {enablePlateRecognition
+                ? `${count} ${count === 1 ? 'plate' : 'plates'} detected`
+                : enableFaceDetection
+                  ? `${count} ${count === 1 ? 'face' : 'faces'} detected`
+                  : `${count} ${count === 1 ? 'vehicle' : 'vehicles'} detected`}
             </span>
           </div>
         </div>
