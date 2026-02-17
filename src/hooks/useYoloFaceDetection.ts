@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { detectFaces, type FaceDetection } from '@/lib/yoloFaceDetection';
 
+/** Delay between detections (ms). Keeps UI smooth and avoids CPU lag. */
 const DETECTION_INTERVAL_MS = 200;
 
 export function useYoloFaceDetection(
@@ -13,14 +14,14 @@ export function useYoloFaceDetection(
   const runningRef = useRef(false);
 
   useEffect(() => {
-    if (!enabled || !videoRef.current) {
+    if (!enabled) {
       setDetections([]);
       return;
     }
 
     const runDetection = async () => {
       const video = videoRef.current;
-      if (runningRef.current || !video || !video.videoWidth) return;
+      if (runningRef.current || !video?.videoWidth) return;
       runningRef.current = true;
       try {
         const faces = await detectFaces(video);
@@ -41,9 +42,7 @@ export function useYoloFaceDetection(
     };
 
     rafRef.current = requestAnimationFrame(tick);
-    return () => {
-      cancelAnimationFrame(rafRef.current);
-    };
+    return () => cancelAnimationFrame(rafRef.current);
   }, [enabled, videoRef]);
 
   return {
