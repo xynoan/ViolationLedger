@@ -1,0 +1,4 @@
+# Ignore large YOLO weight files; obtain separately (see README.md)
+*.pt
+*.onnx
+*.engine

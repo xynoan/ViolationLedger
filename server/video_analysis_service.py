@@ -51,7 +51,7 @@ YOLO_WEIGHTS = str(YOLO_DIR / 'yolov3-tiny.weights')
 COCO_NAMES = str(YOLO_DIR / 'coco.names')
 
 # OCR Configuration
-reader = easyocr.Reader(['en'])  # Initialize EasyOCR reader
+reader = easyocr.Reader(['en', 'tl'])  # Initialize EasyOCR reader
 
 # Load YOLO model
 net = cv2.dnn.readNet(YOLO_WEIGHTS, YOLO_CONFIG)

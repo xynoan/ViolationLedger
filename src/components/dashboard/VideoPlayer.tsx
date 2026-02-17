@@ -21,6 +21,13 @@ interface VideoPlayerProps {
   fullscreen?: boolean;
   enableFaceDetection?: boolean;
   enablePlateRecognition?: boolean;
+  onPlateMetaChange?: (meta: {
+    enabled: boolean;
+    isRunning: boolean;
+    plateCount: number;
+    lastScanAt: number | null;
+    lastError: string | null;
+  }) => void;
 }
 
 export interface VideoPlayerHandle {
@@ -36,6 +43,7 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
   fullscreen = false,
   enableFaceDetection = false,
   enablePlateRecognition = false,
+  onPlateMetaChange,
 }, ref) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hasStream = stream !== null && camera.deviceId;
@@ -43,10 +51,34 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
     videoRef,
     enableFaceDetection && !!hasStream
   );
-  const { detections: plateDetections, plateCount } = usePlateRecognition(
+  const {
+    detections: plateDetections,
+    plateCount,
+    isRunning: plateIsRunning,
+    lastScanAt: plateLastScanAt,
+    lastError: plateLastError,
+  } = usePlateRecognition(
     videoRef,
     enablePlateRecognition && !!hasStream
   );
+  useEffect(() => {
+    if (!onPlateMetaChange) return;
+    onPlateMetaChange({
+      enabled: enablePlateRecognition && !!hasStream,
+      isRunning: plateIsRunning,
+      plateCount,
+      lastScanAt: plateLastScanAt,
+      lastError: plateLastError,
+    });
+  }, [
+    onPlateMetaChange,
+    enablePlateRecognition,
+    hasStream,
+    plateIsRunning,
+    plateCount,
+    plateLastScanAt,
+    plateLastError,
+  ]);
   const detections = enablePlateRecognition
     ? plateDetections
     : enableFaceDetection
@@ -236,8 +268,9 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
                     : detection.class_name === 'bus'
                       ? 'border-green-500 bg-green-500/20'
                       : 'border-orange-500 bg-orange-500/20';
-        const label = 'plateNumber' in detection && detection.plateNumber
-          ? detection.plateNumber
+        const plateLabel = (detection as { plateNumber?: unknown }).plateNumber;
+        const label: string = typeof plateLabel === 'string' && plateLabel.trim().length > 0
+          ? plateLabel
           : `${detection.class_name} ${(detection.confidence * 100).toFixed(0)}%`;
 
         return (

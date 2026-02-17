@@ -43,6 +43,13 @@ export const CameraFeed = memo(function CameraFeed({
 }: CameraFeedProps) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [plateOcr, setPlateOcr] = useState<{
+    enabled: boolean;
+    isRunning: boolean;
+    plateCount: number;
+    lastScanAt: number | null;
+    lastError: string | null;
+  } | null>(null);
   const isOnline = camera.status === 'online';
   const videoPlayerRef = useRef<VideoPlayerHandle>(null);
   const fullscreenVideoPlayerRef = useRef<VideoPlayerHandle>(null);
@@ -72,6 +79,16 @@ export const CameraFeed = memo(function CameraFeed({
     setShowDeleteDialog(false);
   }, [camera.id, onDelete]);
 
+  const handlePlateMetaChange = useCallback((meta: {
+    enabled: boolean;
+    isRunning: boolean;
+    plateCount: number;
+    lastScanAt: number | null;
+    lastError: string | null;
+  }) => {
+    setPlateOcr(meta);
+  }, []);
+
   return (
     <>
       <div className="glass-card rounded-xl overflow-hidden animate-slide-up">
@@ -89,7 +106,8 @@ export const CameraFeed = memo(function CameraFeed({
             camera={camera}
             detections={detections}
             vehicleCount={vehicleCount}
-            enablePlateRecognition
+            enablePlateRecognition={!isFullscreen}
+            onPlateMetaChange={handlePlateMetaChange}
           />
         </div>
 
@@ -98,6 +116,7 @@ export const CameraFeed = memo(function CameraFeed({
           lastCapture={camera.lastCapture}
           onRefresh={handleRefresh}
           onFullscreen={() => setIsFullscreen(true)}
+          plateOcr={plateOcr ?? undefined}
         />
       </div>
 
@@ -135,7 +154,8 @@ export const CameraFeed = memo(function CameraFeed({
               detections={detections}
               vehicleCount={vehicleCount}
               fullscreen
-              enablePlateRecognition
+              enablePlateRecognition={isFullscreen}
+              onPlateMetaChange={handlePlateMetaChange}
             />
           </div>
           <div className="flex items-center justify-between p-4 border-t border-border">

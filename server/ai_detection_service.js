@@ -10,6 +10,7 @@ const __dirname = dirname(__filename);
 
 const AI_SERVICE_PATH = join(__dirname, 'ai_service.py');
 const VIDEO_ANALYSIS_SERVICE_PATH = join(__dirname, 'video_analysis_service.py');
+const OCR_ONLY_PATH = join(__dirname, 'ocr_only.py');
 
 /**
  * Call Python AI service to analyze an image
@@ -216,6 +217,99 @@ Full error: ${stderr.substring(0, 300)}`;
         error: `Python process error: ${error.message}`,
         timestamp: new Date().toISOString()
       });
+    });
+  });
+}
+
+/**
+ * Run OCR-only plate recognition (EasyOCR + Tesseract). No Gemini - for 24/7 live dashboard.
+ * @param {string} imageBase64 - Base64 encoded image data (raw or data URL)
+ * @returns {Promise<{ plates: Array<{ plateNumber: string, confidence: number, bbox: number[] }> }>}
+ */
+export async function runOCROnly(imageBase64) {
+  return new Promise(async (resolve) => {
+    if (!imageBase64) {
+      return resolve({ plates: [], error: 'imageBase64 required' });
+    }
+
+    if (!fs.existsSync(OCR_ONLY_PATH)) {
+      console.warn('⚠️  ocr_only.py not found, returning empty plates');
+      return resolve({ plates: [], error: 'OCR service not available' });
+    }
+
+    const raw = imageBase64.includes(',') ? imageBase64.split(',')[1] : imageBase64;
+    let tempBase64File = null;
+    const OCR_TIMEOUT_MS = 30000;
+    let timeoutId = null;
+    let processCompleted = false;
+
+    const cleanup = async () => {
+      if (tempBase64File) {
+        try { await fs.remove(tempBase64File); } catch (e) { /* ignore */ }
+      }
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+
+    try {
+      tempBase64File = join(tmpdir(), `ocr-base64-${randomUUID()}.txt`);
+      await fs.writeFile(tempBase64File, raw, 'utf8');
+    } catch (e) {
+      return resolve({ plates: [], error: e.message });
+    }
+
+    const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+    const pythonProcess = spawn(pythonCmd, [OCR_ONLY_PATH, '--base64-file', tempBase64File], {
+      cwd: __dirname,
+      env: { ...process.env, PYTHONUNBUFFERED: '1' },
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    timeoutId = setTimeout(async () => {
+      if (!processCompleted) {
+        processCompleted = true;
+        try { pythonProcess.kill('SIGTERM'); } catch (_) {}
+        await cleanup();
+        resolve({ plates: [], error: 'OCR timeout' });
+      }
+    }, OCR_TIMEOUT_MS);
+
+    pythonProcess.stdout.on('data', (data) => { stdout += data.toString(); });
+    pythonProcess.stderr.on('data', (data) => { stderr += data.toString(); });
+
+    pythonProcess.on('close', async (code) => {
+      if (processCompleted) return;
+      processCompleted = true;
+      await cleanup();
+
+      try {
+        const out = stdout.trim();
+        if (!out) {
+          console.warn('[OCR] Empty stdout from ocr_only.py', stderr.slice(0, 200));
+          return resolve({ plates: [], error: stderr.slice(0, 200) || 'Empty OCR output' });
+        }
+        const result = JSON.parse(out);
+        const plates = Array.isArray(result.plates) ? result.plates : [];
+        if (plates.length === 0 && (stderr || result.error)) {
+          console.warn('[OCR] No plates. stderr:', stderr.slice(0, 500), 'result.error:', result.error);
+        }
+        resolve({
+          plates,
+          error: result.error || null,
+        });
+      } catch (e) {
+        console.warn('[OCR] Parse error:', e.message, 'stdout preview:', stdout.slice(0, 300));
+        resolve({ plates: [], error: e.message });
+      }
+    });
+
+    pythonProcess.on('error', async (err) => {
+      if (!processCompleted) {
+        processCompleted = true;
+        await cleanup();
+        resolve({ plates: [], error: err.message });
+      }
     });
   });
 }
