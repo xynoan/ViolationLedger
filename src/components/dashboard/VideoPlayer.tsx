@@ -2,8 +2,9 @@ import { useRef, useEffect, memo, useImperativeHandle, forwardRef } from 'react'
 import { Camera as CameraIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Camera } from '@/types/parking';
+import { useYoloFaceDetection } from '@/hooks/useYoloFaceDetection';
 
-interface Detection {
+export interface Detection {
   bbox: number[];
   class_name: string;
   confidence: number;
@@ -16,6 +17,7 @@ interface VideoPlayerProps {
   detections: Detection[];
   vehicleCount: number;
   fullscreen?: boolean;
+  enableFaceDetection?: boolean;
 }
 
 export interface VideoPlayerHandle {
@@ -26,11 +28,19 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
   stream,
   isOnline,
   camera,
-  detections,
+  detections: apiDetections,
   vehicleCount,
   fullscreen = false,
+  enableFaceDetection = false,
 }, ref) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const hasStream = stream !== null && camera.deviceId;
+  const { detections: faceDetections, faceCount } = useYoloFaceDetection(
+    videoRef,
+    enableFaceDetection && !!hasStream
+  );
+  const detections = enableFaceDetection ? faceDetections : apiDetections;
+  const count = enableFaceDetection ? faceCount : vehicleCount;
 
   // Expose capture function via ref
   useImperativeHandle(ref, () => ({
@@ -113,8 +123,6 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       }
     };
   }, [stream]);
-
-  const hasStream = stream !== null && camera.deviceId;
 
   if (!isOnline) {
     return (
@@ -199,15 +207,17 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         const height = (y2 - y1) * scaleY;
 
         const colorClass =
-          detection.class_name === 'car'
-            ? 'border-blue-500 bg-blue-500/20'
-            : detection.class_name === 'motorcycle'
-              ? 'border-yellow-500 bg-yellow-500/20'
-              : detection.class_name === 'truck'
-                ? 'border-red-500 bg-red-500/20'
-                : detection.class_name === 'bus'
-                  ? 'border-green-500 bg-green-500/20'
-                  : 'border-orange-500 bg-orange-500/20';
+          detection.class_name === 'face'
+            ? 'border-cyan-400 bg-cyan-400/20'
+            : detection.class_name === 'car'
+              ? 'border-blue-500 bg-blue-500/20'
+              : detection.class_name === 'motorcycle'
+                ? 'border-yellow-500 bg-yellow-500/20'
+                : detection.class_name === 'truck'
+                  ? 'border-red-500 bg-red-500/20'
+                  : detection.class_name === 'bus'
+                    ? 'border-green-500 bg-green-500/20'
+                    : 'border-orange-500 bg-orange-500/20';
 
         return (
           <div
@@ -232,13 +242,15 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         );
       })}
 
-      {/* Vehicle Count Badge */}
-      {vehicleCount > 0 && (
+      {/* Detection count badge (vehicles or faces) */}
+      {count > 0 && (
         <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between">
           <div className="flex items-center gap-2 bg-foreground/80 backdrop-blur-sm rounded-lg px-3 py-2">
             <span className="status-indicator status-warning" />
             <span className={cn('font-mono text-background', fullscreen ? 'text-sm' : 'text-xs')}>
-              {vehicleCount} {vehicleCount === 1 ? 'vehicle' : 'vehicles'} detected
+              {enableFaceDetection
+                ? `${count} ${count === 1 ? 'face' : 'faces'} detected`
+                : `${count} ${count === 1 ? 'vehicle' : 'vehicles'} detected`}
             </span>
           </div>
         </div>

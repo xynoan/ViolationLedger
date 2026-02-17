@@ -89,6 +89,7 @@ export const CameraFeed = memo(function CameraFeed({
             camera={camera}
             detections={detections}
             vehicleCount={vehicleCount}
+            enableFaceDetection
           />
         </div>
 
@@ -134,6 +135,7 @@ export const CameraFeed = memo(function CameraFeed({
               detections={detections}
               vehicleCount={vehicleCount}
               fullscreen
+              enableFaceDetection
             />
           </div>
           <div className="flex items-center justify-between p-4 border-t border-border">
