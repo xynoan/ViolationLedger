@@ -207,8 +207,6 @@ def bbox_from_easyocr_points(points: List, width: int, height: int) -> List[floa
 
 # Plate-like: letters, digits, spaces, dashes; 2+ chars
 PLATE_PATTERN = re.compile(r"^[A-Z0-9\- ]{2,}$")
-# Looser pattern for individual OCR fragments to combine (e.g. "DBN" + "3766")
-PLATE_FRAGMENT_PATTERN = re.compile(r"^[A-Z0-9]+$")
 
 # Common OCR confusions: in digit positions use left, in letter positions use right
 TO_DIGIT = str.maketrans("OILSBZGQ", "01158260")   # letter read as digit (O→0, I/L→1, S→5, B→8, Z→2, G→6, Q→0)
@@ -273,27 +271,21 @@ def run_ocr_on_crop(crop: np.ndarray) -> Optional[Tuple[str, float]]:
         reader = get_reader()
         for img_variant in [clahe, gray_work]:
             results = reader.readtext(img_variant)
-            # EasyOCR returns multiple regions (e.g. "DBN" and "3766" separately); combine left-to-right
-            candidates: List[Tuple[str, float, float]] = []
             for item in results:
                 if len(item) < 3:
                     continue
-                bbox_points, text, prob = item[0], (item[1] or "").strip().upper(), float(item[2])
+                text, prob = (item[1] or "").strip().upper(), float(item[2])
                 text_clean = re.sub(r"[\s\-]+", "", text)
-                if len(text_clean) < 1 or prob < 0.15:
+                if len(text_clean) < 2 or prob < 0.2:
                     continue
-                if not PLATE_FRAGMENT_PATTERN.match(text_clean):
+                if not PLATE_PATTERN.match(text_clean):
                     continue
-                left_x = min(p[0] for p in bbox_points) if bbox_points else 0
-                candidates.append((text_clean, prob, left_x))
-            if candidates:
-                # Sort left-to-right, concatenate, then correct
-                candidates.sort(key=lambda c: c[2])
-                combined = "".join(c[0] for c in candidates)
-                if len(combined) >= 2 and PLATE_PATTERN.match(combined):
-                    best_conf = max(c[1] for c in candidates)
-                    best_text = correct_plate_ocr(combined)
-                    break
+                plate_number = correct_plate_ocr(text_clean or text)
+                if prob > best_conf:
+                    best_conf = prob
+                    best_text = plate_number
+            if best_text:
+                break
     except Exception as e:
         print(f"EasyOCR error (crop): {e}", file=sys.stderr)
 
