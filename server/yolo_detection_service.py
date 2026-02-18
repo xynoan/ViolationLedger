@@ -43,6 +43,12 @@ except Exception as e:
 COCO_VEHICLE_CLASSES = (2, 3, 5, 7)  # car, motorbike, bus, truck
 COCO_CLASS_NAMES = {2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
 
+# Philippine license plate model (data.yaml): nc=3
+PLATE_CLASS_INVALID = 0
+PLATE_CLASS_LICENSE_PLATE = 1
+PLATE_CLASS_PLATE_CONTENT = 2
+PLATE_CLASS_NAMES = {0: "Invalid Plate", 1: "License Plate", 2: "Plate Content"}
+
 WEIGHTS_DIR = Path(__file__).resolve().parent / "models" / "weights"
 VEHICLE_MODEL_PATH = WEIGHTS_DIR / "yolov8n.pt"
 PLATE_MODEL_PATH = WEIGHTS_DIR / "license_detection.pt"
@@ -59,6 +65,7 @@ class VehicleBox:
 
 @dataclass(frozen=True)
 class PlateBox:
+    cls_id: int  # 0=Invalid, 1=License Plate, 2=Plate Content
     conf: float
     xyxy: Tuple[float, float, float, float]
 
@@ -135,6 +142,7 @@ def _vehicles_from_ultralytics_predict(result) -> List[VehicleBox]:
 
 
 def _plates_from_ultralytics_predict(result) -> List[PlateBox]:
+    """Extract plate boxes from Ultralytics result. Excludes Invalid Plate (class 0)."""
     if result is None or getattr(result, "boxes", None) is None:
         return []
     boxes = result.boxes
@@ -142,15 +150,63 @@ def _plates_from_ultralytics_predict(result) -> List[PlateBox]:
         return []
     xyxy = boxes.xyxy
     conf = getattr(boxes, "conf", None)
+    cls_ = getattr(boxes, "cls", None)
     xyxy_np = xyxy.cpu().numpy() if hasattr(xyxy, "cpu") else np.asarray(xyxy)
     conf_np = conf.cpu().numpy() if (conf is not None and hasattr(conf, "cpu")) else (np.asarray(conf) if conf is not None else None)
+    cls_np = cls_.cpu().numpy() if (cls_ is not None and hasattr(cls_, "cpu")) else (np.asarray(cls_) if cls_ is not None else None)
 
     out: List[PlateBox] = []
     for i in range(len(xyxy_np)):
+        cls_id = int(cls_np[i]) if cls_np is not None else PLATE_CLASS_LICENSE_PLATE
+        if cls_id == PLATE_CLASS_INVALID:
+            continue
         x1, y1, x2, y2 = map(float, xyxy_np[i])
         c = float(conf_np[i]) if conf_np is not None else 0.0
-        out.append(PlateBox(conf=c, xyxy=(x1, y1, x2, y2)))
+        out.append(PlateBox(cls_id=cls_id, conf=c, xyxy=(x1, y1, x2, y2)))
     return out
+
+
+# IoU above this => same physical plate (License Plate + Plate Content)
+PLATE_GROUP_IOU_THRESHOLD = 0.2
+
+
+def _group_overlapping_plates(plates: List[PlateBox]) -> List[List[PlateBox]]:
+    """Group plate detections that overlap so each group = one physical plate."""
+    if not plates:
+        return []
+    n = len(plates)
+    parent = list(range(n))
+
+    def find(i: int) -> int:
+        if parent[i] != i:
+            parent[i] = find(parent[i])
+        return parent[i]
+
+    def union(i: int, j: int) -> None:
+        pi, pj = find(i), find(j)
+        if pi != pj:
+            parent[pi] = pj
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            if iou_xyxy(plates[i].xyxy, plates[j].xyxy) >= PLATE_GROUP_IOU_THRESHOLD:
+                union(i, j)
+
+    groups: dict[int, List[PlateBox]] = {}
+    for i in range(n):
+        root = find(i)
+        groups.setdefault(root, []).append(plates[i])
+    return list(groups.values())
+
+
+def _pick_bbox_and_ocr_crop(group: List[PlateBox]) -> Tuple[Tuple[float, float, float, float], Tuple[float, float, float, float]]:
+    """For one plate group: bbox for output (prefer License Plate), crop for OCR (prefer Plate Content)."""
+    license_plates = [p for p in group if p.cls_id == PLATE_CLASS_LICENSE_PLATE]
+    plate_content = [p for p in group if p.cls_id == PLATE_CLASS_PLATE_CONTENT]
+    # Prefer License Plate for display bbox; Plate Content for OCR (text region)
+    bbox = license_plates[0].xyxy if license_plates else plate_content[0].xyxy
+    ocr_crop_bbox = plate_content[0].xyxy if plate_content else (license_plates[0].xyxy if license_plates else group[0].xyxy)
+    return bbox, ocr_crop_bbox
 
 
 def clamp_xyxy(x1: float, y1: float, x2: float, y2: float, w: int, h: int) -> Tuple[int, int, int, int]:
@@ -225,17 +281,21 @@ def main() -> int:
             "confidence": round(v.conf, 4),
         })
 
+    # Group overlapping detections (License Plate + Plate Content) so one physical plate = one output
+    plate_groups = _group_overlapping_plates(plates)
     plates_out = []
-    for p in plates:
+    for group in plate_groups:
+        bbox_xyxy, ocr_xyxy = _pick_bbox_and_ocr_crop(group)
+        best_conf = max(p.conf for p in group)
         plate_obj: dict = {
-            "bbox": [round(x, 2) for x in p.xyxy],
+            "bbox": [round(x, 2) for x in bbox_xyxy],
             "class_name": "plate",
-            "confidence": round(p.conf, 4),
+            "confidence": round(best_conf, 4),
         }
 
-        vehicle = assign_plate_to_vehicle(p.xyxy, vehicles)
+        vehicle = assign_plate_to_vehicle(bbox_xyxy, vehicles)
         if vehicle is not None:
-            x1, y1, x2, y2 = p.xyxy
+            x1, y1, x2, y2 = ocr_xyxy
             ix1, iy1, ix2, iy2 = clamp_xyxy(x1, y1, x2, y2, w, h)
             crop = frame[iy1:iy2, ix1:ix2]
             if crop.size > 0:
