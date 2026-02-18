@@ -11,6 +11,7 @@ const __dirname = dirname(__filename);
 const AI_SERVICE_PATH = join(__dirname, 'ai_service.py');
 const VIDEO_ANALYSIS_SERVICE_PATH = join(__dirname, 'video_analysis_service.py');
 const OCR_ONLY_PATH = join(__dirname, 'ocr_only.py');
+const YOLO_DETECTION_SERVICE_PATH = join(__dirname, 'yolo_detection_service.py');
 
 /**
  * Call Python AI service to analyze an image
@@ -309,6 +310,106 @@ export async function runOCROnly(imageBase64) {
         processCompleted = true;
         await cleanup();
         resolve({ plates: [], error: err.message });
+      }
+    });
+  });
+}
+
+/**
+ * Run YOLO vehicle + license plate detection (yolov8n.pt + license_detection.pt).
+ * Plate OCR results are logged to stderr by the Python service.
+ * @param {string} imageBase64 - Base64 encoded image data (raw or data URL)
+ * @returns {Promise<{ vehicles: Array, plates: Array }>}
+ */
+export async function runYoloDetection(imageBase64) {
+  return new Promise(async (resolve) => {
+    if (!imageBase64) {
+      return resolve({ vehicles: [], plates: [], error: 'imageBase64 required' });
+    }
+
+    if (!fs.existsSync(YOLO_DETECTION_SERVICE_PATH)) {
+      console.warn('⚠️  yolo_detection_service.py not found, returning empty detections');
+      return resolve({ vehicles: [], plates: [], error: 'YOLO detection service not available' });
+    }
+
+    const raw = imageBase64.includes(',') ? imageBase64.split(',')[1] : imageBase64;
+    let tempBase64File = null;
+    const YOLO_TIMEOUT_MS = 15000;
+    let timeoutId = null;
+    let processCompleted = false;
+
+    const cleanup = async () => {
+      if (tempBase64File) {
+        try { await fs.remove(tempBase64File); } catch (e) { /* ignore */ }
+      }
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+
+    try {
+      tempBase64File = join(tmpdir(), `yolo-base64-${randomUUID()}.txt`);
+      await fs.writeFile(tempBase64File, raw, 'utf8');
+    } catch (e) {
+      return resolve({ vehicles: [], plates: [], error: e.message });
+    }
+
+    const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+    const pythonProcess = spawn(pythonCmd, [YOLO_DETECTION_SERVICE_PATH, '--base64-file', tempBase64File], {
+      cwd: __dirname,
+      env: { ...process.env, PYTHONUNBUFFERED: '1' },
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    timeoutId = setTimeout(async () => {
+      if (!processCompleted) {
+        processCompleted = true;
+        try { pythonProcess.kill('SIGTERM'); } catch (_) {}
+        await cleanup();
+        resolve({ vehicles: [], plates: [], error: 'YOLO detection timeout' });
+      }
+    }, YOLO_TIMEOUT_MS);
+
+    pythonProcess.stdout.on('data', (data) => { stdout += data.toString(); });
+    pythonProcess.stderr.on('data', (data) => {
+      stderr += data.toString();
+      // Forward stderr to console so plate logs appear in server output
+      const str = data.toString().trim();
+      if (str) console.log(str);
+    });
+
+    pythonProcess.on('close', async (code) => {
+      if (processCompleted) return;
+      processCompleted = true;
+      await cleanup();
+
+      try {
+        const out = stdout.trim();
+        if (!out) {
+          console.warn('[YOLO] Empty stdout from yolo_detection_service.py', stderr.slice(0, 200));
+          return resolve({
+            vehicles: [],
+            plates: [],
+            error: stderr.slice(0, 200) || 'Empty YOLO output',
+          });
+        }
+        const result = JSON.parse(out);
+        resolve({
+          vehicles: Array.isArray(result.vehicles) ? result.vehicles : [],
+          plates: Array.isArray(result.plates) ? result.plates : [],
+          error: result.error || null,
+        });
+      } catch (e) {
+        console.warn('[YOLO] Parse error:', e.message, 'stdout preview:', stdout.slice(0, 300));
+        resolve({ vehicles: [], plates: [], error: e.message });
+      }
+    });
+
+    pythonProcess.on('error', async (err) => {
+      if (!processCompleted) {
+        processCompleted = true;
+        await cleanup();
+        resolve({ vehicles: [], plates: [], error: err.message });
       }
     });
   });

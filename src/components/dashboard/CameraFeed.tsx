@@ -3,7 +3,7 @@ import { Camera as CameraIcon } from 'lucide-react';
 import { Camera } from '@/types/parking';
 import { cn } from '@/lib/utils';
 import { useCameraStream } from '@/hooks/useCameraStream';
-import { useDetections } from '@/hooks/useDetections';
+import { useYoloDetection } from '@/hooks/useYoloDetection';
 import { VideoPlayer, VideoPlayerHandle } from './VideoPlayer';
 import { CameraHeader } from './CameraHeader';
 import { CameraFooter } from './CameraFooter';
@@ -43,13 +43,6 @@ export const CameraFeed = memo(function CameraFeed({
 }: CameraFeedProps) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
-  const [plateOcr, setPlateOcr] = useState<{
-    enabled: boolean;
-    isRunning: boolean;
-    plateCount: number;
-    lastScanAt: number | null;
-    lastError: string | null;
-  } | null>(null);
   const isOnline = camera.status === 'online';
   const videoPlayerRef = useRef<VideoPlayerHandle>(null);
   const fullscreenVideoPlayerRef = useRef<VideoPlayerHandle>(null);
@@ -59,11 +52,11 @@ export const CameraFeed = memo(function CameraFeed({
     deviceId: camera.deviceId,
     isOnline,
   });
-
-  const { detections, vehicleCount } = useDetections({
-    cameraId: camera.id,
-    isOnline,
-  });
+  const {
+    detections,
+    vehicleCount,
+    plateCount,
+  } = useYoloDetection(videoPlayerRef, isOnline);
 
   const handleRefresh = useCallback(() => {
     refreshStream();
@@ -78,16 +71,6 @@ export const CameraFeed = memo(function CameraFeed({
     }
     setShowDeleteDialog(false);
   }, [camera.id, onDelete]);
-
-  const handlePlateMetaChange = useCallback((meta: {
-    enabled: boolean;
-    isRunning: boolean;
-    plateCount: number;
-    lastScanAt: number | null;
-    lastError: string | null;
-  }) => {
-    setPlateOcr(meta);
-  }, []);
 
   return (
     <>
@@ -105,9 +88,8 @@ export const CameraFeed = memo(function CameraFeed({
             isOnline={isOnline}
             camera={camera}
             detections={detections}
-            vehicleCount={vehicleCount}
-            enablePlateRecognition={!isFullscreen}
-            onPlateMetaChange={handlePlateMetaChange}
+            vehicleCount={vehicleCount + plateCount}
+            enablePlateRecognition={false}
           />
         </div>
 
@@ -116,7 +98,6 @@ export const CameraFeed = memo(function CameraFeed({
           lastCapture={camera.lastCapture}
           onRefresh={handleRefresh}
           onFullscreen={() => setIsFullscreen(true)}
-          plateOcr={plateOcr ?? undefined}
         />
       </div>
 
@@ -152,10 +133,9 @@ export const CameraFeed = memo(function CameraFeed({
               isOnline={isOnline}
               camera={camera}
               detections={detections}
-              vehicleCount={vehicleCount}
+              vehicleCount={vehicleCount + plateCount}
               fullscreen
-              enablePlateRecognition={isFullscreen}
-              onPlateMetaChange={handlePlateMetaChange}
+              enablePlateRecognition={false}
             />
           </div>
           <div className="flex items-center justify-between p-4 border-t border-border">

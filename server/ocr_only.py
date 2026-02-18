@@ -20,6 +20,17 @@ import io
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 
+# PyTorch 2.6+ defaults to weights_only=True; Ultralytics YOLO .pt files require weights_only=False
+try:
+    import torch
+    _orig_load = torch.load
+    def _torch_load(*args, **kwargs):
+        kwargs.setdefault("weights_only", False)
+        return _orig_load(*args, **kwargs)
+    torch.load = _torch_load
+except ImportError:
+    pass
+
 try:
     from PIL import Image
     import cv2

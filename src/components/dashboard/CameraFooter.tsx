@@ -7,13 +7,6 @@ interface CameraFooterProps {
   lastCapture?: Date | string | null;
   onRefresh: () => void;
   onFullscreen: () => void;
-  plateOcr?: {
-    enabled: boolean;
-    isRunning: boolean;
-    plateCount: number;
-    lastScanAt: number | null;
-    lastError: string | null;
-  };
 }
 
 export const CameraFooter = memo(function CameraFooter({
@@ -21,19 +14,12 @@ export const CameraFooter = memo(function CameraFooter({
   lastCapture,
   onRefresh,
   onFullscreen,
-  plateOcr,
 }: CameraFooterProps) {
   const lastCaptureStr = lastCapture != null
     ? new Date(lastCapture).toLocaleString()
     : 'Never';
-  const plateText = (() => {
-    if (!plateOcr?.enabled) return null;
-    const last = plateOcr.lastScanAt ? new Date(plateOcr.lastScanAt).toLocaleTimeString() : '—';
-    const base = `Plate OCR: ${plateOcr.isRunning ? 'scanning…' : `${plateOcr.plateCount} found`} • Last: ${last}`;
-    return plateOcr.lastError ? `${base} • ${plateOcr.lastError}` : base;
-  })();
   const statusText = isOnline
-    ? `Live • Last capture: ${lastCaptureStr}${plateText ? ` • ${plateText}` : ''}`
+    ? `Live • Last capture: ${lastCaptureStr}`
     : 'Camera offline';
 
   return (

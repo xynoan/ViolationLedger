@@ -28,6 +28,7 @@ import usersRouter from './routes/users.js';
 import auditLogsRouter from './routes/audit_logs.js';
 import hostsRouter from './routes/hosts.js';
 import ocrRouter from './routes/ocr.js';
+import detectRouter from './routes/detect.js';
 import { auditLog } from './middleware/audit.js';
 import db from './database.js';
 import monitoringService from './monitoring_service.js';
@@ -87,6 +88,7 @@ app.use('/api/users', usersRouter);
 app.use('/api/audit-logs', auditLogsRouter);
 app.use('/api/hosts', hostsRouter);
 app.use('/api/ocr', ocrRouter);
+app.use('/api/detect', detectRouter);
 
 function startServer(port, isRetry = false) {
   const server = app.listen(port, () => {

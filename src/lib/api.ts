@@ -269,6 +269,15 @@ export const ocrAPI = {
   }),
 };
 
+// YOLO detection API (vehicles + license plates)
+export const detectAPI = {
+  yolo: (imageBase64: string) => fetchAPI('/detect/yolo', {
+    method: 'POST',
+    body: JSON.stringify({ imageBase64 }),
+    timeout: 20000,
+  }),
+};
+
 // Health API
 export const healthAPI = {
   getStatus: () => fetchAPI('/health/status', { cache: false, timeout: 15000 }),
