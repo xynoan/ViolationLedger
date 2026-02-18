@@ -214,6 +214,47 @@ PLATE_FRAGMENT_PATTERN = re.compile(r"^[A-Z0-9]+$")
 TO_DIGIT = str.maketrans("OILSBZGQ", "01158260")   # letter read as digit (O→0, I/L→1, S→5, B→8, Z→2, G→6, Q→0)
 TO_LETTER = str.maketrans("015826", "OISBZG")      # digit read as letter
 
+# Position-based mapping (from working ref): letters vs digits per index
+# Philippine format: LLLNNNN (e.g. DBN3766) - positions 0,1,2=letters, 3,4,5,6=digits
+DICT_CHAR_TO_INT = {"O": "0", "I": "1", "J": "3", "A": "4", "G": "6", "S": "5"}
+DICT_INT_TO_CHAR = {"0": "O", "1": "I", "3": "J", "4": "A", "6": "G", "5": "S"}
+
+
+def license_complies_format_ph(text: str) -> bool:
+    """Philippine plate: 2-3 letters + 3-4 digits (e.g. DBN3766, AB1234)."""
+    s = re.sub(r"[\s\-]+", "", (text or "").upper())
+    if len(s) < 5 or len(s) > 8:
+        return False
+    # First 2-3 chars: letters; last 3-4: digits
+    if len(s) >= 7:
+        letter_count = 3
+    else:
+        letter_count = 2
+    letter_count = min(letter_count, len(s) - 3)
+    for i in range(letter_count):
+        if s[i] not in "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789":
+            return False
+    for i in range(letter_count, len(s)):
+        if s[i] not in "0123456789OILSBZGQ":
+            return False
+    return True
+
+
+def format_license_ph(text: str) -> str:
+    """Position-based correction for Philippine LLLNNNN / LLNNNN format (from working ref)."""
+    s = re.sub(r"[\s\-]+", "", (text or "").upper())
+    if len(s) < 5:
+        return s
+    letter_count = 3 if len(s) >= 7 else 2
+    letter_count = min(letter_count, len(s) - 3)
+    out = []
+    for j in range(len(s)):
+        if j < letter_count:
+            out.append(DICT_INT_TO_CHAR.get(s[j], s[j]))
+        else:
+            out.append(DICT_CHAR_TO_INT.get(s[j], s[j]))
+    return "".join(out)
+
 
 def correct_plate_ocr(raw: str) -> str:
     """
@@ -271,9 +312,25 @@ def run_ocr_on_crop(crop: np.ndarray) -> Optional[Tuple[str, float]]:
 
     try:
         reader = get_reader()
-        for img_variant in [clahe, gray_work]:
+        # Try raw thresholded image FIRST (matches working ref: direct THRESH_BINARY_INV to EasyOCR)
+        img_variants = [gray, clahe, gray_work]
+        for img_variant in img_variants:
             results = reader.readtext(img_variant)
-            # EasyOCR returns multiple regions (e.g. "DBN" and "3766" separately); combine left-to-right
+            # Strategy 1 (working ref): return first detection that matches Philippine format
+            for item in results:
+                if len(item) < 3:
+                    continue
+                bbox_points, text, prob = item[0], (item[1] or "").strip().upper(), float(item[2])
+                text_clean = re.sub(r"[\s\-]+", "", text)
+                if len(text_clean) < 6 or prob < 0.15:
+                    continue
+                if license_complies_format_ph(text_clean):
+                    best_text = format_license_ph(text_clean)
+                    best_conf = prob
+                    break
+            if best_text:
+                break
+            # Strategy 2: combine fragments left-to-right (e.g. "DBN" + "3766")
             candidates: List[Tuple[str, float, float]] = []
             for item in results:
                 if len(item) < 3:
@@ -287,13 +344,18 @@ def run_ocr_on_crop(crop: np.ndarray) -> Optional[Tuple[str, float]]:
                 left_x = min(p[0] for p in bbox_points) if bbox_points else 0
                 candidates.append((text_clean, prob, left_x))
             if candidates:
-                # Sort left-to-right, concatenate, then correct
                 candidates.sort(key=lambda c: c[2])
                 combined = "".join(c[0] for c in candidates)
+                if license_complies_format_ph(combined):
+                    best_conf = max(c[1] for c in candidates)
+                    best_text = format_license_ph(combined)
+                    break
                 if len(combined) >= 2 and PLATE_PATTERN.match(combined):
                     best_conf = max(c[1] for c in candidates)
                     best_text = correct_plate_ocr(combined)
                     break
+            if best_text:
+                break
     except Exception as e:
         print(f"EasyOCR error (crop): {e}", file=sys.stderr)
 
