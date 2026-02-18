@@ -274,7 +274,7 @@ export const detectAPI = {
   yolo: (imageBase64: string) => fetchAPI('/detect/yolo', {
     method: 'POST',
     body: JSON.stringify({ imageBase64 }),
-    timeout: 20000,
+    timeout: 65000, // 65s - backend has 60s; model load + inference can take 30s+ on first run
   }),
 };
 

@@ -334,7 +334,7 @@ export async function runYoloDetection(imageBase64) {
 
     const raw = imageBase64.includes(',') ? imageBase64.split(',')[1] : imageBase64;
     let tempBase64File = null;
-    const YOLO_TIMEOUT_MS = 15000;
+    const YOLO_TIMEOUT_MS = 60000; // 60s - model load + inference can take 30s+ on first run
     let timeoutId = null;
     let processCompleted = false;
 
@@ -353,6 +353,7 @@ export async function runYoloDetection(imageBase64) {
     }
 
     const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+    console.log('[YOLO] Spawning Python process...');
     const pythonProcess = spawn(pythonCmd, [YOLO_DETECTION_SERVICE_PATH, '--base64-file', tempBase64File], {
       cwd: __dirname,
       env: { ...process.env, PYTHONUNBUFFERED: '1' },
@@ -364,6 +365,7 @@ export async function runYoloDetection(imageBase64) {
     timeoutId = setTimeout(async () => {
       if (!processCompleted) {
         processCompleted = true;
+        console.warn('[YOLO] Timeout after 60s, killing Python process');
         try { pythonProcess.kill('SIGTERM'); } catch (_) {}
         await cleanup();
         resolve({ vehicles: [], plates: [], error: 'YOLO detection timeout' });
@@ -394,9 +396,12 @@ export async function runYoloDetection(imageBase64) {
           });
         }
         const result = JSON.parse(out);
+        const vehicles = Array.isArray(result.vehicles) ? result.vehicles : [];
+        const plates = Array.isArray(result.plates) ? result.plates : [];
+        console.log(`[YOLO] Python finished: ${vehicles.length} vehicles, ${plates.length} plates`);
         resolve({
-          vehicles: Array.isArray(result.vehicles) ? result.vehicles : [],
-          plates: Array.isArray(result.plates) ? result.plates : [],
+          vehicles,
+          plates,
           error: result.error || null,
         });
       } catch (e) {

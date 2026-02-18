@@ -194,11 +194,13 @@ def main() -> int:
         return 1
 
     h, w = frame.shape[:2]
+    print(f"[YOLO] Image loaded ({w}x{h}), loading models...", file=sys.stderr)
     vehicle_path = str(VEHICLE_MODEL_PATH) if VEHICLE_MODEL_PATH.exists() else "yolov8n.pt"
     plate_path = str(PLATE_MODEL_PATH)
 
     vehicle_model = YOLO(vehicle_path)
     plate_model = YOLO(plate_path)
+    print("[YOLO] Models loaded, running detection...", file=sys.stderr)
 
     # 1) Vehicle detection
     vehicle_results = vehicle_model.predict(
@@ -250,6 +252,7 @@ def main() -> int:
 
         plates_out.append(plate_obj)
 
+    print(f"[YOLO] Done: {len(vehicles_out)} vehicles, {len(plates_out)} plates", file=sys.stderr)
     result = {"vehicles": vehicles_out, "plates": plates_out}
     print(json.dumps(result, ensure_ascii=False))
     return 0

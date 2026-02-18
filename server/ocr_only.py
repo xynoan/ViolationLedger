@@ -33,6 +33,9 @@ except ImportError:
 
 try:
     from PIL import Image
+    # Pillow 10+ removed ANTIALIAS; EasyOCR still expects it
+    if not hasattr(Image, "ANTIALIAS"):
+        Image.ANTIALIAS = Image.Resampling.LANCZOS
     import cv2
     import numpy as np
     import easyocr

@@ -16,7 +16,11 @@ router.post('/yolo', async (req, res) => {
       return res.status(400).json({ error: 'imageBase64 is required', vehicles: [], plates: [] });
     }
 
+    console.log('[YOLO] Request received, running detection...');
     const result = await runYoloDetection(imageBase64);
+    const vCount = (result.vehicles || []).length;
+    const pCount = (result.plates || []).length;
+    console.log(`[YOLO] Detection complete: ${vCount} vehicles, ${pCount} plates` + (result.error ? ` (error: ${result.error})` : ''));
     return res.json({
       vehicles: result.vehicles || [],
       plates: result.plates || [],

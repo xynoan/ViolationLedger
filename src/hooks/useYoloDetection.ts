@@ -37,22 +37,38 @@ export function useYoloDetection(
       return;
     }
 
+    console.log('[YOLO] Detection enabled, waiting for video and polling every ~2.5s...');
+
     const runDetection = async () => {
       if (runningRef.current) return;
       const captureFrame = videoPlayerRef.current?.captureFrame;
-      if (!captureFrame) return;
+      if (!captureFrame) {
+        return; // Video not ready yet, will retry next interval
+      }
 
       runningRef.current = true;
       setIsRunning(true);
       try {
         const imageBase64 = await captureFrame();
-        if (!imageBase64) return;
+        if (!imageBase64) {
+          console.log('[YOLO] Video not ready yet, will retry next interval');
+          return;
+        }
 
+        console.log('[YOLO] Frame captured, sending to server...');
         const result = await detectAPI.yolo(imageBase64);
         setLastError(result?.error ? String(result.error) : null);
 
         const vehicles = result?.vehicles ?? [];
         const plates = result?.plates ?? [];
+
+        const vCount = vehicles.length;
+        const pCount = plates.length;
+        if (result?.error) {
+          console.warn('[YOLO] Done with error:', result.error);
+        } else {
+          console.log(`[YOLO] Done. ${vCount} vehicle(s), ${pCount} plate(s) detected.`);
+        }
 
         const next: YoloDetection[] = [
           ...vehicles.map((v: { bbox: number[]; class_name: string; confidence: number }) => ({
