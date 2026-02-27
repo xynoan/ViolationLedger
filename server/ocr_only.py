@@ -221,8 +221,11 @@ def correct_plate_ocr(raw: str) -> str:
     s = re.sub(r"[\s\-]+", "", (raw or "").upper())
     if len(s) < 2:
         return s
-    # Philippine-style: usually 2–3 letters + 3–4 digits (e.g. AB1234, ABC1234)
-    if len(s) >= 6:
+    # Philippine-style: usually 3 letters + 4 digits for 7-char plates (e.g. ABC1234)
+    # Keep the last 3–4 chars as digits and the rest as letters to better fit this pattern.
+    if len(s) >= 7:
+        digit_len = 4
+    elif len(s) >= 6:
         digit_len = 4
     elif len(s) >= 5:
         digit_len = 3
@@ -276,7 +279,7 @@ def run_ocr_on_crop(crop: np.ndarray) -> Optional[Tuple[str, float]]:
                     continue
                 text, prob = (item[1] or "").strip().upper(), float(item[2])
                 text_clean = re.sub(r"[\s\-]+", "", text)
-                if len(text_clean) < 2 or prob < 0.2:
+                if len(text_clean) < 3 or prob < 0.5:
                     continue
                 if not PLATE_PATTERN.match(text_clean):
                     continue
@@ -293,7 +296,8 @@ def run_ocr_on_crop(crop: np.ndarray) -> Optional[Tuple[str, float]]:
         try:
             tess_config = "-c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 --oem 3"
             for img_variant in [binary, clahe]:
-                for psm in [7, 6, 8, 13]:
+                # Prioritize single-line/word modes for cropped plates
+                for psm in [7, 8, 6, 13]:
                     text = pytesseract.image_to_string(img_variant, config=f"--psm {psm} {tess_config}").strip()
                     text_clean = re.sub(r"[\s\-]+", "", text).upper()
                     if text_clean and len(text_clean) >= 3 and PLATE_PATTERN.match(text_clean):
@@ -343,7 +347,7 @@ def _run_full_frame_ocr(image: np.ndarray, img_width: int, img_height: int) -> L
                 bbox_points, text, prob = item[0], item[1], float(item[2])
                 text = (text or "").strip().upper()
                 text_clean = re.sub(r"[\s\-]+", "", text)
-                if len(text_clean) < 2 or prob < 0.2:
+                if len(text_clean) < 3 or prob < 0.5:
                     continue
                 if not PLATE_PATTERN.match(text_clean):
                     continue
@@ -364,7 +368,8 @@ def _run_full_frame_ocr(image: np.ndarray, img_width: int, img_height: int) -> L
         try:
             tess_config = "-c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 --oem 3"
             for img_variant in [binary, clahe]:
-                for psm in [7, 6, 8, 13]:
+                # Prioritize single-line/word modes for plate-like regions
+                for psm in [7, 8, 6, 13]:
                     text = pytesseract.image_to_string(img_variant, config=f"--psm {psm} {tess_config}").strip()
                     text_clean = re.sub(r"[\s\-]+", "", text).upper()
                     if text_clean and len(text_clean) >= 3 and PLATE_PATTERN.match(text_clean):
