@@ -352,11 +352,24 @@ export async function runYoloDetection(imageBase64) {
       return resolve({ vehicles: [], plates: [], error: e.message });
     }
 
+    // Absolute paths to YOLO weight files for vehicles and license plates
+    const VEHICLE_MODEL_PATH = join(__dirname, 'models', 'weights', 'yolov8n.pt');
+    const PLATE_MODEL_PATH = join(__dirname, 'models', 'weights', 'license_detection.pt');
+
     const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
     console.log('[YOLO] Spawning Python process...');
+    console.log('[YOLO] Using weights:', {
+      vehicleModel: VEHICLE_MODEL_PATH,
+      plateModel: PLATE_MODEL_PATH,
+    });
     const pythonProcess = spawn(pythonCmd, [YOLO_DETECTION_SERVICE_PATH, '--base64-file', tempBase64File], {
       cwd: __dirname,
-      env: { ...process.env, PYTHONUNBUFFERED: '1' },
+      env: {
+        ...process.env,
+        PYTHONUNBUFFERED: '1',
+        YOLO_VEHICLE_WEIGHTS: VEHICLE_MODEL_PATH,
+        YOLO_PLATE_WEIGHTS: PLATE_MODEL_PATH,
+      },
     });
 
     let stdout = '';
