@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -142,7 +143,7 @@ def _vehicles_from_ultralytics_predict(result) -> List[VehicleBox]:
 
 
 def _plates_from_ultralytics_predict(result) -> List[PlateBox]:
-    """Extract plate boxes from Ultralytics result. Excludes Invalid Plate (class 0)."""
+    """Extract plate boxes from Ultralytics result, skipping Invalid Plate (class 0) early."""
     if result is None or getattr(result, "boxes", None) is None:
         return []
     boxes = result.boxes
@@ -158,6 +159,7 @@ def _plates_from_ultralytics_predict(result) -> List[PlateBox]:
     out: List[PlateBox] = []
     for i in range(len(xyxy_np)):
         cls_id = int(cls_np[i]) if cls_np is not None else PLATE_CLASS_LICENSE_PLATE
+        # Filter out invalid plate detections as early as possible for efficiency.
         if cls_id == PLATE_CLASS_INVALID:
             continue
         x1, y1, x2, y2 = map(float, xyxy_np[i])
@@ -200,12 +202,33 @@ def _group_overlapping_plates(plates: List[PlateBox]) -> List[List[PlateBox]]:
 
 
 def _pick_bbox_and_ocr_crop(group: List[PlateBox]) -> Tuple[Tuple[float, float, float, float], Tuple[float, float, float, float]]:
-    """For one plate group: bbox for output (prefer License Plate), crop for OCR (prefer Plate Content)."""
+    """
+    For one plate group: choose the primary bbox and OCR crop.
+
+    Prioritize Plate Content (class 2) for BOTH the output bbox and the OCR crop,
+    since it should tightly cover the plate text region. Fall back to License Plate
+    (class 1) only if no Plate Content is present.
+    """
     license_plates = [p for p in group if p.cls_id == PLATE_CLASS_LICENSE_PLATE]
     plate_content = [p for p in group if p.cls_id == PLATE_CLASS_PLATE_CONTENT]
-    # Prefer License Plate for display bbox; Plate Content for OCR (text region)
-    bbox = license_plates[0].xyxy if license_plates else plate_content[0].xyxy
-    ocr_crop_bbox = plate_content[0].xyxy if plate_content else (license_plates[0].xyxy if license_plates else group[0].xyxy)
+
+    # Prefer the highest-confidence Plate Content box for both bbox and OCR crop.
+    if plate_content:
+        best_content = max(plate_content, key=lambda p: p.conf)
+        bbox = best_content.xyxy
+        ocr_crop_bbox = best_content.xyxy
+        return bbox, ocr_crop_bbox
+
+    # Fallback: use highest-confidence License Plate box if no Plate Content detected.
+    if license_plates:
+        best_lp = max(license_plates, key=lambda p: p.conf)
+        bbox = best_lp.xyxy
+        ocr_crop_bbox = best_lp.xyxy
+        return bbox, ocr_crop_bbox
+
+    # Last resort: use the first box in the group.
+    bbox = group[0].xyxy
+    ocr_crop_bbox = group[0].xyxy
     return bbox, ocr_crop_bbox
 
 
@@ -251,8 +274,36 @@ def main() -> int:
 
     h, w = frame.shape[:2]
     print(f"[YOLO] Image loaded ({w}x{h}), loading models...", file=sys.stderr)
-    vehicle_path = str(VEHICLE_MODEL_PATH) if VEHICLE_MODEL_PATH.exists() else "yolov8n.pt"
-    plate_path = str(PLATE_MODEL_PATH)
+
+    # Model paths: prefer environment variables, fall back to existing hardcoded paths.
+    env_vehicle = os.getenv("YOLO_VEHICLE_WEIGHTS")
+    env_plate = os.getenv("YOLO_PLATE_WEIGHTS")
+
+    vehicle_path: Optional[str] = None
+    plate_path: Optional[str] = None
+
+    if env_vehicle:
+        v_path = Path(env_vehicle)
+        if v_path.exists():
+            vehicle_path = str(v_path)
+        else:
+            print(f"[YOLO] Warning: YOLO_VEHICLE_WEIGHTS not found at '{env_vehicle}', falling back to defaults.", file=sys.stderr)
+
+    if env_plate:
+        p_path = Path(env_plate)
+        if p_path.exists():
+            plate_path = str(p_path)
+        else:
+            print(f"[YOLO] Warning: YOLO_PLATE_WEIGHTS not found at '{env_plate}', falling back to defaults.", file=sys.stderr)
+
+    if vehicle_path is None:
+        vehicle_path = str(VEHICLE_MODEL_PATH) if VEHICLE_MODEL_PATH.exists() else "yolov8n.pt"
+
+    if plate_path is None:
+        plate_path = str(PLATE_MODEL_PATH)
+
+    print(f"[YOLO] Vehicle model path: {vehicle_path}", file=sys.stderr)
+    print(f"[YOLO] Plate model path: {plate_path}", file=sys.stderr)
 
     vehicle_model = YOLO(vehicle_path)
     plate_model = YOLO(plate_path)
@@ -300,6 +351,12 @@ def main() -> int:
             crop = frame[iy1:iy2, ix1:ix2]
             if crop.size > 0:
                 thresh = preprocess_plate_crop_threshold_inv(crop)
+
+                # Debug view of the thresholded plate
+                cv2.imshow("thresh_debug", thresh)
+                cv2.waitKey(0)  # waits for a key press; use 1 for non-blocking
+                cv2.destroyWindow("thresh_debug")
+                
                 ocr = run_ocr_on_crop(thresh)
                 if ocr is None:
                     rgb_crop = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)

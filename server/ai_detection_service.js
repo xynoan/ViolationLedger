@@ -351,10 +351,22 @@ export async function runYoloDetection(imageBase64) {
     } catch (e) {
       return resolve({ vehicles: [], plates: [], error: e.message });
     }
-
+ 
     // Absolute paths to YOLO weight files for vehicles and license plates
     const VEHICLE_MODEL_PATH = join(__dirname, 'models', 'weights', 'yolov8n.pt');
     const PLATE_MODEL_PATH = join(__dirname, 'models', 'weights', 'license_detection.pt');
+
+    // Validate that the weight files exist before spawning the Python process.
+    const vehicleModelExists = fs.existsSync(VEHICLE_MODEL_PATH);
+    const plateModelExists = fs.existsSync(PLATE_MODEL_PATH);
+
+    if (!vehicleModelExists) {
+      console.warn(`[YOLO] Vehicle model weights not found at ${VEHICLE_MODEL_PATH}. Python may fall back to default weights (e.g., "yolov8n.pt").`);
+    }
+
+    if (!plateModelExists) {
+      console.warn(`[YOLO] Plate model weights not found at ${PLATE_MODEL_PATH}. YOLO plate detection may fail until weights are available.`);
+    }
 
     const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
     console.log('[YOLO] Spawning Python process...');
