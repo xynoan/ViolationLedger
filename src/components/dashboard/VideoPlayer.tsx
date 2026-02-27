@@ -81,14 +81,10 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
   ]);
   const detections = enablePlateRecognition
     ? plateDetections
-    : enableFaceDetection
-      ? faceDetections
-      : apiDetections;
+    : apiDetections;
   const count = enablePlateRecognition
     ? plateCount
-    : enableFaceDetection
-      ? faceCount
-      : vehicleCount;
+    : vehicleCount;
 
   // Expose capture function via ref
   useImperativeHandle(ref, () => ({
@@ -296,17 +292,15 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         );
       })}
 
-      {/* Detection count badge (vehicles or faces) */}
+      {/* Detection count badge (vehicles or plates) */}
       {count > 0 && (
         <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between">
           <div className="flex items-center gap-2 bg-foreground/80 backdrop-blur-sm rounded-lg px-3 py-2">
             <span className="status-indicator status-warning" />
             <span className={cn('font-mono text-background', fullscreen ? 'text-sm' : 'text-xs')}>
               {enablePlateRecognition
-                ? `${count} ${count === 1 ? 'plate' : 'plates'} detected`
-                : enableFaceDetection
-                  ? `${count} ${count === 1 ? 'face' : 'faces'} detected`
-                  : `${count} ${count === 1 ? 'vehicle' : 'vehicles'} detected`}
+                ? `${count} ${count === 1 ? 'Plate' : 'Plates'} detected`
+                : `${count} ${count === 1 ? 'Vehicle' : 'Vehicles'} detected`}
             </span>
           </div>
         </div>
