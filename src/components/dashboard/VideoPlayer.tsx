@@ -2,7 +2,6 @@ import { useRef, useEffect, memo, useImperativeHandle, forwardRef } from 'react'
 import { Camera as CameraIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Camera } from '@/types/parking';
-import { useYoloFaceDetection } from '@/hooks/useYoloFaceDetection';
 import { usePlateRecognition } from '@/hooks/usePlateRecognition';
 
 export interface Detection {
@@ -19,7 +18,6 @@ interface VideoPlayerProps {
   detections: Detection[];
   vehicleCount: number;
   fullscreen?: boolean;
-  enableFaceDetection?: boolean;
   enablePlateRecognition?: boolean;
   onPlateMetaChange?: (meta: {
     enabled: boolean;
@@ -41,16 +39,11 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
   detections: apiDetections,
   vehicleCount,
   fullscreen = false,
-  enableFaceDetection = false,
   enablePlateRecognition = false,
   onPlateMetaChange,
 }, ref) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hasStream = stream !== null && camera.deviceId;
-  const { detections: faceDetections, faceCount } = useYoloFaceDetection(
-    videoRef,
-    enableFaceDetection && !!hasStream
-  );
   const {
     detections: plateDetections,
     plateCount,
