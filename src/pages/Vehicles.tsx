@@ -31,6 +31,8 @@ export default function Vehicles() {
   usePageTracking();
   const { user } = useAuth();
   const isEncoder = user?.role === 'encoder';
+   const isBarangayUser = user?.role === 'barangay_user';
+   const isAdmin = user?.role === 'admin';
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [hosts, setHosts] = useState<Host[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -103,6 +105,15 @@ export default function Vehicles() {
   };
 
   const handleOpenDialog = (vehicle?: Vehicle) => {
+    if (isBarangayUser) {
+      toast({
+        title: "Permission Denied",
+        description: "Barangay users are not allowed to modify vehicles.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     // Encoders can only add vehicles, not edit
     if (vehicle && isEncoder) {
       toast({
@@ -135,6 +146,14 @@ export default function Vehicles() {
   };
 
   const handleSaveVehicle = async () => {
+    if (isBarangayUser) {
+      toast({
+        title: "Permission Denied",
+        description: "Barangay users are not allowed to modify vehicles.",
+        variant: "destructive",
+      });
+      return;
+    }
     if (!formData.plateNumber || !formData.ownerName || !formData.purposeOfVisit) {
       toast({
         title: "Validation Error",
@@ -224,11 +243,11 @@ export default function Vehicles() {
   };
 
   const handleDeleteVehicle = async (id: string) => {
-    // Encoders cannot delete vehicles
-    if (isEncoder) {
+    // Encoders and Barangay users cannot delete vehicles
+    if (isEncoder || isBarangayUser) {
       toast({
         title: "Permission Denied",
-        description: "Encoders can only add new vehicles, not delete existing ones.",
+        description: "You do not have permission to delete vehicles.",
         variant: "destructive",
       });
       return;
@@ -281,129 +300,131 @@ export default function Vehicles() {
             />
           </div>
 
-          <Dialog open={isDialogOpen} onOpenChange={(open) => open ? handleOpenDialog() : handleCloseDialog()}>
-            <DialogTrigger asChild>
-              <Button className="w-full sm:w-auto">
-                <Plus className="h-4 w-4 mr-2" />
-                Add Vehicle
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="bg-card border-border mx-4 sm:mx-auto max-w-[calc(100vw-2rem)] sm:max-w-lg">
-              <DialogHeader>
-                <DialogTitle>{editingVehicle ? 'Edit Vehicle' : 'Register New Vehicle'}</DialogTitle>
-                <DialogDescription>
-                  {editingVehicle 
-                    ? 'Update the vehicle information below.' 
-                    : 'Enter the vehicle details to register it in the system.'}
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4 py-4 max-h-[80vh] overflow-y-auto">
-                <div className="space-y-2">
-                  <Label htmlFor="plateNumber">Plate Number *</Label>
-                  <Input
-                    id="plateNumber"
-                    placeholder="ABC 1234"
-                    value={formData.plateNumber}
-                    onChange={(e) => setFormData({ ...formData, plateNumber: e.target.value })}
-                    className="bg-secondary"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="ownerName">Owner Name *</Label>
-                  <Input
-                    id="ownerName"
-                    placeholder="Juan dela Cruz"
-                    value={formData.ownerName}
-                    onChange={(e) => setFormData({ ...formData, ownerName: e.target.value })}
-                    className="bg-secondary"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="hostId">Host (Optional)</Label>
-                  <Select 
-                    value={formData.hostId || undefined} 
-                    onValueChange={handleHostChange}
-                  >
-                    <SelectTrigger id="hostId" className="bg-secondary">
-                      <SelectValue placeholder="Select a host" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {hosts.map((host) => (
-                        <SelectItem key={host.id} value={host.id}>
-                          {host.name} - {host.contactNumber}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {formData.hostId && (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="h-6 text-xs"
-                      onClick={() => handleHostChange('')}
-                    >
-                      Clear selection
-                    </Button>
-                  )}
-                  <p className="text-xs text-muted-foreground">
-                    If selected, contact number will be automatically filled from host
-                  </p>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="rented">Rented (Optional)</Label>
-                  <Input
-                    id="rented"
-                    placeholder="Court, etc."
-                    value={formData.rented}
-                    onChange={(e) => {
-                      const rentedValue = e.target.value;
-                      setFormData(prev => ({ 
-                        ...prev, 
-                        rented: rentedValue,
-                      }));
-                    }}
-                    className="bg-secondary"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    If vehicle is rented, enter the location (e.g., Court). Contact number will be the renter's.
-                  </p>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="contactNumber">Contact Number *</Label>
-                  <Input
-                    id="contactNumber"
-                    placeholder="+639171234567"
-                    value={formData.contactNumber}
-                    onChange={(e) => setFormData({ ...formData, contactNumber: e.target.value })}
-                    className="bg-secondary"
-                    disabled={!!formData.hostId && !formData.rented}
-                  />
-                  {formData.hostId && !formData.rented && (
-                    <p className="text-xs text-muted-foreground">
-                      Contact number is automatically set from selected host
-                    </p>
-                  )}
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="purposeOfVisit">Purpose of Visit *</Label>
-                  <Input
-                    id="purposeOfVisit"
-                    placeholder="e.g., Delivery, Appointment with Kap, Visit resident"
-                    value={formData.purposeOfVisit}
-                    onChange={(e) => setFormData({ ...formData, purposeOfVisit: e.target.value })}
-                    className="bg-secondary"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Required for all vehicles entering the barangay
-                  </p>
-                </div>
-                <Button onClick={handleSaveVehicle} className="w-full">
-                  {editingVehicle ? 'Save Changes' : 'Register Vehicle'}
+          {!isBarangayUser && (
+            <Dialog open={isDialogOpen} onOpenChange={(open) => open ? handleOpenDialog() : handleCloseDialog()}>
+              <DialogTrigger asChild>
+                <Button className="w-full sm:w-auto">
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add Vehicle
                 </Button>
-              </div>
-            </DialogContent>
-          </Dialog>
+              </DialogTrigger>
+              <DialogContent className="bg-card border-border mx-4 sm:mx-auto max-w-[calc(100vw-2rem)] sm:max-w-lg">
+                <DialogHeader>
+                  <DialogTitle>{editingVehicle ? 'Edit Vehicle' : 'Register New Vehicle'}</DialogTitle>
+                  <DialogDescription>
+                    {editingVehicle 
+                      ? 'Update the vehicle information below.' 
+                      : 'Enter the vehicle details to register it in the system.'}
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-4 max-h-[80vh] overflow-y-auto">
+                  <div className="space-y-2">
+                    <Label htmlFor="plateNumber">Plate Number *</Label>
+                    <Input
+                      id="plateNumber"
+                      placeholder="ABC 1234"
+                      value={formData.plateNumber}
+                      onChange={(e) => setFormData({ ...formData, plateNumber: e.target.value })}
+                      className="bg-secondary"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="ownerName">Owner Name *</Label>
+                    <Input
+                      id="ownerName"
+                      placeholder="Juan dela Cruz"
+                      value={formData.ownerName}
+                      onChange={(e) => setFormData({ ...formData, ownerName: e.target.value })}
+                      className="bg-secondary"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="hostId">Host (Optional)</Label>
+                    <Select 
+                      value={formData.hostId || undefined} 
+                      onValueChange={handleHostChange}
+                    >
+                      <SelectTrigger id="hostId" className="bg-secondary">
+                        <SelectValue placeholder="Select a host" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {hosts.map((host) => (
+                          <SelectItem key={host.id} value={host.id}>
+                            {host.name} - {host.contactNumber}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {formData.hostId && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 text-xs"
+                        onClick={() => handleHostChange('')}
+                      >
+                        Clear selection
+                      </Button>
+                    )}
+                    <p className="text-xs text-muted-foreground">
+                      If selected, contact number will be automatically filled from host
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="rented">Rented (Optional)</Label>
+                    <Input
+                      id="rented"
+                      placeholder="Court, etc."
+                      value={formData.rented}
+                      onChange={(e) => {
+                        const rentedValue = e.target.value;
+                        setFormData(prev => ({ 
+                          ...prev, 
+                          rented: rentedValue,
+                        }));
+                      }}
+                      className="bg-secondary"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      If vehicle is rented, enter the location (e.g., Court). Contact number will be the renter's.
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="contactNumber">Contact Number *</Label>
+                    <Input
+                      id="contactNumber"
+                      placeholder="+639171234567"
+                      value={formData.contactNumber}
+                      onChange={(e) => setFormData({ ...formData, contactNumber: e.target.value })}
+                      className="bg-secondary"
+                      disabled={!!formData.hostId && !formData.rented}
+                    />
+                    {formData.hostId && !formData.rented && (
+                      <p className="text-xs text-muted-foreground">
+                        Contact number is automatically set from selected host
+                      </p>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="purposeOfVisit">Purpose of Visit *</Label>
+                    <Input
+                      id="purposeOfVisit"
+                      placeholder="e.g., Delivery, Appointment with Kap, Visit resident"
+                      value={formData.purposeOfVisit}
+                      onChange={(e) => setFormData({ ...formData, purposeOfVisit: e.target.value })}
+                      className="bg-secondary"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Required for all vehicles entering the barangay
+                    </p>
+                  </div>
+                  <Button onClick={handleSaveVehicle} className="w-full">
+                    {editingVehicle ? 'Save Changes' : 'Register Vehicle'}
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
+          )}
         </div>
 
         {vehicles.length > 0 ? (
@@ -414,19 +435,21 @@ export default function Vehicles() {
                 <div key={vehicle.id} className="glass-card rounded-xl p-4 space-y-3">
                   <div className="flex items-center justify-between">
                     <span className="font-mono font-medium text-lg">{vehicle.plateNumber}</span>
-                    <div className="flex items-center gap-1">
-                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleOpenDialog(vehicle)}>
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                      <Button 
-                        variant="ghost" 
-                        size="icon"
-                        onClick={() => handleDeleteVehicle(vehicle.id)}
-                        className="text-destructive hover:text-destructive h-8 w-8"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
+                    {!isEncoder && isAdmin && (
+                      <div className="flex items-center gap-1">
+                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleOpenDialog(vehicle)}>
+                          <Edit className="h-4 w-4" />
+                        </Button>
+                        <Button 
+                          variant="ghost" 
+                          size="icon"
+                          onClick={() => handleDeleteVehicle(vehicle.id)}
+                          className="text-destructive hover:text-destructive h-8 w-8"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    )}
                   </div>
                   <div className="text-sm text-foreground">{vehicle.ownerName}</div>
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -477,7 +500,7 @@ export default function Vehicles() {
                             >
                               <Info className="h-4 w-4" />
                             </Button>
-                            {!isEncoder && (
+                            {isAdmin && (
                               <>
                                 <Button variant="ghost" size="icon" onClick={() => handleOpenDialog(vehicle)}>
                                   <Edit className="h-4 w-4" />
@@ -560,10 +583,12 @@ export default function Vehicles() {
             <p className="text-muted-foreground mb-6">
               Add your first vehicle to the registry
             </p>
-            <Button onClick={() => handleOpenDialog()}>
-              <Plus className="h-4 w-4 mr-2" />
-              Add Your First Vehicle
-            </Button>
+            {!isBarangayUser && (
+              <Button onClick={() => handleOpenDialog()}>
+                <Plus className="h-4 w-4 mr-2" />
+                Add Your First Vehicle
+              </Button>
+            )}
           </div>
         )}
       </div>

@@ -43,11 +43,16 @@ function NavContent({ collapsed, onNavigate }: { collapsed?: boolean; onNavigate
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
   const isEncoder = user?.role === 'encoder';
+  const isBarangayUser = user?.role === 'barangay_user';
 
   // Encoders can only see Vehicles page
   const filteredItems = navItems.filter(item => {
     if (isEncoder) {
       return item.path === '/vehicles';
+    }
+    // Barangay users should not see Settings page
+    if (isBarangayUser && item.path === '/settings') {
+      return false;
     }
     return !item.adminOnly || isAdmin;
   });

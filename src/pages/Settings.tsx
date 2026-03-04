@@ -20,6 +20,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { healthAPI } from '@/lib/api';
 import { toast } from '@/hooks/use-toast';
+import { useAuth } from '@/hooks/useAuth';
+import { Navigate } from 'react-router-dom';
 
 interface HealthStatus {
   status: 'healthy' | 'degraded' | 'unhealthy' | 'error';
@@ -80,9 +82,14 @@ function formatUptime(seconds: number): string {
 
 export default function Settings() {
   usePageTracking();
+  const { user } = useAuth();
   const [healthStatus, setHealthStatus] = useState<HealthStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
+  if (user?.role === 'barangay_user') {
+    return <Navigate to="/" replace />;
+  }
 
   const fetchHealthStatus = async () => {
     try {

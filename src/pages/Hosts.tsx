@@ -25,9 +25,12 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/hooks/use-toast';
 import { hostsAPI } from '@/lib/api';
+import { useAuth } from '@/hooks/useAuth';
 
 export default function Hosts() {
   usePageTracking();
+  const { user } = useAuth();
+  const isBarangayUser = user?.role === 'barangay_user';
   const [hosts, setHosts] = useState<Host[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -74,6 +77,14 @@ export default function Hosts() {
   };
 
   const handleOpenDialog = (host?: Host) => {
+    if (isBarangayUser) {
+      toast({
+        title: "Permission Denied",
+        description: "Barangay users are not allowed to modify hosts.",
+        variant: "destructive",
+      });
+      return;
+    }
     if (host) {
       setEditingHost(host);
       setFormData({
@@ -93,6 +104,14 @@ export default function Hosts() {
   };
 
   const handleSaveHost = async () => {
+    if (isBarangayUser) {
+      toast({
+        title: "Permission Denied",
+        description: "Barangay users are not allowed to modify hosts.",
+        variant: "destructive",
+      });
+      return;
+    }
     if (!formData.name || !formData.contactNumber) {
       toast({
         title: "Validation Error",
@@ -132,6 +151,14 @@ export default function Hosts() {
   };
 
   const handleDeleteHost = async (id: string) => {
+    if (isBarangayUser) {
+      toast({
+        title: "Permission Denied",
+        description: "Barangay users are not allowed to modify hosts.",
+        variant: "destructive",
+      });
+      return;
+    }
     try {
       await hostsAPI.delete(id);
       toast({
@@ -168,60 +195,62 @@ export default function Hosts() {
             />
           </div>
 
-          <Dialog open={isDialogOpen} onOpenChange={(open) => open ? handleOpenDialog() : handleCloseDialog()}>
-            <DialogTrigger asChild>
-              <Button className="w-full sm:w-auto">
-                <Plus className="h-4 w-4 mr-2" />
-                Add Host
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="bg-card border-border mx-4 sm:mx-auto max-w-[calc(100vw-2rem)] sm:max-w-lg">
-              <DialogHeader>
-                <DialogTitle>{editingHost ? 'Edit Host' : 'Add New Host'}</DialogTitle>
-                <DialogDescription>
-                  {editingHost 
-                    ? 'Update the host information below.' 
-                    : 'Enter the host details to add them to the system.'}
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4 py-4">
-                <div className="space-y-2">
-                  <Label htmlFor="name">Name *</Label>
-                  <Input
-                    id="name"
-                    placeholder="Juan dela Cruz"
-                    value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    className="bg-secondary"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="contactNumber">Contact Number *</Label>
-                  <Input
-                    id="contactNumber"
-                    placeholder="+639171234567"
-                    value={formData.contactNumber}
-                    onChange={(e) => setFormData({ ...formData, contactNumber: e.target.value })}
-                    className="bg-secondary"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="address">Address</Label>
-                  <Textarea
-                    id="address"
-                    placeholder="Street, Barangay, City"
-                    value={formData.address}
-                    onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-                    className="bg-secondary"
-                    rows={3}
-                  />
-                </div>
-                <Button onClick={handleSaveHost} className="w-full">
-                  {editingHost ? 'Save Changes' : 'Add Host'}
+          {!isBarangayUser && (
+            <Dialog open={isDialogOpen} onOpenChange={(open) => open ? handleOpenDialog() : handleCloseDialog()}>
+              <DialogTrigger asChild>
+                <Button className="w-full sm:w-auto">
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add Host
                 </Button>
-              </div>
-            </DialogContent>
-          </Dialog>
+              </DialogTrigger>
+              <DialogContent className="bg-card border-border mx-4 sm:mx-auto max-w-[calc(100vw-2rem)] sm:max-w-lg">
+                <DialogHeader>
+                  <DialogTitle>{editingHost ? 'Edit Host' : 'Add New Host'}</DialogTitle>
+                  <DialogDescription>
+                    {editingHost 
+                      ? 'Update the host information below.' 
+                      : 'Enter the host details to add them to the system.'}
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="name">Name *</Label>
+                    <Input
+                      id="name"
+                      placeholder="Juan dela Cruz"
+                      value={formData.name}
+                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                      className="bg-secondary"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="contactNumber">Contact Number *</Label>
+                    <Input
+                      id="contactNumber"
+                      placeholder="+639171234567"
+                      value={formData.contactNumber}
+                      onChange={(e) => setFormData({ ...formData, contactNumber: e.target.value })}
+                      className="bg-secondary"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="address">Address</Label>
+                    <Textarea
+                      id="address"
+                      placeholder="Street, Barangay, City"
+                      value={formData.address}
+                      onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+                      className="bg-secondary"
+                      rows={3}
+                    />
+                  </div>
+                  <Button onClick={handleSaveHost} className="w-full">
+                    {editingHost ? 'Save Changes' : 'Add Host'}
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
+          )}
         </div>
 
         {hosts.length > 0 ? (
@@ -232,19 +261,21 @@ export default function Hosts() {
                 <div key={host.id} className="glass-card rounded-xl p-4 space-y-3">
                   <div className="flex items-center justify-between">
                     <span className="font-semibold text-lg">{host.name}</span>
-                    <div className="flex items-center gap-1">
-                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleOpenDialog(host)}>
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                      <Button 
-                        variant="ghost" 
-                        size="icon"
-                        onClick={() => handleDeleteHost(host.id)}
-                        className="text-destructive hover:text-destructive h-8 w-8"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
+                    {!isBarangayUser && (
+                      <div className="flex items-center gap-1">
+                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleOpenDialog(host)}>
+                          <Edit className="h-4 w-4" />
+                        </Button>
+                        <Button 
+                          variant="ghost" 
+                          size="icon"
+                          onClick={() => handleDeleteHost(host.id)}
+                          className="text-destructive hover:text-destructive h-8 w-8"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    )}
                   </div>
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <Phone className="h-4 w-4" />
@@ -286,19 +317,21 @@ export default function Hosts() {
                           {host.address || '-'}
                         </TableCell>
                         <TableCell className="text-right">
-                          <div className="flex items-center justify-end gap-2">
-                            <Button variant="ghost" size="icon" onClick={() => handleOpenDialog(host)}>
-                              <Edit className="h-4 w-4" />
-                            </Button>
-                            <Button 
-                              variant="ghost" 
-                              size="icon"
-                              onClick={() => handleDeleteHost(host.id)}
-                              className="text-destructive hover:text-destructive"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </div>
+                          {!isBarangayUser && (
+                            <div className="flex items-center justify-end gap-2">
+                              <Button variant="ghost" size="icon" onClick={() => handleOpenDialog(host)}>
+                                <Edit className="h-4 w-4" />
+                              </Button>
+                              <Button 
+                                variant="ghost" 
+                                size="icon"
+                                onClick={() => handleDeleteHost(host.id)}
+                                className="text-destructive hover:text-destructive"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          )}
                         </TableCell>
                       </TableRow>
                     ))}
@@ -314,10 +347,12 @@ export default function Hosts() {
             <p className="text-muted-foreground mb-6">
               Add your first host to the registry
             </p>
-            <Button onClick={() => handleOpenDialog()}>
-              <Plus className="h-4 w-4 mr-2" />
-              Add Your First Host
-            </Button>
+            {!isBarangayUser && (
+              <Button onClick={() => handleOpenDialog()}>
+                <Plus className="h-4 w-4 mr-2" />
+                Add Your First Host
+              </Button>
+            )}
           </div>
         )}
       </div>
