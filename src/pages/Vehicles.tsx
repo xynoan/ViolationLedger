@@ -53,12 +53,10 @@ export default function Vehicles() {
     loadVehicles();
   }, [searchTerm]);
 
-  // Load hosts when dialog opens
+  // Load hosts on mount so view dialog can resolve host names
   useEffect(() => {
-    if (isDialogOpen) {
-      loadHosts();
-    }
-  }, [isDialogOpen]);
+    loadHosts();
+  }, []);
 
   const loadHosts = async () => {
     try {
@@ -219,6 +217,12 @@ export default function Vehicles() {
     }
   };
 
+  const getHostNameForVehicle = (vehicle: Vehicle) => {
+    if (!vehicle.hostId) return null;
+    const host = hosts.find((h) => h.id === vehicle.hostId);
+    return host?.name || null;
+  };
+
   const handleDeleteVehicle = async (id: string) => {
     // Encoders cannot delete vehicles
     if (isEncoder) {
@@ -354,11 +358,10 @@ export default function Vehicles() {
                     value={formData.rented}
                     onChange={(e) => {
                       const rentedValue = e.target.value;
-                      setFormData({ 
-                        ...formData, 
+                      setFormData(prev => ({ 
+                        ...prev, 
                         rented: rentedValue,
-                        hostId: rentedValue ? '' : formData.hostId, // Clear host if rented is filled
-                      });
+                      }));
                     }}
                     className="bg-secondary"
                   />
@@ -533,8 +536,8 @@ export default function Vehicles() {
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div>
-                        <p className="text-xs uppercase text-muted-foreground">Host ID</p>
-                        <p>{selectedVehicle.hostId || 'None'}</p>
+                        <p className="text-xs uppercase text-muted-foreground">Host</p>
+                        <p>{getHostNameForVehicle(selectedVehicle) || 'None'}</p>
                       </div>
                       <div>
                         <p className="text-xs uppercase text-muted-foreground">Rented</p>
