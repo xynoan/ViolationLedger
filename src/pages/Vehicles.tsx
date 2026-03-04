@@ -36,7 +36,9 @@ export default function Vehicles() {
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
   const [editingVehicle, setEditingVehicle] = useState<Vehicle | null>(null);
+  const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
   const [formData, setFormData] = useState({
     plateNumber: '',
     ownerName: '',
@@ -242,6 +244,11 @@ export default function Vehicles() {
         variant: "destructive",
       });
     }
+  };
+
+  const handleViewVehicle = (vehicle: Vehicle) => {
+    setSelectedVehicle(vehicle);
+    setIsViewDialogOpen(true);
   };
 
   return (
@@ -458,21 +465,31 @@ export default function Vehicles() {
                           {new Date(vehicle.registeredAt).toLocaleDateString()}
                         </TableCell>
                         <TableCell className="text-right">
-                          {!isEncoder && (
-                            <div className="flex items-center justify-end gap-2">
-                              <Button variant="ghost" size="icon" onClick={() => handleOpenDialog(vehicle)}>
-                                <Edit className="h-4 w-4" />
-                              </Button>
-                              <Button 
-                                variant="ghost" 
-                                size="icon"
-                                onClick={() => handleDeleteVehicle(vehicle.id)}
-                                className="text-destructive hover:text-destructive"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          )}
+                          <div className="flex items-center justify-end gap-2">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleViewVehicle(vehicle)}
+                              aria-label="View details"
+                            >
+                              <Info className="h-4 w-4" />
+                            </Button>
+                            {!isEncoder && (
+                              <>
+                                <Button variant="ghost" size="icon" onClick={() => handleOpenDialog(vehicle)}>
+                                  <Edit className="h-4 w-4" />
+                                </Button>
+                                <Button 
+                                  variant="ghost" 
+                                  size="icon"
+                                  onClick={() => handleDeleteVehicle(vehicle.id)}
+                                  className="text-destructive hover:text-destructive"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </>
+                            )}
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -480,6 +497,58 @@ export default function Vehicles() {
                 </Table>
               </div>
             </div>
+            <Dialog
+              open={isViewDialogOpen}
+              onOpenChange={(open) => {
+                if (!open) {
+                  setIsViewDialogOpen(false);
+                  setSelectedVehicle(null);
+                }
+              }}
+            >
+              <DialogContent className="bg-card border-border mx-4 sm:mx-auto max-w-[calc(100vw-2rem)] sm:max-w-md">
+                <DialogHeader>
+                  <DialogTitle>Vehicle Details</DialogTitle>
+                  <DialogDescription>
+                    {selectedVehicle ? `Full information for ${selectedVehicle.plateNumber}` : 'Full vehicle information'}
+                  </DialogDescription>
+                </DialogHeader>
+                {selectedVehicle && (
+                  <div className="space-y-4 py-2 text-sm">
+                    <div>
+                      <p className="text-xs uppercase text-muted-foreground">Plate Number</p>
+                      <p className="font-mono font-medium">{selectedVehicle.plateNumber}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase text-muted-foreground">Owner Name</p>
+                      <p className="font-medium">{selectedVehicle.ownerName}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase text-muted-foreground">Contact Number</p>
+                      <p>{selectedVehicle.contactNumber}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase text-muted-foreground">Purpose of Visit</p>
+                      <p>{selectedVehicle.purposeOfVisit || '—'}</p>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <p className="text-xs uppercase text-muted-foreground">Host ID</p>
+                        <p>{selectedVehicle.hostId || 'None'}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs uppercase text-muted-foreground">Rented</p>
+                        <p>{selectedVehicle.rented || 'No'}</p>
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase text-muted-foreground">Registered</p>
+                      <p>{new Date(selectedVehicle.registeredAt).toLocaleString()}</p>
+                    </div>
+                  </div>
+                )}
+              </DialogContent>
+            </Dialog>
           </>
         ) : (
           <div className="glass-card rounded-xl p-8 sm:p-12 text-center">
