@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, Search, Edit, Trash2, Phone, Car } from 'lucide-react';
+import { Plus, Search, Edit, Trash2, Phone, Car, Info } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
 import { Button } from '@/components/ui/button';
@@ -252,6 +252,12 @@ export default function Vehicles() {
       />
 
       <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
+        <div className="flex items-start gap-2 rounded-lg border border-border bg-card/70 px-3 py-2 text-sm text-muted-foreground">
+          <Info className="mt-0.5 h-4 w-4 text-primary" />
+          <p className="leading-relaxed">
+            Here's where we add non-resident vehicle details if their plate number is detected on cctv, viber message will be sent to their number.
+          </p>
+        </div>
         {/* Actions Bar */}
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 sm:gap-4">
           <div className="relative flex-1 sm:max-w-md">
@@ -431,7 +437,7 @@ export default function Vehicles() {
                   <TableHeader>
                     <TableRow className="border-border hover:bg-transparent">
                       <TableHead className="text-muted-foreground">Plate Number</TableHead>
-                      <TableHead className="text-muted-foreground">Owner</TableHead>
+                      <TableHead className="text-muted-foreground">Name</TableHead>
                       <TableHead className="text-muted-foreground">Contact</TableHead>
                       <TableHead className="text-muted-foreground">Registered</TableHead>
                       <TableHead className="text-muted-foreground text-right">Actions</TableHead>
