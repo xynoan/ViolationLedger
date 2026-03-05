@@ -45,10 +45,10 @@ function NavContent({ collapsed, onNavigate }: { collapsed?: boolean; onNavigate
   const isEncoder = user?.role === 'encoder';
   const isBarangayUser = user?.role === 'barangay_user';
 
-  // Encoders can only see Vehicles page
+  // Encoders can only see Vehicles and Hosts pages
   const filteredItems = navItems.filter(item => {
     if (isEncoder) {
-      return item.path === '/vehicles';
+      return item.path === '/vehicles' || item.path === '/hosts';
     }
     // Barangay users should not see Settings page
     if (isBarangayUser && item.path === '/settings') {

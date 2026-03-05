@@ -12,7 +12,7 @@ interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
   isLoading: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string) => Promise<User>;
   logout: () => void;
 }
 
@@ -48,14 +48,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     checkAuth();
   }, []);
 
-  const login = async (email: string, password: string) => {
+  const login = async (email: string, password: string): Promise<User> => {
     const response = await authAPI.login(email, password);
     if (response.token && response.user) {
       localStorage.setItem('auth_token', response.token);
       setUser(response.user);
-    } else {
-      throw new Error('Invalid response from server');
+      return response.user;
     }
+    throw new Error('Invalid response from server');
   };
 
   const logout = () => {

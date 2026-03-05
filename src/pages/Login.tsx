@@ -29,12 +29,12 @@ export default function Login() {
 
     setIsLoading(true);
     try {
-      await login(email.trim(), password);
+      const user = await login(email.trim(), password);
       toast({
         title: "Login Successful",
         description: "Welcome back!",
       });
-      navigate('/');
+      navigate(user?.role === 'encoder' ? '/vehicles' : '/');
     } catch (error: any) {
       toast({
         title: "Login Failed",

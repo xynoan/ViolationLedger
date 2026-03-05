@@ -281,6 +281,11 @@ export default function Vehicles() {
         subtitle="Manage registered vehicles"
       />
 
+      {isLoading ? (
+        <div className="p-4 sm:p-6 flex items-center justify-center min-h-[50vh]">
+          <div className="h-8 w-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+        </div>
+      ) : (
       <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
         <div className="flex items-start gap-2 rounded-lg border border-border bg-card/70 px-3 py-2 text-sm text-muted-foreground">
           <Info className="mt-0.5 h-4 w-4 text-primary" />
@@ -592,6 +597,7 @@ export default function Vehicles() {
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }

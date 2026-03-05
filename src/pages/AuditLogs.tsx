@@ -193,6 +193,17 @@ export default function AuditLogs() {
     }
   };
 
+  if (isLoading && logs.length === 0) {
+    return (
+      <div className="min-h-screen">
+        <Header title="Audit Logs" subtitle="Track all user activities and system events" />
+        <div className="p-4 sm:p-6 flex items-center justify-center min-h-[50vh]">
+          <div className="h-8 w-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen">
       <Header
