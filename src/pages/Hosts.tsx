@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, Search, Edit, Trash2, Phone, Home, MapPin } from 'lucide-react';
+import { Plus, Search, Edit, Trash2, Phone, Home, MapPin, Info } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
 import { Button } from '@/components/ui/button';
@@ -183,6 +183,12 @@ export default function Hosts() {
       />
 
       <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
+        <div className="flex items-start gap-2 rounded-lg border border-border bg-card/70 px-3 py-2 text-sm text-muted-foreground">
+          <Info className="mt-0.5 h-4 w-4 text-primary" />
+          <p className="leading-relaxed">
+          Here's where we add resident details whom will take the role of "Host". They will be the ones who will be receiving viber message if their visitor (non-resident) parked illegally. 
+          </p>
+        </div>
         {/* Actions Bar */}
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 sm:gap-4">
           <div className="relative flex-1 sm:max-w-md">
