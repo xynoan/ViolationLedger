@@ -91,6 +91,16 @@ const formatDetails = (details: string) => {
 
     const method = parsed.method ?? '';
     const path = parsed.path ?? '';
+    const body = parsed.body ?? {};
+
+    // For user creation, surface assigned role if present
+    if (parsed.resource === 'user' && parsed.action === 'create') {
+      const role = body.role || body.newRole || '';
+      if (role) {
+        return `Created user (role: ${role})`;
+      }
+      return 'Created user';
+    }
 
     if (method && path) {
       return `${method} ${path}`;

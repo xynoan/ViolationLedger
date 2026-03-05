@@ -39,6 +39,8 @@ interface User {
   name: string | null;
   role: 'admin' | 'barangay_user' | 'encoder';
   viberNumber: string | null;
+  contactNumber: string | null;
+  status: 'active' | 'inactive';
   createdAt: string;
 }
 
@@ -53,9 +55,12 @@ export default function UserManagement() {
   const [formData, setFormData] = useState({
     email: '',
     password: '',
+    confirmPassword: '',
     name: '',
     role: 'encoder' as 'admin' | 'barangay_user' | 'encoder',
     viberNumber: '',
+    contactNumber: '',
+    status: 'active' as 'active' | 'inactive',
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -88,9 +93,12 @@ export default function UserManagement() {
       setFormData({
         email: user.email,
         password: '',
+        confirmPassword: '',
         name: user.name || '',
         role: user.role,
         viberNumber: user.viberNumber || '',
+        contactNumber: user.contactNumber || '',
+        status: user.status || 'active',
       });
     } else {
       trackAction('button_click', 'user', null, { action: 'add_user' });
@@ -98,9 +106,12 @@ export default function UserManagement() {
       setFormData({
         email: '',
         password: '',
+        confirmPassword: '',
         name: '',
         role: 'encoder',
         viberNumber: '',
+        contactNumber: '',
+        status: 'active',
       });
     }
     setIsDialogOpen(true);
@@ -112,9 +123,12 @@ export default function UserManagement() {
     setFormData({
       email: '',
       password: '',
+      confirmPassword: '',
       name: '',
       role: 'encoder',
       viberNumber: '',
+      contactNumber: '',
+      status: 'active',
     });
   };
 
@@ -123,6 +137,15 @@ export default function UserManagement() {
       toast({
         title: "Validation Error",
         description: "Email is required",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!formData.name.trim()) {
+      toast({
+        title: "Validation Error",
+        description: "Name is required",
         variant: "destructive",
       });
       return;
@@ -146,15 +169,26 @@ export default function UserManagement() {
       return;
     }
 
+    if (formData.password && formData.password !== formData.confirmPassword) {
+      toast({
+        title: "Validation Error",
+        description: "Password and Confirm Password do not match",
+        variant: "destructive",
+      });
+      return;
+    }
+
     try {
       setIsSubmitting(true);
       if (selectedUser) {
         // Update existing user
         const updateData: any = {
           email: formData.email,
-          name: formData.name || null,
+          name: formData.name.trim(),
           role: formData.role,
           viberNumber: formData.role === 'barangay_user' ? formData.viberNumber.trim() || null : null,
+          contactNumber: formData.contactNumber.trim() || null,
+          status: formData.status,
         };
         if (formData.password) {
           updateData.password = formData.password;
@@ -170,9 +204,11 @@ export default function UserManagement() {
         await usersAPI.create({
           email: formData.email,
           password: formData.password,
-          name: formData.name || undefined,
+          name: formData.name.trim(),
           role,
           viberNumber: formData.role === 'barangay_user' ? formData.viberNumber.trim() || undefined : undefined,
+          contactNumber: formData.contactNumber.trim() || undefined,
+          status: formData.status,
         });
         toast({
           title: "Success",
@@ -198,10 +234,11 @@ export default function UserManagement() {
 
     try {
       await trackAction('button_click', 'user', selectedUser.id, { action: 'delete_user', email: selectedUser.email });
-      await usersAPI.delete(selectedUser.id);
+      // Soft deactivate instead of hard delete
+      await usersAPI.update(selectedUser.id, { status: 'inactive' });
       toast({
         title: "Success",
-        description: "User deleted successfully",
+        description: "User deactivated successfully",
       });
       setIsDeleteDialogOpen(false);
       setSelectedUser(null);
@@ -259,6 +296,7 @@ export default function UserManagement() {
                     <TableHead>Name</TableHead>
                     <TableHead>Email</TableHead>
                     <TableHead>Role</TableHead>
+                    <TableHead>Status</TableHead>
                     <TableHead>Created</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
@@ -291,6 +329,11 @@ export default function UserManagement() {
                         </Badge>
                       </TableCell>
                       <TableCell>
+                        <Badge variant={user.status === 'active' ? 'default' : 'secondary'}>
+                          {user.status === 'active' ? 'Active' : 'Inactive'}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
                         {new Date(user.createdAt).toLocaleDateString()}
                       </TableCell>
                       <TableCell className="text-right">
@@ -302,6 +345,32 @@ export default function UserManagement() {
                             disabled={user.id === currentUser?.id}
                           >
                             <Edit className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={async () => {
+                              if (user.id === currentUser?.id) return;
+                              const nextStatus = user.status === 'active' ? 'inactive' : 'active';
+                              try {
+                                await usersAPI.update(user.id, { status: nextStatus });
+                                toast({
+                                  title: "Success",
+                                  description: `User ${nextStatus === 'active' ? 'activated' : 'deactivated'} successfully`,
+                                });
+                                loadUsers();
+                              } catch (error: any) {
+                                console.error('Error updating user status:', error);
+                                toast({
+                                  title: "Error",
+                                  description: error.message || "Failed to update user status",
+                                  variant: "destructive",
+                                });
+                              }
+                            }}
+                            disabled={user.id === currentUser?.id}
+                          >
+                            {user.status === 'active' ? 'Deactivate' : 'Activate'}
                           </Button>
                           <Button
                             variant="ghost"
@@ -334,7 +403,7 @@ export default function UserManagement() {
           else setIsDialogOpen(open);
         }}
       >
-        <DialogContent>
+        <DialogContent className="max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{selectedUser ? 'Edit User' : 'Add New User'}</DialogTitle>
             <DialogDescription>
@@ -386,12 +455,36 @@ export default function UserManagement() {
               </div>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="name">Name (Optional)</Label>
+              <Label htmlFor="name">
+                Name <span className="text-destructive">*</span>
+              </Label>
               <Input
                 id="name"
                 value={formData.name}
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                 placeholder="User's full name"
+                disabled={isSubmitting}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="confirmPassword">Confirm Password</Label>
+              <Input
+                id="confirmPassword"
+                type="password"
+                value={formData.confirmPassword}
+                onChange={(e) => setFormData({ ...formData, confirmPassword: e.target.value })}
+                placeholder="Re-enter password"
+                disabled={isSubmitting}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="contactNumber">Contact Number for 2FA</Label>
+              <Input
+                id="contactNumber"
+                type="tel"
+                value={formData.contactNumber}
+                onChange={(e) => setFormData({ ...formData, contactNumber: e.target.value })}
+                placeholder="09XXXXXXXXX or +639XXXXXXXXX"
                 disabled={isSubmitting}
               />
             </div>
@@ -429,6 +522,24 @@ export default function UserManagement() {
                   </p>
                 </>
               )}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="status">Account Status</Label>
+              <Select
+                value={formData.status}
+                onValueChange={(value: 'active' | 'inactive') =>
+                  setFormData((prev) => ({ ...prev, status: value }))
+                }
+                disabled={isSubmitting}
+              >
+                <SelectTrigger id="status">
+                  <SelectValue placeholder="Select status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="active">Active</SelectItem>
+                  <SelectItem value="inactive">Inactive</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             {/* Viber Number: shown when adding a user and Barangay User is chosen */}
             {!selectedUser && formData.role === 'barangay_user' && (

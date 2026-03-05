@@ -296,12 +296,34 @@ export const analyticsAPI = {
 };
 
 // Users API
+export type UserStatus = 'active' | 'inactive';
+
+export interface CreateUserPayload {
+  email: string;
+  password: string;
+  name: string;
+  role?: string;
+  viberNumber?: string;
+  contactNumber?: string;
+  status?: UserStatus;
+}
+
+export interface UpdateUserPayload {
+  email?: string;
+  password?: string;
+  name?: string;
+  role?: string;
+  viberNumber?: string;
+  contactNumber?: string;
+  status?: UserStatus;
+}
+
 export const usersAPI = {
   getAll: () => fetchAPI('/users', { cache: false }),
   getById: (id: string) => fetchAPI(`/users/${id}`, { cache: false }),
-  create: (data: { email: string; password: string; name?: string; role?: string; viberNumber?: string }) =>
+  create: (data: CreateUserPayload) =>
     fetchAPI('/users', { method: 'POST', body: JSON.stringify(data) }),
-  update: (id: string, data: { email?: string; password?: string; name?: string; role?: string; viberNumber?: string }) =>
+  update: (id: string, data: UpdateUserPayload) =>
     fetchAPI(`/users/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   delete: (id: string) => fetchAPI(`/users/${id}`, { method: 'DELETE' }),
 };

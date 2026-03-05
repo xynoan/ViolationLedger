@@ -57,6 +57,11 @@ router.post('/login', (req, res) => {
     if (user.password !== passwordHash) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
+
+    // Block inactive users from logging in
+    if (user.status && user.status !== 'active') {
+      return res.status(403).json({ error: 'Account is deactivated. Please contact an administrator.' });
+    }
     
     // Generate token
     const token = generateToken(user.id);
@@ -69,6 +74,8 @@ router.post('/login', (req, res) => {
         email: user.email,
         name: user.name || user.email,
         role: user.role || 'barangay_user',
+        status: user.status || 'active',
+        mustResetPassword: !!user.mustResetPassword,
       },
     });
   } catch (error) {
@@ -117,6 +124,8 @@ router.get('/verify', (req, res) => {
       email: user.email,
       name: user.name || user.email,
       role: user.role || 'barangay_user',
+      status: user.status || 'active',
+      mustResetPassword: !!user.mustResetPassword,
     });
   } catch (error) {
     console.error('Verify error:', error);

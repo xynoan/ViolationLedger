@@ -271,7 +271,11 @@ async function initDatabase() {
       password TEXT NOT NULL,
       name TEXT,
       role TEXT NOT NULL DEFAULT 'barangay_user',
-      createdAt TEXT NOT NULL
+      createdAt TEXT NOT NULL,
+      viberNumber TEXT,
+      status TEXT NOT NULL DEFAULT 'active',
+      contactNumber TEXT,
+      mustResetPassword INTEGER NOT NULL DEFAULT 1
     )
   `);
   
@@ -332,6 +336,50 @@ async function initDatabase() {
     if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
       console.log('Note: viberNumber column migration:', errorMsg);
     }
+  }
+  
+  // Migrate users table to add status column (active/inactive)
+  try {
+    db.run('ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT \'active\'');
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: status column migration:', errorMsg);
+    }
+  }
+
+  // Ensure existing users have active status by default
+  try {
+    db.run(`UPDATE users SET status = 'active' WHERE status IS NULL OR status = ''`);
+  } catch (error) {
+    // Ignore errors
+  }
+
+  // Migrate users table to add contactNumber (for 2FA / secondary contact)
+  try {
+    db.run('ALTER TABLE users ADD COLUMN contactNumber TEXT');
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: contactNumber column migration:', errorMsg);
+    }
+  }
+
+  // Migrate users table to add mustResetPassword flag
+  try {
+    db.run('ALTER TABLE users ADD COLUMN mustResetPassword INTEGER NOT NULL DEFAULT 1');
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: mustResetPassword column migration:', errorMsg);
+    }
+  }
+
+  // For existing users, default mustResetPassword to 0 to avoid forcing resets unexpectedly
+  try {
+    db.run(`UPDATE users SET mustResetPassword = 0 WHERE mustResetPassword IS NULL`);
+  } catch (error) {
+    // Ignore errors
   }
   
   // Seed Barangay user if it doesn't exist (will be done after crypto import)

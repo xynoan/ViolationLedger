@@ -3,6 +3,7 @@ import db from '../database.js';
 import crypto from 'crypto';
 import { authenticateToken, requireRole } from '../middleware/auth.js';
 import { auditLog } from '../middleware/audit.js';
+import { sendActivationEmailStub } from '../utils/emailStub.js';
 
 const router = express.Router();
 
@@ -11,7 +12,7 @@ router.use(auditLog);
 router.get('/', requireRole('admin'), (req, res) => {
   try {
     const users = db.prepare(`
-      SELECT id, email, name, role, viberNumber, createdAt 
+      SELECT id, email, name, role, viberNumber, contactNumber, status, createdAt 
       FROM users 
       ORDER BY createdAt DESC
     `).all();
@@ -26,7 +27,7 @@ router.get('/', requireRole('admin'), (req, res) => {
 router.get('/:id', requireRole('admin'), (req, res) => {
   try {
     const user = db.prepare(`
-      SELECT id, email, name, role, viberNumber, createdAt 
+      SELECT id, email, name, role, viberNumber, contactNumber, status, createdAt 
       FROM users 
       WHERE id = ?
     `).get(req.params.id);
@@ -44,10 +45,14 @@ router.get('/:id', requireRole('admin'), (req, res) => {
 
 router.post('/', requireRole('admin'), (req, res) => {
   try {
-    const { email, password, name, role, viberNumber } = req.body;
+    const { email, password, name, role, viberNumber, contactNumber } = req.body;
     
     if (!email || !password) {
       return res.status(400).json({ error: 'Email and password are required' });
+    }
+    
+    if (!name || !String(name).trim()) {
+      return res.status(400).json({ error: 'Name is required' });
     }
     
     // Allow admin to create encoder or barangay_user (never admin via UI)
@@ -74,16 +79,19 @@ router.post('/', requireRole('admin'), (req, res) => {
     // Insert user into database (viberNumber for barangay_user only)
     const userViber = userRole === 'barangay_user' && viberNumber ? String(viberNumber).trim() : null;
     db.prepare(`
-      INSERT INTO users (id, email, password, name, role, viberNumber, createdAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO users (id, email, password, name, role, viberNumber, createdAt, status, contactNumber, mustResetPassword)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       userId,
       email.toLowerCase().trim(),
       passwordHash,
-      name || email.split('@')[0],
+      String(name).trim(),
       userRole,
       userViber,
-      now
+      now,
+      'active',
+      contactNumber ? String(contactNumber).trim() : null,
+      1
     );
     
     // Create default notification preferences for new user
@@ -94,10 +102,17 @@ router.post('/', requireRole('admin'), (req, res) => {
     
     // Return user without password
     const newUser = db.prepare(`
-      SELECT id, email, name, role, viberNumber, createdAt 
+      SELECT id, email, name, role, viberNumber, contactNumber, status, createdAt 
       FROM users 
       WHERE id = ?
     `).get(userId);
+    
+    // Stub activation email hook
+    try {
+      sendActivationEmailStub(newUser);
+    } catch (emailError) {
+      console.error('Error sending activation email (stub):', emailError);
+    }
     
     res.status(201).json(newUser);
   } catch (error) {
@@ -108,7 +123,7 @@ router.post('/', requireRole('admin'), (req, res) => {
 
 router.put('/:id', requireRole('admin'), (req, res) => {
   try {
-    const { email, password, name, role, viberNumber } = req.body;
+    const { email, password, name, role, viberNumber, contactNumber, status } = req.body;
     const userId = req.params.id;
     
     // Check if user exists
@@ -150,17 +165,35 @@ router.put('/:id', requireRole('admin'), (req, res) => {
     
     if (name !== undefined) {
       updates.push('name = ?');
-      values.push(name || null);
+      values.push(String(name).trim() || null);
     }
     
     if (viberNumber !== undefined) {
       updates.push('viberNumber = ?');
       values.push(String(viberNumber).trim() || null);
     }
+
+    if (contactNumber !== undefined) {
+      updates.push('contactNumber = ?');
+      values.push(String(contactNumber).trim() || null);
+    }
     
     if (role === 'encoder') {
       updates.push('role = ?');
       values.push('encoder');
+    }
+
+    if (status !== undefined) {
+      const normalizedStatus = String(status).toLowerCase();
+      if (normalizedStatus !== 'active' && normalizedStatus !== 'inactive') {
+        return res.status(400).json({ error: 'Invalid status. Allowed values are active or inactive.' });
+      }
+      // Prevent deactivating your own account
+      if (normalizedStatus === 'inactive' && userId === req.user.id) {
+        return res.status(400).json({ error: 'Cannot deactivate your own account' });
+      }
+      updates.push('status = ?');
+      values.push(normalizedStatus);
     }
     
     if (password) {
@@ -183,7 +216,7 @@ router.put('/:id', requireRole('admin'), (req, res) => {
     
     // Return updated user
     const updatedUser = db.prepare(`
-      SELECT id, email, name, role, viberNumber, createdAt 
+      SELECT id, email, name, role, viberNumber, contactNumber, status, createdAt 
       FROM users 
       WHERE id = ?
     `).get(userId);
@@ -210,8 +243,8 @@ router.delete('/:id', requireRole('admin'), (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
     
-    // Delete user (cascade will handle related records)
-    db.prepare('DELETE FROM users WHERE id = ?').run(userId);
+    // Soft delete: mark user as inactive instead of removing
+    db.prepare('UPDATE users SET status = ?, mustResetPassword = 0 WHERE id = ?').run('inactive', userId);
     
     res.status(204).send();
   } catch (error) {

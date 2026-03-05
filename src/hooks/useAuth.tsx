@@ -6,6 +6,8 @@ interface User {
   email: string;
   name?: string;
   role?: string;
+  status?: string;
+  mustResetPassword?: boolean;
 }
 
 interface AuthContextType {
