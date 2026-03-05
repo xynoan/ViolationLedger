@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Users, Plus, Edit, Trash2, Shield, User, RefreshCw, Eye, EyeOff } from 'lucide-react';
+import { Users, Plus, Edit, Trash2, Shield, User, RefreshCw, Eye, EyeOff, CheckCircle2, XCircle } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -161,6 +161,37 @@ export default function UserManagement() {
         variant: "destructive",
       });
       return;
+    }
+
+    const hasPassword = !!formData.password && formData.password.length > 0;
+    if (hasPassword) {
+      const password = formData.password;
+      const passwordErrors: string[] = [];
+
+      if (password.length < 8) {
+        passwordErrors.push("at least 8 characters");
+      }
+      if (!/[A-Z]/.test(password)) {
+        passwordErrors.push("one uppercase letter");
+      }
+      if (!/[a-z]/.test(password)) {
+        passwordErrors.push("one lowercase letter");
+      }
+      if (!/[0-9]/.test(password)) {
+        passwordErrors.push("one number");
+      }
+      if (!/[!@#$%^&*(),.?":{}|<>_\-]/.test(password)) {
+        passwordErrors.push("one special character");
+      }
+
+      if (passwordErrors.length > 0) {
+        toast({
+          title: "Password does not meet requirements",
+          description: `Password must contain ${passwordErrors.join(', ')}.`,
+          variant: "destructive",
+        });
+        return;
+      }
     }
 
     if (formData.role === 'barangay_user' && !formData.viberNumber.trim()) {
@@ -474,6 +505,53 @@ export default function UserManagement() {
                   )}
                 </button>
               </div>
+              {formData.password && (
+                <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+                  <div className="font-medium">Password must contain:</div>
+                  <div className="grid gap-1 sm:grid-cols-2">
+                    <span className="flex items-center gap-1">
+                      {formData.password.length >= 8 ? (
+                        <CheckCircle2 className="h-3 w-3 text-emerald-500" />
+                      ) : (
+                        <XCircle className="h-3 w-3 text-destructive" />
+                      )}
+                      <span>At least 8 characters</span>
+                    </span>
+                    <span className="flex items-center gap-1">
+                      {/[A-Z]/.test(formData.password) ? (
+                        <CheckCircle2 className="h-3 w-3 text-emerald-500" />
+                      ) : (
+                        <XCircle className="h-3 w-3 text-destructive" />
+                      )}
+                      <span>One uppercase letter (A-Z)</span>
+                    </span>
+                    <span className="flex items-center gap-1">
+                      {/[a-z]/.test(formData.password) ? (
+                        <CheckCircle2 className="h-3 w-3 text-emerald-500" />
+                      ) : (
+                        <XCircle className="h-3 w-3 text-destructive" />
+                      )}
+                      <span>One lowercase letter (a-z)</span>
+                    </span>
+                    <span className="flex items-center gap-1">
+                      {/[0-9]/.test(formData.password) ? (
+                        <CheckCircle2 className="h-3 w-3 text-emerald-500" />
+                      ) : (
+                        <XCircle className="h-3 w-3 text-destructive" />
+                      )}
+                      <span>One number (0-9)</span>
+                    </span>
+                    <span className="flex items-center gap-1 sm:col-span-2">
+                      {/[!@#$%^&*(),.?":{}|<>_\-]/.test(formData.password) ? (
+                        <CheckCircle2 className="h-3 w-3 text-emerald-500" />
+                      ) : (
+                        <XCircle className="h-3 w-3 text-destructive" />
+                      )}
+                      <span>One special character (!@#$%^&amp;* etc.)</span>
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
             <div className="space-y-2">
               <Label htmlFor="name">
