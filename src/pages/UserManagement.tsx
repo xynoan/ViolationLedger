@@ -385,6 +385,11 @@ export default function UserManagement() {
                             size="sm"
                             onClick={() => openStatusDialog(user)}
                             disabled={user.id === currentUser?.id}
+                            className={
+                              user.status === 'active'
+                                ? 'bg-destructive text-destructive-foreground hover:bg-destructive/90'
+                                : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                            }
                           >
                             {user.status === 'active' ? 'Deactivate' : 'Activate'}
                           </Button>
