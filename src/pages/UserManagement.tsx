@@ -51,7 +51,10 @@ export default function UserManagement() {
   const [isLoading, setIsLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [isStatusDialogOpen, setIsStatusDialogOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
+  const [statusDialogUser, setStatusDialogUser] = useState<User | null>(null);
+  const [statusDialogNextStatus, setStatusDialogNextStatus] = useState<'active' | 'inactive' | null>(null);
   const [formData, setFormData] = useState({
     email: '',
     password: '',
@@ -229,6 +232,37 @@ export default function UserManagement() {
     }
   };
 
+  const openStatusDialog = (user: User) => {
+    if (user.id === currentUser?.id) return;
+    const nextStatus: 'active' | 'inactive' = user.status === 'active' ? 'inactive' : 'active';
+    setStatusDialogUser(user);
+    setStatusDialogNextStatus(nextStatus);
+    setIsStatusDialogOpen(true);
+  };
+
+  const handleConfirmStatusChange = async () => {
+    if (!statusDialogUser || !statusDialogNextStatus) return;
+
+    try {
+      await usersAPI.update(statusDialogUser.id, { status: statusDialogNextStatus });
+      toast({
+        title: "Success",
+        description: `User ${statusDialogNextStatus === 'active' ? 'activated' : 'deactivated'} successfully`,
+      });
+      setIsStatusDialogOpen(false);
+      setStatusDialogUser(null);
+      setStatusDialogNextStatus(null);
+      loadUsers();
+    } catch (error: any) {
+      console.error('Error updating user status:', error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to update user status",
+        variant: "destructive",
+      });
+    }
+  };
+
   const handleDelete = async () => {
     if (!selectedUser) return;
 
@@ -349,25 +383,7 @@ export default function UserManagement() {
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={async () => {
-                              if (user.id === currentUser?.id) return;
-                              const nextStatus = user.status === 'active' ? 'inactive' : 'active';
-                              try {
-                                await usersAPI.update(user.id, { status: nextStatus });
-                                toast({
-                                  title: "Success",
-                                  description: `User ${nextStatus === 'active' ? 'activated' : 'deactivated'} successfully`,
-                                });
-                                loadUsers();
-                              } catch (error: any) {
-                                console.error('Error updating user status:', error);
-                                toast({
-                                  title: "Error",
-                                  description: error.message || "Failed to update user status",
-                                  variant: "destructive",
-                                });
-                              }
-                            }}
+                            onClick={() => openStatusDialog(user)}
                             disabled={user.id === currentUser?.id}
                           >
                             {user.status === 'active' ? 'Deactivate' : 'Activate'}
@@ -607,6 +623,36 @@ export default function UserManagement() {
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Activate/Deactivate Confirmation Dialog */}
+      <AlertDialog open={isStatusDialogOpen} onOpenChange={setIsStatusDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {statusDialogNextStatus === 'inactive' ? 'Deactivate User' : 'Activate User'}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {statusDialogNextStatus === 'inactive'
+                ? `Are you sure you want to deactivate "${statusDialogUser?.email}"? They will no longer be able to log in, but their history and audit logs will be preserved.`
+                : `Are you sure you want to activate "${statusDialogUser?.email}" and allow them to log in again?`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              onClick={() => {
+                setIsStatusDialogOpen(false);
+                setStatusDialogUser(null);
+                setStatusDialogNextStatus(null);
+              }}
+            >
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmStatusChange}>
+              {statusDialogNextStatus === 'inactive' ? 'Deactivate' : 'Activate'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
