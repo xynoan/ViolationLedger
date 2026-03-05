@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { FileText, Filter, RefreshCw, Calendar, User, Search, Trash2 } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
@@ -42,6 +42,74 @@ interface User {
   email: string;
 }
 
+interface AuditLogStats {
+  total: number;
+  recent24h: number;
+  byAction: Record<string, number>;
+  byUser: Array<{
+    userId: string;
+    count: number;
+  }>;
+}
+
+const actionTypes = [
+  'view',
+  'page_view',
+  'button_click',
+  'create',
+  'update',
+  'delete',
+  'login',
+  'logout',
+  'capture',
+  'upload',
+  'export',
+  'filter',
+  'search',
+];
+
+const getActionBadgeVariant = (action: string) => {
+  switch (action) {
+    case 'create':
+      return 'secondary';
+    case 'update':
+      return 'default';
+    case 'delete':
+      return 'destructive';
+    case 'view':
+      return 'secondary';
+    case 'login':
+      return 'default';
+    default:
+      return 'outline';
+  }
+};
+
+const formatDetails = (details: string) => {
+  try {
+    const parsed = JSON.parse(details);
+
+    const method = parsed.method ?? '';
+    const path = parsed.path ?? '';
+
+    if (method && path) {
+      return `${method} ${path}`;
+    }
+
+    if (path) {
+      return path;
+    }
+
+    if (method) {
+      return method;
+    }
+
+    return details;
+  } catch {
+    return details;
+  }
+};
+
 export default function AuditLogs() {
   usePageTracking();
   const [logs, setLogs] = useState<AuditLog[]>([]);
@@ -59,7 +127,7 @@ export default function AuditLogs() {
     total: 0,
     totalPages: 0,
   });
-  const [stats, setStats] = useState<any>(null);
+  const [stats, setStats] = useState<AuditLogStats | null>(null);
   const [showClearDialog, setShowClearDialog] = useState(false);
 
   useEffect(() => {
@@ -119,7 +187,7 @@ export default function AuditLogs() {
     }
   };
 
-  const loadStats = async () => {
+  const loadStats = useCallback(async () => {
     try {
       const params: any = {};
       if (filters.startDate) {
@@ -133,7 +201,7 @@ export default function AuditLogs() {
     } catch (error) {
       console.error('Error loading stats:', error);
     }
-  };
+  }, [filters.startDate, filters.endDate]);
 
   const clearFilters = () => {
     setFilters({
@@ -142,36 +210,8 @@ export default function AuditLogs() {
       startDate: '',
       endDate: '',
     });
-    setPagination({ ...pagination, page: 1 });
+    setPagination((prev) => ({ ...prev, page: 1 }));
   };
-
-  const getActionBadgeVariant = (action: string) => {
-    switch (action) {
-      case 'create':
-        return 'success';
-      case 'update':
-        return 'default';
-      case 'delete':
-        return 'destructive';
-      case 'view':
-        return 'secondary';
-      case 'login':
-        return 'default';
-      default:
-        return 'outline';
-    }
-  };
-
-  const formatDetails = (details: string) => {
-    try {
-      const parsed = JSON.parse(details);
-      return `${parsed.method} ${parsed.path}`;
-    } catch {
-      return details;
-    }
-  };
-
-  const actionTypes = ['view', 'page_view', 'button_click', 'create', 'update', 'delete', 'login', 'logout', 'capture', 'upload', 'export', 'filter', 'search'];
 
   const handleClearLogs = async () => {
     try {
@@ -296,7 +336,7 @@ export default function AuditLogs() {
                   value={filters.userId}
                   onValueChange={(value) => {
                     setFilters({ ...filters, userId: value });
-                    setPagination({ ...pagination, page: 1 });
+                    setPagination((prev) => ({ ...prev, page: 1 }));
                   }}
                 >
                   <SelectTrigger>
@@ -318,7 +358,7 @@ export default function AuditLogs() {
                   value={filters.action}
                   onValueChange={(value) => {
                     setFilters({ ...filters, action: value });
-                    setPagination({ ...pagination, page: 1 });
+                    setPagination((prev) => ({ ...prev, page: 1 }));
                   }}
                 >
                   <SelectTrigger>
@@ -341,7 +381,7 @@ export default function AuditLogs() {
                   value={filters.startDate}
                   onChange={(e) => {
                     setFilters({ ...filters, startDate: e.target.value });
-                    setPagination({ ...pagination, page: 1 });
+                    setPagination((prev) => ({ ...prev, page: 1 }));
                   }}
                 />
               </div>
@@ -352,7 +392,7 @@ export default function AuditLogs() {
                   value={filters.endDate}
                   onChange={(e) => {
                     setFilters({ ...filters, endDate: e.target.value });
-                    setPagination({ ...pagination, page: 1 });
+                    setPagination((prev) => ({ ...prev, page: 1 }));
                   }}
                 />
               </div>
@@ -448,7 +488,12 @@ export default function AuditLogs() {
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => setPagination({ ...pagination, page: pagination.page - 1 })}
+                        onClick={() =>
+                          setPagination((prev) => ({
+                            ...prev,
+                            page: prev.page - 1,
+                          }))
+                        }
                         disabled={pagination.page === 1}
                       >
                         Previous
@@ -456,7 +501,12 @@ export default function AuditLogs() {
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => setPagination({ ...pagination, page: pagination.page + 1 })}
+                        onClick={() =>
+                          setPagination((prev) => ({
+                            ...prev,
+                            page: prev.page + 1,
+                          }))
+                        }
                         disabled={pagination.page >= pagination.totalPages}
                       >
                         Next
