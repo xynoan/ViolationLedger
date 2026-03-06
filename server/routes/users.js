@@ -43,7 +43,7 @@ router.get('/:id', requireRole('admin'), (req, res) => {
   }
 });
 
-router.post('/', requireRole('admin'), (req, res) => {
+router.post('/', requireRole('admin'), async (req, res) => {
   try {
     const { email, password, name, role, viberNumber, contactNumber } = req.body;
     
@@ -107,11 +107,11 @@ router.post('/', requireRole('admin'), (req, res) => {
       WHERE id = ?
     `).get(userId);
     
-    // Stub activation email hook
+    // Send activation email (real SMTP if configured, else stub logs to console)
     try {
-      sendActivationEmailStub(newUser);
+      await sendActivationEmailStub(newUser, password);
     } catch (emailError) {
-      console.error('Error sending activation email (stub):', emailError);
+      console.error('Error sending activation email:', emailError);
     }
     
     res.status(201).json(newUser);
