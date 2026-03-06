@@ -1,6 +1,14 @@
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 const REQUEST_TIMEOUT = 10000; // 10 seconds
 
+export function getTrustedDeviceTokenStorageKey(email: string) {
+  return `trusted_device_token:${String(email || '').trim().toLowerCase()}`;
+}
+
+export function getTrustedDeviceExpiresAtStorageKey(email: string) {
+  return `trusted_device_expires_at:${String(email || '').trim().toLowerCase()}`;
+}
+
 // Request cache for GET requests
 const requestCache = new Map<string, { data: any; timestamp: number }>();
 const CACHE_TTL = 5000; // 5 seconds cache
@@ -379,13 +387,24 @@ export const auditLogsAPI = {
 export const authAPI = {
   login: async (email: string, password: string) => {
     const token = localStorage.getItem('auth_token');
+    const expiresAtKey = getTrustedDeviceExpiresAtStorageKey(email);
+    const tokenKey = getTrustedDeviceTokenStorageKey(email);
+    const expiresAt = Number(localStorage.getItem(expiresAtKey) || 0);
+    const trustedDeviceToken =
+      expiresAt && Date.now() < expiresAt ? localStorage.getItem(tokenKey) : null;
+
+    if (expiresAt && Date.now() >= expiresAt) {
+      localStorage.removeItem(expiresAtKey);
+      localStorage.removeItem(tokenKey);
+    }
+
     const response = await fetch(`${API_BASE_URL}/auth/login`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         ...(token && { Authorization: `Bearer ${token}` }),
       },
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ email, password, trustedDeviceToken }),
     });
 
     if (!response.ok) {

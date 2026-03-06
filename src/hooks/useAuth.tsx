@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { authAPI } from '@/lib/api';
+import { authAPI, getTrustedDeviceExpiresAtStorageKey, getTrustedDeviceTokenStorageKey } from '@/lib/api';
 
 interface User {
   id: string;
@@ -16,6 +16,13 @@ export interface LoginResponse {
   requires2FA?: boolean;
   tempToken?: string;
   message?: string;
+}
+
+interface Verify2FAResponse {
+  token?: string;
+  user?: User;
+  trustedDeviceToken?: string;
+  trustedDeviceExpiresAt?: number;
 }
 
 interface AuthContextType {
@@ -74,9 +81,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const verify2FA = async (tempToken: string, code: string, trustDevice: boolean): Promise<User> => {
-    const response = await authAPI.verify2FA(tempToken, code, trustDevice);
+    const response: Verify2FAResponse = await authAPI.verify2FA(tempToken, code, trustDevice);
     if (response.token && response.user) {
       localStorage.setItem('auth_token', response.token);
+
+      // Persist trusted device token (used to skip 2FA on future logins)
+      if (response.trustedDeviceToken && response.trustedDeviceExpiresAt && response.user.email) {
+        const tokenKey = getTrustedDeviceTokenStorageKey(response.user.email);
+        const expiresAtKey = getTrustedDeviceExpiresAtStorageKey(response.user.email);
+        localStorage.setItem(tokenKey, response.trustedDeviceToken);
+        localStorage.setItem(expiresAtKey, String(response.trustedDeviceExpiresAt));
+      }
+
       setUser(response.user);
       return response.user;
     }

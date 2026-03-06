@@ -169,12 +169,19 @@ export default function Login() {
                   disabled={isVerifying}
                   className="mt-0.5"
                 />
-                <Label
-                  htmlFor="trustDevice"
-                  className="text-sm text-muted-foreground cursor-pointer leading-tight"
+                <button
+                  type="button"
+                  onClick={() => setTrustDevice((v) => !v)}
+                  disabled={isVerifying}
+                  aria-pressed={trustDevice}
+                  className={cn(
+                    "text-left text-sm text-muted-foreground leading-tight cursor-pointer",
+                    "disabled:cursor-not-allowed disabled:opacity-70",
+                    "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 rounded-sm",
+                  )}
                 >
                   Trust this device for 30 days — you won&apos;t need to enter a code again on this device for 30 days.
-                </Label>
+                </button>
               </div>
               <Button
                 type="submit"

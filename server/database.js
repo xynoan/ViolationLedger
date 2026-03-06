@@ -278,6 +278,28 @@ async function initDatabase() {
       mustResetPassword INTEGER NOT NULL DEFAULT 1
     )
   `);
+
+  // Trusted devices (skip 2FA for 30 days on this browser/device)
+  db.run(`
+    CREATE TABLE IF NOT EXISTS trusted_devices (
+      id TEXT PRIMARY KEY,
+      userId TEXT NOT NULL,
+      tokenHash TEXT NOT NULL,
+      createdAt INTEGER NOT NULL,
+      expiresAt INTEGER NOT NULL,
+      lastUsedAt INTEGER,
+      FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+
+  // Indexes for trusted devices
+  try {
+    db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_trusted_devices_tokenHash ON trusted_devices(tokenHash)');
+    db.run('CREATE INDEX IF NOT EXISTS idx_trusted_devices_userId ON trusted_devices(userId)');
+    db.run('CREATE INDEX IF NOT EXISTS idx_trusted_devices_expiresAt ON trusted_devices(expiresAt)');
+  } catch (error) {
+    // Indexes might already exist
+  }
   
   db.run(`
     CREATE TABLE IF NOT EXISTS notification_preferences (

@@ -13,6 +13,10 @@ const TWOFA_CODE_EXPIRY_MS = 10 * 60 * 1000; // 10 minutes
 // In-memory store for pending 2FA: tempTokenId -> { userId, code, expiresAt }
 const twoFASessions = new Map();
 
+function hashTrustedDeviceToken(token) {
+  return crypto.createHash('sha256').update(String(token)).digest('hex');
+}
+
 function generateToken(userId, options = {}) {
   const expiresInMs = options.trustDevice ? TOKEN_EXPIRY_30_DAYS : TOKEN_EXPIRY_24H;
   const payload = {
@@ -80,6 +84,51 @@ router.post('/login', async (req, res) => {
 
     const contactNumber = (user.contactNumber || '').trim();
     if (contactNumber) {
+      // If this device is trusted (valid trustedDeviceToken), skip 2FA.
+      const trustedDeviceToken = (req.body?.trustedDeviceToken || '').toString().trim();
+      if (trustedDeviceToken) {
+        try {
+          const tokenHash = hashTrustedDeviceToken(trustedDeviceToken);
+          const trusted = db
+            .prepare('SELECT id, expiresAt FROM trusted_devices WHERE userId = ? AND tokenHash = ?')
+            .get(user.id, tokenHash);
+
+          if (trusted) {
+            const expiresAt = Number(trusted.expiresAt || 0);
+            if (expiresAt && Date.now() < expiresAt) {
+              // Touch lastUsedAt for audit/housekeeping
+              try {
+                db.prepare('UPDATE trusted_devices SET lastUsedAt = ? WHERE id = ?').run(Date.now(), trusted.id);
+              } catch (e) {
+                // Non-critical
+              }
+
+              const token = generateToken(user.id);
+              return res.json({
+                token,
+                user: {
+                  id: user.id,
+                  email: user.email,
+                  name: user.name || user.email,
+                  role: user.role || 'barangay_user',
+                  status: user.status || 'active',
+                  mustResetPassword: !!user.mustResetPassword,
+                },
+              });
+            }
+
+            // Expired: clean it up
+            try {
+              db.prepare('DELETE FROM trusted_devices WHERE id = ?').run(trusted.id);
+            } catch (e) {
+              // Ignore cleanup errors
+            }
+          }
+        } catch (e) {
+          // Ignore trust-device errors; fall back to normal 2FA flow
+        }
+      }
+
       // 2FA: send 6-digit code to user's contact number
       const code = generateSixDigitCode();
       const tempTokenId = crypto.randomBytes(24).toString('hex');
@@ -162,6 +211,26 @@ router.post('/verify-2fa', (req, res) => {
     }
 
     const token = generateToken(user.id, { trustDevice: !!trustDevice });
+    let trustedDeviceTokenOut;
+    let trustedDeviceExpiresAt;
+
+    if (trustDevice) {
+      try {
+        trustedDeviceTokenOut = crypto.randomBytes(32).toString('hex');
+        const tokenHash = hashTrustedDeviceToken(trustedDeviceTokenOut);
+        trustedDeviceExpiresAt = Date.now() + TOKEN_EXPIRY_30_DAYS;
+        const trustedId = crypto.randomBytes(16).toString('hex');
+
+        db.prepare(`
+          INSERT INTO trusted_devices (id, userId, tokenHash, createdAt, expiresAt, lastUsedAt)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `).run(trustedId, user.id, tokenHash, Date.now(), trustedDeviceExpiresAt, Date.now());
+      } catch (e) {
+        // If persistence fails, still allow login (trust just won't persist)
+        trustedDeviceTokenOut = undefined;
+        trustedDeviceExpiresAt = undefined;
+      }
+    }
 
     res.json({
       token,
@@ -173,6 +242,9 @@ router.post('/verify-2fa', (req, res) => {
         status: user.status || 'active',
         mustResetPassword: !!user.mustResetPassword,
       },
+      ...(trustedDeviceTokenOut
+        ? { trustedDeviceToken: trustedDeviceTokenOut, trustedDeviceExpiresAt }
+        : {}),
     });
   } catch (error) {
     console.error('Verify-2FA error:', error);
