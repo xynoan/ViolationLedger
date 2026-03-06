@@ -34,8 +34,8 @@ const transporter = hasSmtp
  * otherwise logs to console (stub mode).
  */
 export async function sendActivationEmailStub(user, plainPassword) {
-  const mailFrom = process.env.MAIL_FROM || 'LedgerMonitor <noreply@localhost>';
-  const subject = 'Account created – LedgerMonitor';
+  const mailFrom = process.env.MAIL_FROM || 'ViolationLedger <noreply@localhost>';
+  const subject = 'Account created – ViolationLedger';
   const text = `Your account has been created.\n\nEmail: ${user.email}\nTemporary password: ${plainPassword}\n\nPlease sign in and change your password.`;
 
   if (transporter) {
