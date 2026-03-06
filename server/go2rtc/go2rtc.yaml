@@ -1,2 +1,5 @@
 streams:
   cam1: ${CAMERA_URL}
+api:
+  listen: ":1984"
+  origin: "*"

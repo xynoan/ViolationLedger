@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from 'react';
-import { Plus, Camera as CameraIcon, Search, Video } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Plus, Camera as CameraIcon } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
 import { CameraFeed } from '@/components/dashboard/CameraFeed';
@@ -19,15 +19,8 @@ import {
 } from '@/components/ui/dialog';
 import { Camera } from '@/types/parking';
 import { toast } from '@/hooks/use-toast';
-import { cn } from '@/lib/utils';
 import { camerasAPI } from '@/lib/api';
 import { useAuth } from '@/hooks/useAuth';
-
-interface DetectedCamera {
-  deviceId: string;
-  label: string;
-  kind: string;
-}
 
 export default function Cameras() {
   usePageTracking();
@@ -43,40 +36,8 @@ export default function Cameras() {
     isFixed: true,
     illegalParkingZone: true,
   });
-  const [detectedCameras, setDetectedCameras] = useState<DetectedCamera[]>([]);
-  const [isDetecting, setIsDetecting] = useState(false);
-  const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
-  const [activeStreams, setActiveStreams] = useState<Map<string, MediaStream>>(new Map());
-  const videoRefs = useRef<Map<string, HTMLVideoElement>>(new Map());
-  const streamsRef = useRef<Map<string, MediaStream>>(new Map());
 
   const onlineCameras = cameras.filter(c => c.status === 'online');
-
-  // Helper function to safely play video elements in preview
-  const safePlayPreviewVideo = (videoElement: HTMLVideoElement | null, context: string = '') => {
-    if (!videoElement) return;
-    
-    // Check if element is still in the DOM
-    if (!videoElement.isConnected) {
-      return;
-    }
-
-    // Check if element has a valid srcObject
-    if (!videoElement.srcObject) {
-      return;
-    }
-
-    videoElement.play().catch((err) => {
-      // AbortError is expected when element is removed or reloaded - ignore it
-      if (err.name === 'AbortError') {
-        return;
-      }
-      // Log other errors (but not autoplay policy errors)
-      if (err.name !== 'NotAllowedError' && err.name !== 'NotSupportedError') {
-        console.error(`Error playing preview video (${context}):`, err);
-      }
-    });
-  };
 
   // Load cameras from API
   useEffect(() => {
@@ -89,63 +50,6 @@ export default function Cameras() {
     
     return () => clearInterval(refreshInterval);
   }, []);
-
-  // Validate all cameras and update their status
-  const validateAllCameras = async () => {
-    if (!navigator.mediaDevices) return;
-    
-    // Get fresh camera list from state
-    const currentCameras = cameras;
-    if (currentCameras.length === 0) return;
-    
-    let hasChanges = false;
-    
-    for (const camera of currentCameras) {
-      if (!camera.deviceId) {
-        // No deviceId means offline
-        if (camera.status !== 'offline') {
-          try {
-            await camerasAPI.update(camera.id, { status: 'offline' });
-            hasChanges = true;
-          } catch (error) {
-            console.error(`Failed to update camera ${camera.id} status:`, error);
-          }
-        }
-        continue;
-      }
-
-      try {
-        const isValid = await validateCameraAccess(camera.deviceId);
-        const expectedStatus = isValid ? 'online' : 'offline';
-        
-        // Only update if status changed
-        if (camera.status !== expectedStatus) {
-          console.log(`Updating camera ${camera.id} status from ${camera.status} to ${expectedStatus}`);
-          await camerasAPI.update(camera.id, { status: expectedStatus });
-          hasChanges = true;
-        }
-      } catch (error) {
-        console.error(`Error validating camera ${camera.id}:`, error);
-      }
-    }
-    
-    // Reload cameras after validation to reflect any changes
-    if (hasChanges) {
-      await loadCameras();
-    }
-  };
-
-  // Periodically validate camera status (every 30 seconds)
-  useEffect(() => {
-    if (cameras.length === 0) return;
-    
-    const validationInterval = setInterval(() => {
-      validateAllCameras();
-    }, 30000);
-    
-    return () => clearInterval(validationInterval);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cameras.length]); // Only re-run when number of cameras changes
 
   const loadCameras = async () => {
     try {
@@ -178,232 +82,6 @@ export default function Cameras() {
     }
   };
 
-  const detectCameras = async () => {
-    setIsDetecting(true);
-    try {
-      // Request permission to access cameras
-      await navigator.mediaDevices.getUserMedia({ video: true });
-      
-      // Enumerate all devices
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const videoDevices = devices
-        .filter(device => device.kind === 'videoinput')
-        .map(device => ({
-          deviceId: device.deviceId,
-          label: device.label || `Camera ${device.deviceId.substring(0, 8)}`,
-          kind: device.kind,
-        }));
-      
-      setDetectedCameras(videoDevices);
-      
-      if (videoDevices.length === 0) {
-        toast({
-          title: "No Cameras Found",
-          description: "No video input devices detected on your system",
-          variant: "destructive",
-        });
-      } else {
-        toast({
-          title: "Cameras Detected",
-          description: `Found ${videoDevices.length} camera(s)`,
-        });
-      }
-    } catch (error) {
-      console.error('Error detecting cameras:', error);
-      toast({
-        title: "Detection Failed",
-        description: "Could not access camera devices. Please check permissions.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsDetecting(false);
-    }
-  };
-
-  const startPreview = async (deviceId: string) => {
-    // Check if we already have an active stream for this device
-    const existingStream = streamsRef.current.get(deviceId);
-    if (existingStream && existingStream.active) {
-      const existingTracks = existingStream.getVideoTracks();
-      if (existingTracks.length > 0) {
-        const existingDeviceId = existingTracks[0].getSettings().deviceId;
-        if (existingDeviceId === deviceId) {
-          // Stream already exists and is active, just ensure video element is connected
-          const videoElement = videoRefs.current.get(deviceId);
-          if (videoElement && videoElement.srcObject !== existingStream) {
-            videoElement.srcObject = existingStream;
-            setTimeout(() => {
-              safePlayPreviewVideo(videoElement, 'reusing existing preview');
-            }, 50);
-          }
-          return;
-        }
-      }
-    }
-
-    // Stop any existing stream for this device
-    stopPreview(deviceId);
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { deviceId: { exact: deviceId } },
-      });
-      
-      streamsRef.current.set(deviceId, stream);
-      setActiveStreams(prev => {
-        const newMap = new Map(prev);
-        newMap.set(deviceId, stream);
-        return newMap;
-      });
-      
-      // Set video element source - use setTimeout to ensure DOM is ready
-      setTimeout(() => {
-        const videoElement = videoRefs.current.get(deviceId);
-        if (videoElement) {
-          videoElement.srcObject = stream;
-          safePlayPreviewVideo(videoElement, 'new preview stream');
-        }
-      }, 100);
-    } catch (error) {
-      console.error('Error starting preview:', error);
-      toast({
-        title: "Preview Failed",
-        description: "Could not start camera preview. Please check camera permissions.",
-        variant: "destructive",
-      });
-    }
-  };
-
-  const stopPreview = (deviceId: string) => {
-    const stream = streamsRef.current.get(deviceId);
-    if (stream) {
-      stream.getTracks().forEach(track => track.stop());
-      streamsRef.current.delete(deviceId);
-      setActiveStreams(prev => {
-        const newMap = new Map(prev);
-        newMap.delete(deviceId);
-        return newMap;
-      });
-    }
-  };
-
-  const stopAllPreviews = () => {
-    streamsRef.current.forEach((stream) => {
-      stream.getTracks().forEach(track => track.stop());
-    });
-    streamsRef.current.clear();
-    setActiveStreams(new Map());
-  };
-
-  // Cleanup streams when dialog closes
-  useEffect(() => {
-    if (!isDialogOpen) {
-      stopAllPreviews();
-      setSelectedDeviceId('');
-      setDetectedCameras([]);
-    }
-  }, [isDialogOpen]);
-
-  // Update video elements when streams change (but only if stream actually changed)
-  useEffect(() => {
-    // Only update if we have active streams and the Map reference actually changed
-    if (activeStreams.size === 0) return;
-
-    activeStreams.forEach((stream, deviceId) => {
-      const videoElement = videoRefs.current.get(deviceId);
-      if (videoElement) {
-        // Only update if srcObject is different
-        if (videoElement.srcObject !== stream) {
-          videoElement.srcObject = stream;
-          // Use safe play with a small delay to ensure element is ready
-          setTimeout(() => {
-            safePlayPreviewVideo(videoElement, 'stream updated');
-          }, 50);
-        } else if (videoElement.paused && videoElement.isConnected) {
-          // Only try to resume if element is still connected
-          safePlayPreviewVideo(videoElement, 'resume paused');
-        }
-      }
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeStreams.size]); // Only depend on size, not the entire Map object
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      stopAllPreviews();
-    };
-  }, []);
-
-  const handleSelectCamera = (deviceId: string) => {
-    // Check if deviceId is already in use
-    const existingCamera = cameras.find(c => c.deviceId && c.deviceId.trim() === deviceId.trim());
-    if (existingCamera) {
-      toast({
-        title: "Device Already in Use",
-        description: `This device is already registered to "${existingCamera.name}". Please remove it first or select a different camera.`,
-        variant: "destructive",
-      });
-      return;
-    }
-
-    // Find the detected camera to get its label
-    const detectedCamera = detectedCameras.find(c => c.deviceId === deviceId);
-    const deviceLabel = detectedCamera?.label || `Camera ${deviceId.substring(0, 8)}`;
-    
-    // Generate a smart location ID from the device name
-    // Extract meaningful parts from device label (e.g., "HD Pro Webcam" -> "HD-PRO")
-    const generateLocationId = (label: string): string => {
-      // Remove common camera terms and clean up
-      let cleaned = label
-        .replace(/camera|webcam|hd|pro|usb|built-in|video|input|device/gi, '')
-        .trim()
-        .replace(/[^a-zA-Z0-9\s-]/g, '') // Remove special characters
-        .replace(/\s+/g, '-') // Replace spaces with hyphens
-        .toUpperCase();
-      
-      // Extract first meaningful words (max 2-3 words, max 10 chars)
-      const words = cleaned.split('-').filter(w => w.length > 0);
-      if (words.length > 0) {
-        // Take first 2-3 meaningful words
-        const meaningfulWords = words.slice(0, 2).join('-');
-        if (meaningfulWords.length >= 3 && meaningfulWords.length <= 12) {
-          return meaningfulWords;
-        }
-        // If too long, take first word and truncate
-        if (meaningfulWords.length > 12) {
-          return words[0].substring(0, 8);
-        }
-      }
-      
-      // If cleaned is too short or empty, use a default pattern based on device ID
-      const devicePrefix = deviceId.substring(0, 6).toUpperCase().replace(/[^A-Z0-9]/g, '');
-      return `ZONE-${devicePrefix}`;
-    };
-
-    const suggestedLocationId = generateLocationId(deviceLabel);
-    
-    console.log('Selecting camera with deviceId:', deviceId);
-    console.log('Device label:', deviceLabel);
-    console.log('Suggested location ID:', suggestedLocationId);
-    
-    setSelectedDeviceId(deviceId);
-    // Auto-fill name and location ID when device is selected
-    setNewCamera((prev) => {
-      const updated = {
-        ...prev,
-        deviceId,
-        // Only auto-fill name if it's empty
-        name: prev.name.trim() || deviceLabel,
-        // Only auto-fill locationId if it's empty
-        locationId: prev.locationId.trim() || suggestedLocationId,
-      };
-      console.log('Updated newCamera state with deviceId, name, and locationId:', updated);
-      return updated;
-    });
-    startPreview(deviceId);
-  };
-
   const handleDeleteCamera = async (cameraId: string) => {
     try {
       // Delete returns 204 No Content, so we don't need to handle the response
@@ -420,35 +98,6 @@ export default function Cameras() {
         description: error.message || "Failed to delete camera",
         variant: "destructive",
       });
-    }
-  };
-
-  // Validate camera access
-  const validateCameraAccess = async (deviceId: string): Promise<boolean> => {
-    if (!deviceId || !navigator.mediaDevices) {
-      return false;
-    }
-
-    try {
-      // Try to access the camera with the deviceId
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { deviceId: { exact: deviceId } }
-      }).catch(() => {
-        // If exact fails, try without exact
-        return navigator.mediaDevices.getUserMedia({
-          video: { deviceId: deviceId }
-        });
-      });
-
-      // If we got a stream, it's valid - stop it immediately
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
-        return true;
-      }
-      return false;
-    } catch (error) {
-      console.log('Camera validation failed:', error);
-      return false;
     }
   };
 
@@ -483,14 +132,14 @@ export default function Cameras() {
       return;
     }
 
-    // Check if deviceId is already in use
+    // Check if deviceId (go2rtc stream name) is already in use
     const deviceIdValue = newCamera.deviceId && newCamera.deviceId.trim() ? newCamera.deviceId.trim() : null;
     if (deviceIdValue) {
       const existingCamera = cameras.find(c => c.deviceId && c.deviceId.trim() === deviceIdValue);
       if (existingCamera) {
         toast({
-          title: "Device ID Already in Use",
-          description: `This device is already registered to "${existingCamera.name}". Please select a different camera or remove the existing one first.`,
+          title: "Stream Already in Use",
+          description: `This go2rtc stream is already registered to "${existingCamera.name}". Please use a different stream name or remove the existing camera first.`,
           variant: "destructive",
         });
         return;
@@ -498,24 +147,9 @@ export default function Cameras() {
     }
 
     try {
-      // Validate camera access if deviceId is provided
-      let cameraStatus: 'online' | 'offline' = 'offline';
-      if (deviceIdValue) {
-        toast({
-          title: "Validating Camera",
-          description: "Checking camera access...",
-        });
-        const isValid = await validateCameraAccess(deviceIdValue);
-        cameraStatus = isValid ? 'online' : 'offline';
-        
-        if (!isValid) {
-          toast({
-            title: "Camera Invalid",
-            description: "Camera device is not accessible. It will be set to offline.",
-            variant: "destructive",
-          });
-        }
-      }
+      // For go2rtc/WebRTC streams we don't validate in the browser here.
+      // Assume online when a stream name is configured; backend or operator can adjust status later.
+      const cameraStatus: 'online' | 'offline' = deviceIdValue ? 'online' : 'offline';
 
       // Generate unique camera ID by checking existing IDs
       let cameraId = `CAM-${String(cameras.length + 1).padStart(3, '0')}`;
@@ -540,12 +174,11 @@ export default function Cameras() {
       console.log('Received created camera:', createdCamera);
       // Reload cameras to get the latest data
       await loadCameras();
-      stopAllPreviews();
       setNewCamera({ name: '', locationId: '', deviceId: '', isFixed: true, illegalParkingZone: true });
       setIsDialogOpen(false);
       toast({
         title: "Camera Added",
-        description: `${createdCamera.name} has been added ${cameraStatus === 'online' ? 'and is online' : 'but is offline (invalid device)'}`,
+        description: `${createdCamera.name} has been added ${cameraStatus === 'online' ? 'and is online (go2rtc stream configured)' : 'but has no stream configured yet'}`,
       });
     } catch (error: any) {
       toast({
@@ -608,196 +241,52 @@ export default function Cameras() {
               <DialogHeader>
                 <DialogTitle>Add New Camera</DialogTitle>
                 <DialogDescription>
-                  Configure a new surveillance camera for the system
+                  Configure a new surveillance camera backed by a go2rtc WebRTC stream
                 </DialogDescription>
               </DialogHeader>
               <div className="grid gap-4 py-4">
-                {/* Camera Detection Section */}
-                <div className="grid gap-2">
-                  <div className="flex items-center justify-between">
-                    <Label>Detect Cameras</Label>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={detectCameras}
-                      disabled={isDetecting}
-                    >
-                      <Search className="h-4 w-4 mr-2" />
-                      {isDetecting ? 'Detecting...' : 'Detect Cameras'}
-                    </Button>
-                  </div>
-                  {detectedCameras.length > 0 && (
-                    <div className="space-y-2 mt-2">
-                      <p className="text-sm text-muted-foreground">
-                        Found {detectedCameras.length} camera(s). Select one to preview:
-                      </p>
-                      <div className="grid grid-cols-1 gap-3 max-h-[300px] overflow-y-auto">
-                        {detectedCameras.map((camera) => {
-                          const isSelected = selectedDeviceId === camera.deviceId;
-                          const isPreviewing = activeStreams.has(camera.deviceId);
-                          const isInUse = cameras.some(c => c.deviceId && c.deviceId.trim() === camera.deviceId.trim());
-                          
-                          return (
-                            <div
-                              key={camera.deviceId}
-                              className={cn(
-                                "border rounded-lg p-3 transition-colors",
-                                isInUse 
-                                  ? "border-destructive bg-destructive/5 cursor-not-allowed opacity-60"
-                                  : isSelected
-                                  ? "border-primary bg-primary/5 cursor-pointer"
-                                  : "border-border hover:border-primary/50 cursor-pointer"
-                              )}
-                              onClick={() => !isInUse && handleSelectCamera(camera.deviceId)}
-                            >
-                              <div className="flex items-start gap-3">
-                                <div className="flex-1">
-                                  <div className="flex items-center gap-2 mb-2">
-                                    <Video className="h-4 w-4 text-muted-foreground" />
-                                    <span className="font-medium text-sm">{camera.label}</span>
-                                    {isInUse && (
-                                      <Badge variant="destructive" className="text-xs">
-                                        In Use
-                                      </Badge>
-                                    )}
-                                    {isSelected && !isInUse && (
-                                      <Badge variant="success" className="text-xs">
-                                        Selected
-                                      </Badge>
-                                    )}
-                                  </div>
-                                  <p className="text-xs text-muted-foreground font-mono">
-                                    {camera.deviceId.substring(0, 20)}...
-                                  </p>
-                                </div>
-                                {isPreviewing && (
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      stopPreview(camera.deviceId);
-                                    }}
-                                  >
-                                    Stop
-                                  </Button>
-                                )}
-                              </div>
-                              {/* Preview Video */}
-                              {isSelected && (
-                                <div className="mt-3 rounded-md overflow-hidden bg-black aspect-video relative">
-                                  <video
-                                    key={camera.deviceId}
-                                    ref={(el) => {
-                                      if (el) {
-                                        videoRefs.current.set(camera.deviceId, el);
-                                        // Ensure stream is set if it exists
-                                        const stream = streamsRef.current.get(camera.deviceId);
-                                        if (stream && el.srcObject !== stream) {
-                                          el.srcObject = stream;
-                                          // Use safe play with a small delay
-                                          setTimeout(() => {
-                                            safePlayPreviewVideo(el, 'ref callback');
-                                          }, 50);
-                                        }
-                                      } else {
-                                        videoRefs.current.delete(camera.deviceId);
-                                      }
-                                    }}
-                                    autoPlay
-                                    playsInline
-                                    muted
-                                    className={cn(
-                                      "w-full h-full object-cover",
-                                      !isPreviewing && "opacity-0"
-                                    )}
-                                  />
-                                  {!isPreviewing && (
-                                    <div className="absolute inset-0 flex items-center justify-center text-muted-foreground">
-                                      <div className="text-center">
-                                        <Video className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                                        <p className="text-sm">Starting preview...</p>
-                                      </div>
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </div>
-
                 <div className="grid gap-2">
                   <div className="flex items-center justify-between">
                     <Label htmlFor="name">Camera Name</Label>
-                    {selectedDeviceId && newCamera.name && (
-                      <Badge variant="outline" className="text-xs">
-                        Auto-filled from device
-                      </Badge>
-                    )}
                   </div>
                   <Input
                     id="name"
                     placeholder="e.g., Main Entrance"
                     value={newCamera.name}
                     onChange={(e) => setNewCamera((prev) => ({ ...prev, name: e.target.value }))}
-                    className={selectedDeviceId && newCamera.name ? "border-primary/50" : ""}
                   />
-                  {selectedDeviceId && !newCamera.name && (
-                    <p className="text-xs text-muted-foreground">
-                      Camera name will be auto-filled when you select a device
-                    </p>
-                  )}
                 </div>
                 <div className="grid gap-2">
                   <div className="flex items-center justify-between">
                     <Label htmlFor="locationId">Zone / Location ID</Label>
-                    {selectedDeviceId && newCamera.locationId && (
-                      <Badge variant="outline" className="text-xs">
-                        Auto-suggested
-                      </Badge>
-                    )}
                   </div>
                   <Input
                     id="locationId"
                     placeholder="e.g., ZONE-A"
                     value={newCamera.locationId}
                     onChange={(e) => setNewCamera((prev) => ({ ...prev, locationId: e.target.value.toUpperCase() }))}
-                    className={selectedDeviceId && newCamera.locationId ? "border-primary/50" : ""}
                   />
-                  {selectedDeviceId && !newCamera.locationId && (
-                    <p className="text-xs text-muted-foreground">
-                      Location ID will be auto-generated when you select a device
-                    </p>
-                  )}
                 </div>
-                {selectedDeviceId ? (
-                  <div className="text-xs bg-primary/10 border border-primary/20 p-3 rounded-md">
-                    <p className="font-medium mb-1 text-primary">Device Selected:</p>
-                    <p className="text-foreground mb-2">
-                      <strong>Device:</strong> {detectedCameras.find(c => c.deviceId === selectedDeviceId)?.label || 'Unknown Device'}
-                    </p>
-                    <p className="text-foreground mb-2">
-                      <strong>Name:</strong> {newCamera.name || 'Not set'}
-                    </p>
-                    <p className="text-foreground">
-                      <strong>Location ID:</strong> {newCamera.locationId || 'Not set'}
-                    </p>
-                    <p className="text-muted-foreground mt-2 text-[10px]">
-                      Camera status will be automatically determined based on device accessibility.
-                    </p>
+                <div className="grid gap-2">
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="streamId">go2rtc Stream Name</Label>
+                    <Badge variant="outline" className="text-xs">
+                      Matches <code>src</code> in go2rtc
+                    </Badge>
                   </div>
-                ) : (
-                  <div className="text-xs text-muted-foreground bg-muted/50 p-3 rounded-md">
-                    <p className="font-medium mb-1">Note:</p>
-                    <p>Select a camera device above to auto-fill the camera name and location ID. Camera status will be automatically determined based on device accessibility.</p>
-                  </div>
-                )}
+                  <Input
+                    id="streamId"
+                    placeholder="e.g., cam1"
+                    value={newCamera.deviceId}
+                    onChange={(e) =>
+                      setNewCamera((prev) => ({ ...prev, deviceId: e.target.value.trim() }))
+                    }
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    This should match the stream key from your <code>go2rtc.yaml</code>, for example
+                    `cam1` when you connect via <code>/api/ws?src=cam1</code>.
+                  </p>
+                </div>
                 {/* Camera Configuration Options */}
                 <div className="grid gap-4 pt-2 border-t border-border">
                   <div className="flex items-center space-x-2">
