@@ -1,65 +1,55 @@
+import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import nodemailer from 'nodemailer';
 
-const transporter = createTransporter();
+// Load .env from server directory so SMTP_* are set before we read them.
+// (server.js loads .env after its imports, so this module can run before that.)
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.join(__dirname, '..', '.env') });
 
-function createTransporter() {
-  const host = process.env.SMTP_HOST;
-  const port = process.env.SMTP_PORT;
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
-  if (!host || !user || !pass) {
-    return null;
-  }
-  return nodemailer.createTransport({
-    host,
-    port: port ? parseInt(port, 10) : 587,
-    secure: process.env.SMTP_SECURE === 'true',
-    auth: { user, pass },
-  });
-}
+const hasSmtp =
+  process.env.SMTP_HOST &&
+  process.env.SMTP_USER &&
+  process.env.SMTP_PASS;
+
+const port = Number(process.env.SMTP_PORT) || 587;
+// Port 465 = implicit TLS (secure: true). Port 587/25 = STARTTLS (secure: false).
+const secure = port === 465;
+
+const transporter = hasSmtp
+  ? nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port,
+      secure,
+      auth: {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS,
+      },
+    })
+  : null;
 
 /**
- * Sends an activation email to a new user. Uses SMTP when SMTP_HOST, SMTP_USER, and SMTP_PASS
- * are set in the environment; otherwise logs to console (stub mode).
- * @param {Object} user - User object with at least email and optional name
- * @param {string} [temporaryPassword] - Plain temporary password to include in the email (optional)
+ * Send activation email. Uses real SMTP if SMTP_HOST/USER/PASS are set;
+ * otherwise logs to console (stub mode).
  */
-export async function sendActivationEmailStub(user, temporaryPassword) {
-  if (!user || !user.email) {
-    return;
-  }
-
-  const name = user.name || user.email;
-  const from = process.env.MAIL_FROM || process.env.SMTP_USER || 'noreply@violationledger.local';
-  const subject = 'Your ViolationLedger account has been created';
-  const passwordLine = temporaryPassword
-    ? `\n\nYour temporary password is: ${temporaryPassword}\nPlease log in and change it on first login.`
-    : '\n\nPlease use the password set by your administrator and change it on first login.';
-  const text =
-    `Hello ${name},\n\nYour account has been created in ViolationLedger.${passwordLine}\n\n— ViolationLedger`;
+export async function sendActivationEmailStub(user, plainPassword) {
+  const mailFrom = process.env.MAIL_FROM || 'LedgerMonitor <noreply@localhost>';
+  const subject = 'Account created – LedgerMonitor';
+  const text = `Your account has been created.\n\nEmail: ${user.email}\nTemporary password: ${plainPassword}\n\nPlease sign in and change your password.`;
 
   if (transporter) {
-    try {
-      await transporter.sendMail({
-        from,
-        to: user.email,
-        subject,
-        text,
-      });
-      console.log('[Email] Activation email sent to:', user.email);
-    } catch (err) {
-      console.error('[Email] Failed to send activation email:', err.message);
-      throw err;
-    }
-  } else {
-    console.log('[EmailStub] Sending activation email:', {
+    await transporter.sendMail({
+      from: mailFrom,
       to: user.email,
-      name,
-      message: 'Account created. Log in with your temporary password and change it on first login.',
+      subject,
+      text,
     });
+    console.log('Activation email sent to', user.email);
+  } else {
+    console.log('[email stub] Activation email (no SMTP configured):');
+    console.log('  To:', user.email);
+    console.log('  Subject:', subject);
+    console.log('  Body:', text);
   }
 }
-
-export default {
-  sendActivationEmailStub,
-};
