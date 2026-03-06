@@ -7,6 +7,7 @@ import { AuthProvider } from "@/hooks/useAuth";
 import { MainLayout } from "@/components/layout/MainLayout";
 import Index from "./pages/Index";
 import Login from "./pages/Login";
+import ResetPassword from "./pages/ResetPassword";
 import Vehicles from "./pages/Vehicles";
 import Hosts from "./pages/Hosts";
 import Cameras from "./pages/Cameras";
@@ -37,6 +38,14 @@ const App = () => (
         >
           <Routes>
             <Route path="/login" element={<Login />} />
+            <Route
+              path="/reset-password"
+              element={
+                <ProtectedRoute>
+                  <ResetPassword />
+                </ProtectedRoute>
+              }
+            />
             <Route
               path="/*"
               element={

@@ -246,7 +246,7 @@ export default function UserManagement() {
         });
         toast({
           title: "Success",
-          description: "User added successfully",
+          description: "User created. Activation email sent. They must reset their password on first login.",
         });
       }
       handleCloseDialog();

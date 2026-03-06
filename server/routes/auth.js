@@ -1,6 +1,7 @@
 import express from 'express';
 import db from '../database.js';
 import crypto from 'crypto';
+import { authenticateToken } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -132,6 +133,39 @@ router.get('/verify', (req, res) => {
     res.status(500).json({ 
       error: 'Failed to verify token',
       details: error?.message || String(error)
+    });
+  }
+});
+
+// POST /api/auth/change-password - change own password (clears mustResetPassword)
+router.post('/change-password', authenticateToken, (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    const userId = req.user.id;
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: 'Current password and new password are required' });
+    }
+
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+    if (!user) {
+      return res.status(401).json({ error: 'User not found' });
+    }
+
+    const currentHash = crypto.createHash('sha256').update(currentPassword).digest('hex');
+    if (user.password !== currentHash) {
+      return res.status(401).json({ error: 'Current password is incorrect' });
+    }
+
+    const newHash = crypto.createHash('sha256').update(newPassword).digest('hex');
+    db.prepare('UPDATE users SET password = ?, mustResetPassword = 0 WHERE id = ?').run(newHash, userId);
+
+    res.json({ success: true, message: 'Password changed successfully' });
+  } catch (error) {
+    console.error('Change password error:', error);
+    res.status(500).json({
+      error: 'Failed to change password',
+      details: error?.message || String(error),
     });
   }
 });

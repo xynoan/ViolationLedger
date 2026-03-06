@@ -31,11 +31,15 @@ export default function Login() {
     setIsLoading(true);
     try {
       const user = await login(email.trim(), password);
-      toast({
-        title: "Login Successful",
-        description: "Welcome back!",
-      });
-      navigate(user?.role === 'encoder' ? '/vehicles' : '/');
+      if (user?.mustResetPassword) {
+        navigate('/reset-password');
+      } else {
+        toast({
+          title: "Login Successful",
+          description: "Welcome back!",
+        });
+        navigate(user?.role === 'encoder' ? '/vehicles' : '/');
+      }
     } catch (error: any) {
       toast({
         title: "Login Failed",

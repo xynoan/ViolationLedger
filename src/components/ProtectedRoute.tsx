@@ -1,5 +1,5 @@
 import { ReactNode } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 
 interface ProtectedRouteProps {
@@ -7,7 +7,9 @@ interface ProtectedRouteProps {
 }
 
 export function ProtectedRoute({ children }: ProtectedRouteProps) {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { user, isAuthenticated, isLoading } = useAuth();
+  const location = useLocation();
+  const isResetPasswordPage = location.pathname === '/reset-password';
 
   if (isLoading) {
     return (
@@ -22,6 +24,16 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
 
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
+  }
+
+  // Force password reset on first login
+  if (user?.mustResetPassword && !isResetPasswordPage) {
+    return <Navigate to="/reset-password" replace />;
+  }
+
+  // Already reset - don't allow access to reset page
+  if (isResetPasswordPage && !user?.mustResetPassword) {
+    return <Navigate to="/" replace />;
   }
 
   return <>{children}</>;
