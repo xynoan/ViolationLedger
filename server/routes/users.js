@@ -231,21 +231,21 @@ router.put('/:id', requireRole('admin'), (req, res) => {
 router.delete('/:id', requireRole('admin'), (req, res) => {
   try {
     const userId = req.params.id;
-    
+
     // Prevent deleting yourself
     if (userId === req.user.id) {
       return res.status(400).json({ error: 'Cannot delete your own account' });
     }
-    
+
     // Check if user exists
     const user = db.prepare('SELECT id FROM users WHERE id = ?').get(userId);
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
-    
-    // Soft delete: mark user as inactive instead of removing
-    db.prepare('UPDATE users SET status = ?, mustResetPassword = 0 WHERE id = ?').run('inactive', userId);
-    
+
+    // Permanent delete (notification_preferences and audit_logs CASCADE per schema)
+    db.prepare('DELETE FROM users WHERE id = ?').run(userId);
+
     res.status(204).send();
   } catch (error) {
     console.error('Error deleting user:', error);

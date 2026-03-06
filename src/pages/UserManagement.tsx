@@ -299,11 +299,10 @@ export default function UserManagement() {
 
     try {
       await trackAction('button_click', 'user', selectedUser.id, { action: 'delete_user', email: selectedUser.email });
-      // Soft deactivate instead of hard delete
-      await usersAPI.update(selectedUser.id, { status: 'inactive' });
+      await usersAPI.delete(selectedUser.id);
       toast({
         title: "Success",
-        description: "User deactivated successfully",
+        description: "User deleted successfully",
       });
       setIsDeleteDialogOpen(false);
       setSelectedUser(null);
@@ -424,6 +423,7 @@ export default function UserManagement() {
                           >
                             {user.status === 'active' ? 'Deactivate' : 'Activate'}
                           </Button>
+                          {/* Permanent delete: uncomment to show Delete button (removes user from DB) */}
                           <Button
                             variant="ghost"
                             size="sm"
@@ -435,7 +435,7 @@ export default function UserManagement() {
                             className="text-destructive hover:text-destructive"
                           >
                             <Trash2 className="h-4 w-4" />
-                          </Button>
+                          </Button> 
                         </div>
                       </TableCell>
                     </TableRow>
@@ -694,9 +694,9 @@ export default function UserManagement() {
       <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete User</AlertDialogTitle>
+            <AlertDialogTitle>Permanently delete user</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete "{selectedUser?.email}"? This action cannot be undone.
+              Are you sure you want to permanently delete "{selectedUser?.email}"? This will remove the user and their preferences from the system. This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
