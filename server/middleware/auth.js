@@ -15,8 +15,8 @@ export function authenticateToken(req, res, next) {
   // Simple token verification (matches auth.js)
   try {
     const payload = JSON.parse(Buffer.from(token, 'base64').toString());
-    // Token expires after 24 hours
-    if (Date.now() - payload.timestamp > 24 * 60 * 60 * 1000) {
+    const expiresInMs = payload.expiresInMs ?? 24 * 60 * 60 * 1000;
+    if (Date.now() - payload.timestamp > expiresInMs) {
       return res.status(401).json({ error: 'Token expired' });
     }
     

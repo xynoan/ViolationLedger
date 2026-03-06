@@ -422,6 +422,20 @@ export const authAPI = {
       return null;
     }
   },
+  verify2FA: async (tempToken: string, code: string, trustDevice: boolean) => {
+    const response = await fetch(`${API_BASE_URL}/auth/verify-2fa`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tempToken, code, trustDevice }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Verification failed' }));
+      throw new Error(error.error || `HTTP error! status: ${response.status}`);
+    }
+
+    return response.json();
+  },
   changePassword: async (currentPassword: string, newPassword: string) => {
     const token = localStorage.getItem('auth_token');
     if (!token) throw new Error('Not authenticated');

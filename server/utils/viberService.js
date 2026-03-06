@@ -3,8 +3,8 @@ import { normalizePhoneNumber } from './phoneUtils.js';
 import { GRACE_PERIOD_MINUTES } from '../routes/violations.js';
 
 const INFOBIP_BASE_URL = process.env.INFOBIP_BASE_URL || 'api.infobip.com';
-const INFOBIP_API_KEY = process.env.INFOBIP_API_KEY || '4c3957d8340aba10e5f48bff2b1f7236-fd58a93c-79b7-4abe-b929-42e2caabdab1'; // from Karl
-// const INFOBIP_API_KEY = process.env.INFOBIP_API_KEY || '882f62f8328f03f22b8c45ef37d02646-d1f060cb-838e-46c2-b467-dca579d616ec';
+// const INFOBIP_API_KEY = process.env.INFOBIP_API_KEY || '4c3957d8340aba10e5f48bff2b1f7236-fd58a93c-79b7-4abe-b929-42e2caabdab1'; // from Karl
+const INFOBIP_API_KEY = process.env.INFOBIP_API_KEY || '882f62f8328f03f22b8c45ef37d02646-d1f060cb-838e-46c2-b467-dca579d616ec';
 const INFOBIP_API_URL = `https://${INFOBIP_BASE_URL}/viber/2/messages`;
 const VIBER_SENDER = process.env.VIBER_SENDER || 'IBSelfServe';
 const MAX_MESSAGE_LENGTH = 1000;

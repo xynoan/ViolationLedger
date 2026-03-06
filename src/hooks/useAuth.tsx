@@ -10,11 +10,20 @@ interface User {
   mustResetPassword?: boolean;
 }
 
+export interface LoginResponse {
+  token?: string;
+  user?: User;
+  requires2FA?: boolean;
+  tempToken?: string;
+  message?: string;
+}
+
 interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
   isLoading: boolean;
-  login: (email: string, password: string) => Promise<User>;
+  login: (email: string, password: string) => Promise<LoginResponse>;
+  verify2FA: (tempToken: string, code: string, trustDevice: boolean) => Promise<User>;
   logout: () => void;
   refreshUser: () => Promise<void>;
 }
@@ -51,8 +60,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     checkAuth();
   }, []);
 
-  const login = async (email: string, password: string): Promise<User> => {
+  const login = async (email: string, password: string): Promise<LoginResponse> => {
     const response = await authAPI.login(email, password);
+    if (response.requires2FA && response.tempToken) {
+      return response;
+    }
+    if (response.token && response.user) {
+      localStorage.setItem('auth_token', response.token);
+      setUser(response.user);
+      return response;
+    }
+    throw new Error('Invalid response from server');
+  };
+
+  const verify2FA = async (tempToken: string, code: string, trustDevice: boolean): Promise<User> => {
+    const response = await authAPI.verify2FA(tempToken, code, trustDevice);
     if (response.token && response.user) {
       localStorage.setItem('auth_token', response.token);
       setUser(response.user);
@@ -80,6 +102,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         isAuthenticated: !!user,
         isLoading,
         login,
+        verify2FA,
         logout,
         refreshUser,
       }}
