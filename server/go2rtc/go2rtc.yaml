@@ -1,2 +1,2 @@
 streams:
-  cam1: rtsp://192.168.254.174:554/stream1
+  cam1: ${CAMERA_URL}
