@@ -39,16 +39,9 @@ export default function Cameras() {
 
   const onlineCameras = cameras.filter(c => c.status === 'online');
 
-  // Load cameras from API
+  // Load cameras from API on initial mount only
   useEffect(() => {
     loadCameras();
-    
-    // Refresh cameras every 5 seconds to keep timers synchronized across users
-    const refreshInterval = setInterval(() => {
-      loadCameras();
-    }, 5000);
-    
-    return () => clearInterval(refreshInterval);
   }, []);
 
   const loadCameras = async () => {
@@ -218,7 +211,7 @@ export default function Cameras() {
           </div>
         )}
 
-        {/* Header with Add Button */}
+        {/* Header with Refresh & Add Button */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3 sm:gap-4">
             <Badge variant="success" className="px-3 py-1.5 sm:px-4 sm:py-2">
@@ -227,6 +220,13 @@ export default function Cameras() {
             <Badge variant="destructive" className="px-3 py-1.5 sm:px-4 sm:py-2">
               {cameras.length - onlineCameras.length} Offline
             </Badge>
+            {/* <Button
+              variant="outline"
+              size="sm"
+              onClick={loadCameras}
+            >
+              Refresh
+            </Button */}
           </div>
 
           {isAdmin && (
