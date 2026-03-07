@@ -1,5 +1,5 @@
 streams:
-  cam1: ${CAMERA_URL}
+  cam1: "rtsp://ncmorva:221228carlomorva@192.168.254.175:554/stream1"
 api:
   listen: ":1984"
   origin: "*"
