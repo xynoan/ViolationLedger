@@ -3,7 +3,7 @@ import { Camera as CameraIcon } from 'lucide-react';
 import { Camera } from '@/types/parking';
 import { cn } from '@/lib/utils';
 import { useCameraStream } from '@/hooks/useCameraStream';
-import { useDetectionStream } from '@/hooks/useDetectionStream';
+import { useYoloDetection } from '@/hooks/useDetectionStream';
 import { VideoPlayer } from './VideoPlayer';
 import { CameraHeader } from './CameraHeader';
 import { CameraFooter } from './CameraFooter';
@@ -54,7 +54,7 @@ export const CameraFeed = memo(function CameraFeed({
     detections,
     vehicleCount,
     plateCount,
-  } = useDetectionStream(camera.id, isOnline);
+  } = useYoloDetection(camera.id, isOnline);
 
   const handleRefresh = useCallback(() => {
     refreshStream();

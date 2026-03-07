@@ -119,3 +119,6 @@ export function useDetectionStream(
     lastError,
   };
 }
+
+/** Alias for useDetectionStream - same signature (cameraId, enabled). */
+export { useDetectionStream as useYoloDetection };
