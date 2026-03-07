@@ -110,7 +110,7 @@ export function useCameraStream({ deviceId, isOnline }: UseCameraStreamOptions) 
               ws.send(
                 JSON.stringify({
                   type: 'webrtc/candidate',
-                  value: event.candidate,
+                  value: event.candidate.toJSON().candidate,
                 }),
               );
             }
@@ -160,8 +160,11 @@ export function useCameraStream({ deviceId, isOnline }: UseCameraStreamOptions) 
             await pc.setRemoteDescription(answer);
           } else if (msg.type === 'webrtc/candidate' && msg.value) {
             try {
-              const candidate = new RTCIceCandidate(msg.value);
-              await pc.addIceCandidate(candidate);
+              const candidateInit =
+                typeof msg.value === 'string'
+                  ? { candidate: msg.value, sdpMid: '0' }
+                  : msg.value;
+              await pc.addIceCandidate(candidateInit);
             } catch (err) {
               console.error('Failed to add ICE candidate from go2rtc:', err);
             }
