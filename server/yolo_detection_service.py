@@ -250,6 +250,99 @@ def preprocess_plate_crop_threshold_inv(bgr_crop: np.ndarray) -> np.ndarray:
     return thresh
 
 
+def _get_model_paths() -> Tuple[str, str]:
+    """Resolve vehicle and plate model paths from env or defaults."""
+    env_vehicle = os.getenv("YOLO_VEHICLE_WEIGHTS")
+    env_plate = os.getenv("YOLO_PLATE_WEIGHTS")
+    vehicle_path = str(VEHICLE_MODEL_PATH) if VEHICLE_MODEL_PATH.exists() else "yolov8n.pt"
+    plate_path = str(PLATE_MODEL_PATH)
+    if env_vehicle:
+        v_path = Path(env_vehicle)
+        if v_path.exists():
+            vehicle_path = str(v_path)
+        else:
+            print(f"[YOLO] Warning: YOLO_VEHICLE_WEIGHTS not found at '{env_vehicle}'", file=sys.stderr)
+    if env_plate:
+        p_path = Path(env_plate)
+        if p_path.exists():
+            plate_path = str(p_path)
+        else:
+            print(f"[YOLO] Warning: YOLO_PLATE_WEIGHTS not found at '{env_plate}'", file=sys.stderr)
+    return vehicle_path, plate_path
+
+
+def load_models() -> Tuple["YOLO", "YOLO"]:
+    """Load vehicle and plate models once. Call once at startup."""
+    vehicle_path, plate_path = _get_model_paths()
+    print(f"[YOLO] Loading models: {vehicle_path}, {plate_path}", file=sys.stderr)
+    vehicle_model = YOLO(vehicle_path)
+    plate_model = YOLO(plate_path)
+    print("[YOLO] Models loaded.", file=sys.stderr)
+    return vehicle_model, plate_model
+
+
+def detect_frame(
+    frame: np.ndarray,
+    vehicle_model: "YOLO",
+    plate_model: "YOLO",
+    conf_vehicle: float = 0.35,
+    conf_plate: float = 0.40,
+) -> dict:
+    """
+    Run YOLO detection on a single frame. Returns {vehicles, plates} dict.
+    Models must be pre-loaded via load_models().
+    """
+    h, w = frame.shape[:2]
+    vehicle_results = vehicle_model.predict(
+        frame,
+        classes=list(COCO_VEHICLE_CLASSES),
+        conf=conf_vehicle,
+        verbose=False,
+    )
+    vehicles = _vehicles_from_ultralytics_predict(vehicle_results[0] if vehicle_results else None)
+    plate_results = plate_model.predict(frame, conf=conf_plate, verbose=False)
+    plates = _plates_from_ultralytics_predict(plate_results[0] if plate_results else None)
+
+    vehicles_out = []
+    for v in vehicles:
+        class_name = COCO_CLASS_NAMES.get(v.cls_id, "vehicle")
+        vehicles_out.append({
+            "bbox": [round(x, 2) for x in v.xyxy],
+            "class_name": class_name,
+            "confidence": round(v.conf, 4),
+        })
+
+    plate_groups = _group_overlapping_plates(plates)
+    plates_out = []
+    for group in plate_groups:
+        bbox_xyxy, ocr_xyxy = _pick_bbox_and_ocr_crop(group)
+        best_conf = max(p.conf for p in group)
+        plate_obj: dict = {
+            "bbox": [round(x, 2) for x in bbox_xyxy],
+            "class_name": "plate",
+            "confidence": round(best_conf, 4),
+        }
+        vehicle = assign_plate_to_vehicle(bbox_xyxy, vehicles)
+        if vehicle is not None:
+            x1, y1, x2, y2 = ocr_xyxy
+            ix1, iy1, ix2, iy2 = clamp_xyxy(x1, y1, x2, y2, w, h)
+            crop = frame[iy1:iy2, ix1:ix2]
+            if crop.size > 0:
+                thresh = preprocess_plate_crop_threshold_inv(crop)
+                ocr = run_ocr_on_crop(thresh)
+                if ocr is None:
+                    rgb_crop = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+                    ocr = run_ocr_on_crop(rgb_crop)
+                if ocr is not None:
+                    plate_text, ocr_conf = ocr
+                    plate_obj["plateNumber"] = plate_text
+                    plate_obj["ocrConf"] = round(ocr_conf, 3)
+                    print(f"[YOLO] Plate detected: {plate_text}", file=sys.stderr)
+        plates_out.append(plate_obj)
+
+    return {"vehicles": vehicles_out, "plates": plates_out}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="YOLO vehicle + plate detection service.")
     parser.add_argument("--base64-file", required=True, help="Path to file containing base64 image data.")
@@ -275,98 +368,17 @@ def main() -> int:
     h, w = frame.shape[:2]
     print(f"[YOLO] Image loaded ({w}x{h}), loading models...", file=sys.stderr)
 
-    # Model paths: prefer environment variables, fall back to existing hardcoded paths.
-    env_vehicle = os.getenv("YOLO_VEHICLE_WEIGHTS")
-    env_plate = os.getenv("YOLO_PLATE_WEIGHTS")
-
-    vehicle_path: Optional[str] = None
-    plate_path: Optional[str] = None
-
-    if env_vehicle:
-        v_path = Path(env_vehicle)
-        if v_path.exists():
-            vehicle_path = str(v_path)
-        else:
-            print(f"[YOLO] Warning: YOLO_VEHICLE_WEIGHTS not found at '{env_vehicle}', falling back to defaults.", file=sys.stderr)
-
-    if env_plate:
-        p_path = Path(env_plate)
-        if p_path.exists():
-            plate_path = str(p_path)
-        else:
-            print(f"[YOLO] Warning: YOLO_PLATE_WEIGHTS not found at '{env_plate}', falling back to defaults.", file=sys.stderr)
-
-    if vehicle_path is None:
-        vehicle_path = str(VEHICLE_MODEL_PATH) if VEHICLE_MODEL_PATH.exists() else "yolov8n.pt"
-
-    if plate_path is None:
-        plate_path = str(PLATE_MODEL_PATH)
-
-    print(f"[YOLO] Vehicle model path: {vehicle_path}", file=sys.stderr)
-    print(f"[YOLO] Plate model path: {plate_path}", file=sys.stderr)
-
-    vehicle_model = YOLO(vehicle_path)
-    plate_model = YOLO(plate_path)
-    print("[YOLO] Models loaded, running detection...", file=sys.stderr)
-
-    # 1) Vehicle detection
-    vehicle_results = vehicle_model.predict(
+    vehicle_model, plate_model = load_models()
+    result = detect_frame(
         frame,
-        classes=list(COCO_VEHICLE_CLASSES),
-        conf=float(args.conf_vehicle),
-        verbose=False,
+        vehicle_model,
+        plate_model,
+        conf_vehicle=float(args.conf_vehicle),
+        conf_plate=float(args.conf_plate),
     )
-    vehicles = _vehicles_from_ultralytics_predict(vehicle_results[0] if vehicle_results else None)
-
-    # 2) Plate detection
-    plate_results = plate_model.predict(frame, conf=float(args.conf_plate), verbose=False)
-    plates = _plates_from_ultralytics_predict(plate_results[0] if plate_results else None)
-
-    # Build output
-    vehicles_out = []
-    for v in vehicles:
-        class_name = COCO_CLASS_NAMES.get(v.cls_id, "vehicle")
-        vehicles_out.append({
-            "bbox": [round(x, 2) for x in v.xyxy],
-            "class_name": class_name,
-            "confidence": round(v.conf, 4),
-        })
-
-    # Group overlapping detections (License Plate + Plate Content) so one physical plate = one output
-    plate_groups = _group_overlapping_plates(plates)
-    plates_out = []
-    for group in plate_groups:
-        bbox_xyxy, ocr_xyxy = _pick_bbox_and_ocr_crop(group)
-        best_conf = max(p.conf for p in group)
-        plate_obj: dict = {
-            "bbox": [round(x, 2) for x in bbox_xyxy],
-            "class_name": "plate",
-            "confidence": round(best_conf, 4),
-        }
-
-        vehicle = assign_plate_to_vehicle(bbox_xyxy, vehicles)
-        if vehicle is not None:
-            x1, y1, x2, y2 = ocr_xyxy
-            ix1, iy1, ix2, iy2 = clamp_xyxy(x1, y1, x2, y2, w, h)
-            crop = frame[iy1:iy2, ix1:ix2]
-            if crop.size > 0:
-                thresh = preprocess_plate_crop_threshold_inv(crop)
-
-                # Run OCR without any GUI windows (headless-friendly)
-                ocr = run_ocr_on_crop(thresh)
-                if ocr is None:
-                    rgb_crop = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
-                    ocr = run_ocr_on_crop(rgb_crop)
-                if ocr is not None:
-                    plate_text, ocr_conf = ocr
-                    plate_obj["plateNumber"] = plate_text
-                    plate_obj["ocrConf"] = round(ocr_conf, 3)
-                    print(f"[YOLO] Plate detected: {plate_text}", file=sys.stderr)
-
-        plates_out.append(plate_obj)
-
+    vehicles_out = result["vehicles"]
+    plates_out = result["plates"]
     print(f"[YOLO] Done: {len(vehicles_out)} vehicles, {len(plates_out)} plates", file=sys.stderr)
-    result = {"vehicles": vehicles_out, "plates": plates_out}
     print(json.dumps(result, ensure_ascii=False))
     return 0
 

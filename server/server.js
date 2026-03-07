@@ -90,12 +90,20 @@ app.use('/api/hosts', hostsRouter);
 app.use('/api/ocr', ocrRouter);
 app.use('/api/detect', detectRouter);
 
+let detectionServiceHandle = null;
+
 function startServer(port, isRetry = false) {
-  const server = app.listen(port, () => {
+  const server = app.listen(port, async () => {
     console.log(`🚀 Server running on http://localhost:${port}`);
     if (isRetry) {
       console.log(`⚠️  Note: Server started on port ${port} instead of ${PORT}`);
       console.log(`⚠️  Update VITE_API_URL in your .env file to: http://localhost:${port}/api`);
+    }
+    try {
+      const { createDetectionService } = await import('./detection_service.js');
+      detectionServiceHandle = createDetectionService(server);
+    } catch (err) {
+      console.warn('⚠️  Detection service failed to start:', err.message);
     }
   });
 
@@ -125,7 +133,9 @@ cleanupService.start();
 
 process.on('SIGINT', () => {
   console.log('\n🛑 Shutting down...');
-  
+  if (detectionServiceHandle?.stop) {
+    detectionServiceHandle.stop();
+  }
   monitoringService.stop();
   cleanupService.stop();
   db.close();

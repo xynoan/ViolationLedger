@@ -1,10 +1,10 @@
-import { useState, useCallback, memo, useRef } from 'react';
+import { useState, useCallback, memo } from 'react';
 import { Camera as CameraIcon } from 'lucide-react';
 import { Camera } from '@/types/parking';
 import { cn } from '@/lib/utils';
 import { useCameraStream } from '@/hooks/useCameraStream';
-import { useYoloDetection } from '@/hooks/useYoloDetection';
-import { VideoPlayer, VideoPlayerHandle } from './VideoPlayer';
+import { useDetectionStream } from '@/hooks/useDetectionStream';
+import { VideoPlayer } from './VideoPlayer';
 import { CameraHeader } from './CameraHeader';
 import { CameraFooter } from './CameraFooter';
 import {
@@ -44,10 +44,8 @@ export const CameraFeed = memo(function CameraFeed({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const isOnline = camera.status === 'online';
-  const videoPlayerRef = useRef<VideoPlayerHandle>(null);
-  const fullscreenVideoPlayerRef = useRef<VideoPlayerHandle>(null);
 
-  // Custom hooks for complex logic
+  // Custom hooks: stream from go2rtc, detections from server-side RTSP worker
   const { stream, refresh: refreshStream } = useCameraStream({
     deviceId: camera.deviceId,
     isOnline,
@@ -56,7 +54,7 @@ export const CameraFeed = memo(function CameraFeed({
     detections,
     vehicleCount,
     plateCount,
-  } = useYoloDetection(videoPlayerRef, isOnline);
+  } = useDetectionStream(camera.id, isOnline);
 
   const handleRefresh = useCallback(() => {
     refreshStream();
@@ -83,7 +81,6 @@ export const CameraFeed = memo(function CameraFeed({
 
         <div className={cn('relative bg-muted flex items-center justify-center overflow-hidden aspect-video')}>
           <VideoPlayer
-            ref={videoPlayerRef}
             stream={stream}
             isOnline={isOnline}
             camera={camera}
@@ -128,7 +125,6 @@ export const CameraFeed = memo(function CameraFeed({
           </DialogHeader>
           <div className={cn('relative bg-muted flex items-center justify-center overflow-hidden aspect-video w-full')}>
             <VideoPlayer
-              ref={fullscreenVideoPlayerRef}
               stream={stream}
               isOnline={isOnline}
               camera={camera}
