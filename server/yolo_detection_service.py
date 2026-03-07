@@ -44,11 +44,9 @@ except Exception as e:
 COCO_VEHICLE_CLASSES = (2, 3, 5, 7)  # car, motorbike, bus, truck
 COCO_CLASS_NAMES = {2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
 
-# Philippine license plate model (data.yaml): nc=3
-PLATE_CLASS_INVALID = 0
-PLATE_CLASS_LICENSE_PLATE = 1
-PLATE_CLASS_PLATE_CONTENT = 2
-PLATE_CLASS_NAMES = {0: "Invalid Plate", 1: "License Plate", 2: "Plate Content"}
+# License plate model (data.yaml): nc=1, names: ['License_Plate']
+# Single-class: class 0 = License_Plate. No Invalid/Plate Content classes.
+PLATE_CLASS_LICENSE_PLATE = 0
 
 WEIGHTS_DIR = Path(__file__).resolve().parent / "models" / "weights"
 VEHICLE_MODEL_PATH = WEIGHTS_DIR / "yolov8n.pt"
@@ -66,7 +64,7 @@ class VehicleBox:
 
 @dataclass(frozen=True)
 class PlateBox:
-    cls_id: int  # 0=Invalid, 1=License Plate, 2=Plate Content
+    cls_id: int  # 0=License_Plate (single-class model)
     conf: float
     xyxy: Tuple[float, float, float, float]
 
@@ -143,7 +141,7 @@ def _vehicles_from_ultralytics_predict(result) -> List[VehicleBox]:
 
 
 def _plates_from_ultralytics_predict(result) -> List[PlateBox]:
-    """Extract plate boxes from Ultralytics result, skipping Invalid Plate (class 0) early."""
+    """Extract plate boxes from Ultralytics result. Single-class model: class 0 = License_Plate."""
     if result is None or getattr(result, "boxes", None) is None:
         return []
     boxes = result.boxes
@@ -159,16 +157,13 @@ def _plates_from_ultralytics_predict(result) -> List[PlateBox]:
     out: List[PlateBox] = []
     for i in range(len(xyxy_np)):
         cls_id = int(cls_np[i]) if cls_np is not None else PLATE_CLASS_LICENSE_PLATE
-        # Filter out invalid plate detections as early as possible for efficiency.
-        if cls_id == PLATE_CLASS_INVALID:
-            continue
         x1, y1, x2, y2 = map(float, xyxy_np[i])
         c = float(conf_np[i]) if conf_np is not None else 0.0
         out.append(PlateBox(cls_id=cls_id, conf=c, xyxy=(x1, y1, x2, y2)))
     return out
 
 
-# IoU above this => same physical plate (License Plate + Plate Content)
+# IoU above this => same physical plate (duplicate detections)
 PLATE_GROUP_IOU_THRESHOLD = 0.2
 
 
@@ -204,32 +199,10 @@ def _group_overlapping_plates(plates: List[PlateBox]) -> List[List[PlateBox]]:
 def _pick_bbox_and_ocr_crop(group: List[PlateBox]) -> Tuple[Tuple[float, float, float, float], Tuple[float, float, float, float]]:
     """
     For one plate group: choose the primary bbox and OCR crop.
-
-    Prioritize Plate Content (class 2) for BOTH the output bbox and the OCR crop,
-    since it should tightly cover the plate text region. Fall back to License Plate
-    (class 1) only if no Plate Content is present.
+    Single-class model: use highest-confidence detection.
     """
-    license_plates = [p for p in group if p.cls_id == PLATE_CLASS_LICENSE_PLATE]
-    plate_content = [p for p in group if p.cls_id == PLATE_CLASS_PLATE_CONTENT]
-
-    # Prefer the highest-confidence Plate Content box for both bbox and OCR crop.
-    if plate_content:
-        best_content = max(plate_content, key=lambda p: p.conf)
-        bbox = best_content.xyxy
-        ocr_crop_bbox = best_content.xyxy
-        return bbox, ocr_crop_bbox
-
-    # Fallback: use highest-confidence License Plate box if no Plate Content detected.
-    if license_plates:
-        best_lp = max(license_plates, key=lambda p: p.conf)
-        bbox = best_lp.xyxy
-        ocr_crop_bbox = best_lp.xyxy
-        return bbox, ocr_crop_bbox
-
-    # Last resort: use the first box in the group.
-    bbox = group[0].xyxy
-    ocr_crop_bbox = group[0].xyxy
-    return bbox, ocr_crop_bbox
+    best = max(group, key=lambda p: p.conf)
+    return best.xyxy, best.xyxy
 
 
 def clamp_xyxy(x1: float, y1: float, x2: float, y2: float, w: int, h: int) -> Tuple[int, int, int, int]:
@@ -346,8 +319,22 @@ def detect_frame(
 def main() -> int:
     parser = argparse.ArgumentParser(description="YOLO vehicle + plate detection service.")
     parser.add_argument("--base64-file", required=True, help="Path to file containing base64 image data.")
-    parser.add_argument("--conf-vehicle", type=float, default=0.35, help="Vehicle detection confidence.")
-    parser.add_argument("--conf-plate", type=float, default=0.40, help="Plate detection confidence.")
+
+    # Allow overriding confidence thresholds via environment variables for easier tuning in production.
+    conf_vehicle_default = float(os.getenv("YOLO_VEHICLE_CONF", "0.35"))
+    conf_plate_default = float(os.getenv("YOLO_PLATE_CONF", "0.40"))
+    parser.add_argument(
+        "--conf-vehicle",
+        type=float,
+        default=conf_vehicle_default,
+        help="Vehicle detection confidence (overrides with YOLO_VEHICLE_CONF env if set).",
+    )
+    parser.add_argument(
+        "--conf-plate",
+        type=float,
+        default=conf_plate_default,
+        help="Plate detection confidence (overrides with YOLO_PLATE_CONF env if set).",
+    )
     args = parser.parse_args()
 
     try:

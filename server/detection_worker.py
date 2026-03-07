@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 
@@ -18,6 +19,8 @@ import cv2
 from yolo_detection_service import load_models, detect_frame
 
 DETECTION_INTERVAL_SEC = 2.5
+DEFAULT_CONF_VEHICLE = float(os.getenv("YOLO_VEHICLE_CONF", "0.35"))
+DEFAULT_CONF_PLATE = float(os.getenv("YOLO_PLATE_CONF", "0.40"))
 
 
 def main() -> int:
@@ -25,8 +28,18 @@ def main() -> int:
     parser.add_argument("--camera-id", required=True, help="Camera ID for output")
     parser.add_argument("--rtsp-url", required=True, help="RTSP stream URL (e.g. rtsp://localhost:8554/cam1)")
     parser.add_argument("--interval", type=float, default=DETECTION_INTERVAL_SEC, help="Seconds between detections")
-    parser.add_argument("--conf-vehicle", type=float, default=0.35, help="Vehicle detection confidence")
-    parser.add_argument("--conf-plate", type=float, default=0.40, help="Plate detection confidence")
+    parser.add_argument(
+        "--conf-vehicle",
+        type=float,
+        default=DEFAULT_CONF_VEHICLE,
+        help="Vehicle detection confidence (overrides with YOLO_VEHICLE_CONF env if set)",
+    )
+    parser.add_argument(
+        "--conf-plate",
+        type=float,
+        default=DEFAULT_CONF_PLATE,
+        help="Plate detection confidence (overrides with YOLO_PLATE_CONF env if set)",
+    )
     args = parser.parse_args()
 
     print(f"[Worker {args.camera_id}] Connecting to {args.rtsp_url}...", file=sys.stderr)
