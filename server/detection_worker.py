@@ -20,7 +20,7 @@ from yolo_detection_service import load_models, detect_frame
 
 DETECTION_INTERVAL_SEC = 2.5
 DEFAULT_CONF_VEHICLE = float(os.getenv("YOLO_VEHICLE_CONF", "0.35"))
-DEFAULT_CONF_PLATE = float(os.getenv("YOLO_PLATE_CONF", "0.40"))
+DEFAULT_CONF_PLATE = float(os.getenv("YOLO_PLATE_CONF", "0.04"))
 
 
 def main() -> int:
