@@ -16,11 +16,11 @@ import time
 import cv2
 
 # Import detection logic from yolo_detection_service (loads models once)
-from yolo_detection_service import load_models, detect_frame
+from yolo_detection_service import load_models, detect_frame, DEFAULT_CONF_PLATE
 
 DETECTION_INTERVAL_SEC = 2.5
 DEFAULT_CONF_VEHICLE = float(os.getenv("YOLO_VEHICLE_CONF", "0.35"))
-DEFAULT_CONF_PLATE = float(os.getenv("YOLO_PLATE_CONF", "0.04"))
+DEFAULT_CONF_PLATE = float(os.getenv("YOLO_PLATE_CONF", str(DEFAULT_CONF_PLATE)))
 
 
 def main() -> int:

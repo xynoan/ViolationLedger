@@ -53,6 +53,9 @@ WEIGHTS_DIR = Path(__file__).resolve().parent / "models" / "weights"
 VEHICLE_MODEL_PATH = WEIGHTS_DIR / "yolov8n.pt"
 PLATE_MODEL_PATH = WEIGHTS_DIR / "license_detection.pt"
 
+# Plate detection confidence (override with YOLO_PLATE_CONF env). Single source of truth.
+DEFAULT_CONF_PLATE = 0.55
+
 
 @dataclass(frozen=True)
 class VehicleBox:
@@ -276,7 +279,7 @@ def detect_frame(
     vehicle_model: "YOLO",
     plate_model: "YOLO",
     conf_vehicle: float = 0.35,
-    conf_plate: float = 0.40,
+    conf_plate: float = DEFAULT_CONF_PLATE,
 ) -> dict:
     """
     Run YOLO detection on a single frame. Returns {vehicles, plates} dict.
@@ -343,7 +346,7 @@ def main() -> int:
 
     # Allow overriding confidence thresholds via environment variables for easier tuning in production.
     conf_vehicle_default = float(os.getenv("YOLO_VEHICLE_CONF", "0.35"))
-    conf_plate_default = float(os.getenv("YOLO_PLATE_CONF", "0.90"))
+    conf_plate_default = float(os.getenv("YOLO_PLATE_CONF", str(DEFAULT_CONF_PLATE)))
     parser.add_argument(
         "--conf-vehicle",
         type=float,
