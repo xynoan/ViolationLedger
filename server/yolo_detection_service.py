@@ -352,11 +352,7 @@ def main() -> int:
             if crop.size > 0:
                 thresh = preprocess_plate_crop_threshold_inv(crop)
 
-                # Debug view of the thresholded plate
-                cv2.imshow("thresh_debug", thresh)
-                cv2.waitKey(0)  # waits for a key press; use 1 for non-blocking
-                cv2.destroyWindow("thresh_debug")
-                
+                # Run OCR without any GUI windows (headless-friendly)
                 ocr = run_ocr_on_crop(thresh)
                 if ocr is None:
                     rgb_crop = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
