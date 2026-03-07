@@ -295,22 +295,23 @@ def detect_frame(
             "class_name": "plate",
             "confidence": round(best_conf, 4),
         }
-        vehicle = assign_plate_to_vehicle(bbox_xyxy, vehicles)
-        if vehicle is not None:
-            x1, y1, x2, y2 = ocr_xyxy
-            ix1, iy1, ix2, iy2 = clamp_xyxy(x1, y1, x2, y2, w, h)
-            crop = frame[iy1:iy2, ix1:ix2]
-            if crop.size > 0:
-                thresh = preprocess_plate_crop_threshold_inv(crop)
-                ocr = run_ocr_on_crop(thresh)
-                if ocr is None:
-                    rgb_crop = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
-                    ocr = run_ocr_on_crop(rgb_crop)
-                if ocr is not None:
-                    plate_text, ocr_conf = ocr
-                    plate_obj["plateNumber"] = plate_text
-                    plate_obj["ocrConf"] = round(ocr_conf, 3)
-                    print(f"[YOLO] Plate detected: {plate_text}", file=sys.stderr)
+
+        # Always run OCR on the plate crop, even if we cannot confidently assign it to a vehicle.
+        x1, y1, x2, y2 = ocr_xyxy
+        ix1, iy1, ix2, iy2 = clamp_xyxy(x1, y1, x2, y2, w, h)
+        crop = frame[iy1:iy2, ix1:ix2]
+        if crop.size > 0:
+            thresh = preprocess_plate_crop_threshold_inv(crop)
+            ocr = run_ocr_on_crop(thresh)
+            if ocr is None:
+                rgb_crop = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+                ocr = run_ocr_on_crop(rgb_crop)
+            if ocr is not None:
+                plate_text, ocr_conf = ocr
+                plate_obj["plateNumber"] = plate_text
+                plate_obj["ocrConf"] = round(ocr_conf, 3)
+                print(f"[YOLO] Plate detected: {plate_text}", file=sys.stderr)
+
         plates_out.append(plate_obj)
 
     return {"vehicles": vehicles_out, "plates": plates_out}
