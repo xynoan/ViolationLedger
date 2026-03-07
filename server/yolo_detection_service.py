@@ -44,9 +44,10 @@ except Exception as e:
 COCO_VEHICLE_CLASSES = (2, 3, 5, 7)  # car, motorbike, bus, truck
 COCO_CLASS_NAMES = {2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
 
-# License plate model (data.yaml): nc=1, names: ['License_Plate']
-# Single-class: class 0 = License_Plate. No Invalid/Plate Content classes.
-PLATE_CLASS_LICENSE_PLATE = 0
+# License plate model (data.yaml): nc=3, names: ['Invalid Plate', 'License Plate', 'Plate Content']
+PLATE_CLASS_INVALID = 0
+PLATE_CLASS_LICENSE = 1
+PLATE_CLASS_CONTENT = 2
 
 WEIGHTS_DIR = Path(__file__).resolve().parent / "models" / "weights"
 VEHICLE_MODEL_PATH = WEIGHTS_DIR / "yolov8n.pt"
@@ -64,7 +65,7 @@ class VehicleBox:
 
 @dataclass(frozen=True)
 class PlateBox:
-    cls_id: int  # 0=License_Plate (single-class model)
+    cls_id: int  # 0=Invalid, 1=License Plate, 2=Plate Content
     conf: float
     xyxy: Tuple[float, float, float, float]
 
@@ -141,7 +142,7 @@ def _vehicles_from_ultralytics_predict(result) -> List[VehicleBox]:
 
 
 def _plates_from_ultralytics_predict(result) -> List[PlateBox]:
-    """Extract plate boxes from Ultralytics result. Single-class model: class 0 = License_Plate."""
+    """Extract plate boxes from Ultralytics result. 3-class: 0=Invalid, 1=License Plate, 2=Plate Content."""
     if result is None or getattr(result, "boxes", None) is None:
         return []
     boxes = result.boxes
@@ -156,7 +157,7 @@ def _plates_from_ultralytics_predict(result) -> List[PlateBox]:
 
     out: List[PlateBox] = []
     for i in range(len(xyxy_np)):
-        cls_id = int(cls_np[i]) if cls_np is not None else PLATE_CLASS_LICENSE_PLATE
+        cls_id = int(cls_np[i]) if cls_np is not None else PLATE_CLASS_LICENSE
         x1, y1, x2, y2 = map(float, xyxy_np[i])
         c = float(conf_np[i]) if conf_np is not None else 0.0
         out.append(PlateBox(cls_id=cls_id, conf=c, xyxy=(x1, y1, x2, y2)))
@@ -196,13 +197,29 @@ def _group_overlapping_plates(plates: List[PlateBox]) -> List[List[PlateBox]]:
     return list(groups.values())
 
 
-def _pick_bbox_and_ocr_crop(group: List[PlateBox]) -> Tuple[Tuple[float, float, float, float], Tuple[float, float, float, float]]:
+def _pick_bbox_and_ocr_crop(group: List[PlateBox]) -> Tuple[Tuple[float, float, float, float], Tuple[float, float, float, float], bool]:
     """
     For one plate group: choose the primary bbox and OCR crop.
-    Single-class model: use highest-confidence detection.
+    3-class model: prefer Plate Content (2) for OCR, fall back to License Plate (1).
+    Display bbox: License Plate (1) > Plate Content (2) > Invalid Plate (0).
+    Returns (bbox_xyxy, ocr_xyxy, should_run_ocr). OCR skipped when only Invalid Plate (0).
     """
-    best = max(group, key=lambda p: p.conf)
-    return best.xyxy, best.xyxy
+    # OCR crop: Plate Content (2) > License Plate (1); never use Invalid Plate (0)
+    ocr_candidates = [p for p in group if p.cls_id in (PLATE_CLASS_LICENSE, PLATE_CLASS_CONTENT)]
+    ocr_plate = max(ocr_candidates, key=lambda p: (p.cls_id == PLATE_CLASS_CONTENT, p.conf)) if ocr_candidates else None
+
+    # Display bbox: License Plate (1) > Plate Content (2) > Invalid Plate (0)
+    def bbox_priority(p: PlateBox) -> Tuple[int, float]:
+        order = {PLATE_CLASS_LICENSE: 0, PLATE_CLASS_CONTENT: 1, PLATE_CLASS_INVALID: 2}
+        return (order.get(p.cls_id, 3), -p.conf)
+
+    bbox_plate = min(group, key=lambda p: bbox_priority(p))
+
+    bbox_xyxy = bbox_plate.xyxy
+    ocr_xyxy = ocr_plate.xyxy if ocr_plate else bbox_xyxy
+    should_run_ocr = ocr_plate is not None
+
+    return bbox_xyxy, ocr_xyxy, should_run_ocr
 
 
 def clamp_xyxy(x1: float, y1: float, x2: float, y2: float, w: int, h: int) -> Tuple[int, int, int, int]:
@@ -288,7 +305,7 @@ def detect_frame(
     plate_groups = _group_overlapping_plates(plates)
     plates_out = []
     for group in plate_groups:
-        bbox_xyxy, ocr_xyxy = _pick_bbox_and_ocr_crop(group)
+        bbox_xyxy, ocr_xyxy, should_run_ocr = _pick_bbox_and_ocr_crop(group)
         best_conf = max(p.conf for p in group)
         plate_obj: dict = {
             "bbox": [round(x, 2) for x in bbox_xyxy],
@@ -296,21 +313,24 @@ def detect_frame(
             "confidence": round(best_conf, 4),
         }
 
-        # Always run OCR on the plate crop, even if we cannot confidently assign it to a vehicle.
-        x1, y1, x2, y2 = ocr_xyxy
-        ix1, iy1, ix2, iy2 = clamp_xyxy(x1, y1, x2, y2, w, h)
-        crop = frame[iy1:iy2, ix1:ix2]
-        if crop.size > 0:
-            thresh = preprocess_plate_crop_threshold_inv(crop)
-            ocr = run_ocr_on_crop(thresh)
-            if ocr is None:
-                rgb_crop = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
-                ocr = run_ocr_on_crop(rgb_crop)
-            if ocr is not None:
-                plate_text, ocr_conf = ocr
-                plate_obj["plateNumber"] = plate_text
-                plate_obj["ocrConf"] = round(ocr_conf, 3)
-                print(f"[YOLO] Plate detected: {plate_text}", file=sys.stderr)
+        if not should_run_ocr:
+            plate_obj["invalid"] = True  # Only Invalid Plate (0) in group; skip OCR
+
+        if should_run_ocr:
+            x1, y1, x2, y2 = ocr_xyxy
+            ix1, iy1, ix2, iy2 = clamp_xyxy(x1, y1, x2, y2, w, h)
+            crop = frame[iy1:iy2, ix1:ix2]
+            if crop.size > 0:
+                thresh = preprocess_plate_crop_threshold_inv(crop)
+                ocr = run_ocr_on_crop(thresh)
+                if ocr is None:
+                    rgb_crop = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+                    ocr = run_ocr_on_crop(rgb_crop)
+                if ocr is not None:
+                    plate_text, ocr_conf = ocr
+                    plate_obj["plateNumber"] = plate_text
+                    plate_obj["ocrConf"] = round(ocr_conf, 3)
+                    print(f"[YOLO] Plate detected: {plate_text}", file=sys.stderr)
 
         plates_out.append(plate_obj)
 
@@ -323,7 +343,7 @@ def main() -> int:
 
     # Allow overriding confidence thresholds via environment variables for easier tuning in production.
     conf_vehicle_default = float(os.getenv("YOLO_VEHICLE_CONF", "0.35"))
-    conf_plate_default = float(os.getenv("YOLO_PLATE_CONF", "0.40"))
+    conf_plate_default = float(os.getenv("YOLO_PLATE_CONF", "0.90"))
     parser.add_argument(
         "--conf-vehicle",
         type=float,
