@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { Car, AlertTriangle, FileText, CheckCircle, Camera, Plus } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { Car, AlertTriangle, FileText, CheckCircle, Camera, Plus, RefreshCw } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
@@ -20,56 +20,52 @@ export default function Dashboard() {
   const [allCaptures, setAllCaptures] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Load data from API
-  useEffect(() => {
-    const loadData = async () => {
-      try {
-        setIsLoading(true);
-        const [vehiclesData, camerasData, violationsData, detectionsData] = await Promise.all([
-          vehiclesAPI.getAll().catch(() => []),
-          camerasAPI.getAll().catch(() => []),
-          violationsAPI.getAll().catch(() => []),
-          detectionsAPI.getAll().catch(() => []),
-        ]);
-        
-        // Ensure deviceId is properly set for cameras
-        const camerasWithDeviceId = camerasData.map((camera: any) => {
-          const deviceIdValue = camera.deviceId && typeof camera.deviceId === 'string' && camera.deviceId.trim() 
-            ? camera.deviceId.trim() 
-            : undefined;
-          return {
-            ...camera,
-            deviceId: deviceIdValue
-          };
-        });
-        
-        setVehicles(vehiclesData);
-        setCameras(camerasWithDeviceId);
-        setViolations(violationsData);
-        // Count all detections (captures) - filter out "none" detections
-        const validDetections = Array.isArray(detectionsData) 
-          ? detectionsData.filter((d: any) => d.class_name && d.class_name.toLowerCase() !== 'none')
-          : [];
-        setAllCaptures(validDetections.length);
-      } catch (error) {
-        console.error('Error loading dashboard data:', error);
-        const errorMessage = error instanceof Error ? error.message : 'Failed to load dashboard data';
-        toast({
-          title: "Connection Error",
-          description: errorMessage,
-          variant: "destructive",
-        });
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    loadData();
-    
-    // Refresh data every 30 seconds
-    const interval = setInterval(loadData, 30000);
-    return () => clearInterval(interval);
+  // Load data from API (used on mount and by manual refresh)
+  const loadData = useCallback(async () => {
+    try {
+      setIsLoading(true);
+      const [vehiclesData, camerasData, violationsData, detectionsData] = await Promise.all([
+        vehiclesAPI.getAll().catch(() => []),
+        camerasAPI.getAll().catch(() => []),
+        violationsAPI.getAll().catch(() => []),
+        detectionsAPI.getAll().catch(() => []),
+      ]);
+      
+      // Ensure deviceId is properly set for cameras
+      const camerasWithDeviceId = camerasData.map((camera: any) => {
+        const deviceIdValue = camera.deviceId && typeof camera.deviceId === 'string' && camera.deviceId.trim() 
+          ? camera.deviceId.trim() 
+          : undefined;
+        return {
+          ...camera,
+          deviceId: deviceIdValue
+        };
+      });
+      
+      setVehicles(vehiclesData);
+      setCameras(camerasWithDeviceId);
+      setViolations(violationsData);
+      // Count all detections (captures) - filter out "none" detections
+      const validDetections = Array.isArray(detectionsData) 
+        ? detectionsData.filter((d: any) => d.class_name && d.class_name.toLowerCase() !== 'none')
+        : [];
+      setAllCaptures(validDetections.length);
+    } catch (error) {
+      console.error('Error loading dashboard data:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Failed to load dashboard data';
+      toast({
+        title: "Connection Error",
+        description: errorMessage,
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   const activeWarnings = violations.filter(v => v.status === 'warning');
   const issuedTickets = violations.filter(v => v.status === 'issued');
@@ -98,6 +94,13 @@ export default function Dashboard() {
       />
 
       <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
+        <div className="flex justify-end">
+          <Button variant="outline" size="sm" onClick={loadData}>
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Refresh
+          </Button>
+        </div>
+
         {/* Stats Grid */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
           <StatCard
