@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Car, AlertTriangle, FileText, CheckCircle, Camera, Plus, RefreshCw } from 'lucide-react';
+import { Car, AlertTriangle, CheckCircle, Camera, Plus, RefreshCw, Pause, Play } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
@@ -7,8 +7,9 @@ import { StatCard } from '@/components/dashboard/StatCard';
 import { CameraFeed } from '@/components/dashboard/CameraFeed';
 import { CaptureResults } from '@/components/dashboard/CaptureResults';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { Vehicle, Camera as CameraType, Violation } from '@/types/parking';
-import { vehiclesAPI, camerasAPI, violationsAPI, detectionsAPI } from '@/lib/api';
+import { vehiclesAPI, camerasAPI, violationsAPI, detectionsAPI, detectionAPI } from '@/lib/api';
 import { toast } from '@/hooks/use-toast';
 
 export default function Dashboard() {
@@ -19,6 +20,34 @@ export default function Dashboard() {
   const [violations, setViolations] = useState<Violation[]>([]);
   const [allCaptures, setAllCaptures] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
+  const [detectionEnabled, setDetectionEnabled] = useState(true);
+  const [detectionToggleLoading, setDetectionToggleLoading] = useState(false);
+
+  // Load detection enabled state on mount
+  useEffect(() => {
+    detectionAPI.getEnabled().then((r) => setDetectionEnabled(r?.enabled ?? true)).catch(() => {});
+  }, []);
+
+  const handleToggleDetection = useCallback(async () => {
+    setDetectionToggleLoading(true);
+    try {
+      const next = !detectionEnabled;
+      await detectionAPI.setEnabled(next);
+      setDetectionEnabled(next);
+      toast({
+        title: next ? 'Detection resumed' : 'Detection paused',
+        description: next ? 'YOLO workers are running.' : 'YOLO workers stopped.',
+      });
+    } catch (e) {
+      toast({
+        title: 'Failed to toggle detection',
+        description: e instanceof Error ? e.message : 'Unknown error',
+        variant: 'destructive',
+      });
+    } finally {
+      setDetectionToggleLoading(false);
+    }
+  }, [detectionEnabled]);
 
   // Load data from API (used on mount and by manual refresh)
   const loadData = useCallback(async () => {
@@ -94,7 +123,28 @@ export default function Dashboard() {
       />
 
       <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
-        <div className="flex justify-end">
+        <div className="flex justify-end items-center gap-2">
+          {!detectionEnabled && (
+            <Badge variant="secondary">Detection Paused</Badge>
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleToggleDetection}
+            disabled={detectionToggleLoading}
+          >
+            {detectionEnabled ? (
+              <>
+                <Pause className="h-4 w-4 mr-2" />
+                Pause Detection
+              </>
+            ) : (
+              <>
+                <Play className="h-4 w-4 mr-2" />
+                Resume Detection
+              </>
+            )}
+          </Button>
           <Button variant="outline" size="sm" onClick={loadData}>
             <RefreshCw className="h-4 w-4 mr-2" />
             Refresh

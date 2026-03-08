@@ -316,8 +316,8 @@ export async function runOCROnly(imageBase64) {
 }
 
 /**
- * Run YOLO vehicle + license plate detection (yolov8n.pt + license_detection.pt).
- * Plate OCR results are logged to stderr by the Python service.
+ * Run YOLO vehicle detection (yolov8n.pt only). Plate extraction is done via Gemini
+ * in the detection_worker when vehicles are detected.
  * @param {string} imageBase64 - Base64 encoded image data (raw or data URL)
  * @returns {Promise<{ vehicles: Array, plates: Array }>}
  */
@@ -351,36 +351,20 @@ export async function runYoloDetection(imageBase64) {
     } catch (e) {
       return resolve({ vehicles: [], plates: [], error: e.message });
     }
- 
-    // Absolute paths to YOLO weight files for vehicles and license plates
+
     const VEHICLE_MODEL_PATH = join(__dirname, 'models', 'weights', 'yolov8n.pt');
-    const PLATE_MODEL_PATH = join(__dirname, 'models', 'weights', 'license_detection.pt');
-
-    // Validate that the weight files exist before spawning the Python process.
-    const vehicleModelExists = fs.existsSync(VEHICLE_MODEL_PATH);
-    const plateModelExists = fs.existsSync(PLATE_MODEL_PATH);
-
-    if (!vehicleModelExists) {
-      console.warn(`[YOLO] Vehicle model weights not found at ${VEHICLE_MODEL_PATH}. Python may fall back to default weights (e.g., "yolov8n.pt").`);
-    }
-
-    if (!plateModelExists) {
-      console.warn(`[YOLO] Plate model weights not found at ${PLATE_MODEL_PATH}. YOLO plate detection may fail until weights are available.`);
+    if (!fs.existsSync(VEHICLE_MODEL_PATH)) {
+      console.warn(`[YOLO] Vehicle model weights not found at ${VEHICLE_MODEL_PATH}. Python may fall back to default weights.`);
     }
 
     const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
     console.log('[YOLO] Spawning Python process...');
-    console.log('[YOLO] Using weights:', {
-      vehicleModel: VEHICLE_MODEL_PATH,
-      plateModel: PLATE_MODEL_PATH,
-    });
     const pythonProcess = spawn(pythonCmd, [YOLO_DETECTION_SERVICE_PATH, '--base64-file', tempBase64File], {
       cwd: __dirname,
       env: {
         ...process.env,
         PYTHONUNBUFFERED: '1',
         YOLO_VEHICLE_WEIGHTS: VEHICLE_MODEL_PATH,
-        YOLO_PLATE_WEIGHTS: PLATE_MODEL_PATH,
       },
     });
 

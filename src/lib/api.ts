@@ -286,6 +286,17 @@ export const detectAPI = {
   }),
 };
 
+// Detection enable/disable (pause YOLO workers)
+export const detectionAPI = {
+  getEnabled: () => fetchAPI('/detect/enabled', { cache: false }),
+  setEnabled: (enabled: boolean) =>
+    fetchAPI('/detect/enabled', {
+      method: 'POST',
+      body: JSON.stringify({ enabled }),
+      cache: false,
+    }),
+};
+
 // Health API
 export const healthAPI = {
   getStatus: () => fetchAPI('/health/status', { cache: false, timeout: 15000 }),

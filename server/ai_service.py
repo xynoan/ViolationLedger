@@ -74,6 +74,113 @@ def load_image_from_file(filepath: str) -> Image.Image:
         raise ValueError(f"Failed to load image from file: {str(e)}")
 
 
+PLATE_EXTRACTION_PROMPT = """Look at this image. What license plate numbers can you see on any vehicles?
+Respond with ONLY a JSON object in this exact format: {"plates": ["ABC-1234", "XYZ-5678"]}
+If no plates are visible or readable, respond: {"plates": []}
+Use only alphanumeric characters, spaces, and hyphens in plate numbers. No other text or explanation."""
+
+
+def _parse_plates_from_response(response_text: str) -> List[str]:
+    """Parse plates from Gemini response, with fallbacks for malformed JSON."""
+    if not response_text or not isinstance(response_text, str):
+        return []
+    response_text = response_text.strip()
+    # Remove markdown code blocks
+    if response_text.startswith("```"):
+        parts = response_text.split("```")
+        if len(parts) > 1:
+            response_text = parts[1]
+            if response_text.startswith("json"):
+                response_text = response_text[4:]
+    response_text = response_text.strip()
+    if response_text.startswith('```json'):
+        response_text = response_text[7:]
+    if response_text.startswith('```'):
+        response_text = response_text[3:]
+    if response_text.endswith('```'):
+        response_text = response_text[:-3]
+    response_text = response_text.strip()
+
+    # Try standard JSON parse
+    if '{' in response_text and '}' in response_text:
+        start_idx = response_text.find('{')
+        end_idx = response_text.rfind('}') + 1
+        if start_idx < end_idx:
+            json_candidate = response_text[start_idx:end_idx]
+            try:
+                result = json.loads(json_candidate)
+                plates = result.get("plates", [])
+                if isinstance(plates, list):
+                    return [str(p).strip() for p in plates if p]
+                return []
+            except json.JSONDecodeError:
+                pass
+            # Fix common JSON issues
+            fixed = re.sub(r',\s*}', '}', json_candidate)
+            fixed = re.sub(r',\s*]', ']', fixed)
+            try:
+                result = json.loads(fixed)
+                plates = result.get("plates", [])
+                if isinstance(plates, list):
+                    return [str(p).strip() for p in plates if p]
+                return []
+            except json.JSONDecodeError:
+                pass
+
+    # Regex fallback: extract quoted strings after "plates":
+    # Match "plates": ["X", "Y"] or "plates": ["X"] (handles truncated response)
+    match = re.search(r'"plates"\s*:\s*\[(.*)', response_text, re.DOTALL)
+    if match:
+        inner = match.group(1)
+        # Extract complete quoted strings first
+        plate_matches = re.findall(r'"([^"]*)"', inner)
+        if plate_matches:
+            valid = [p.strip() for p in plate_matches if p.strip() and len(p.strip()) >= 2]
+            if valid:
+                return valid
+        # Handle truncated: "ABC-123 with no closing quote
+        partial = re.findall(r'"([A-Za-z0-9\s\-]{2,15})(?:"|$)', inner)
+        if partial:
+            return [p.strip() for p in partial if p.strip()]
+    # Last resort: find plate-like patterns (alphanumeric, spaces, hyphens)
+    plate_pattern = re.findall(r'"([A-Za-z0-9\s\-]{2,15})"', response_text)
+    return [p.strip() for p in plate_pattern if p.strip() and len(p.strip()) >= 2]
+
+
+def _safe_parse_plates(response_text: str) -> List[str]:
+    """Wrapper that never raises - returns [] on any parse error."""
+    try:
+        return _parse_plates_from_response(response_text)
+    except Exception:
+        return []
+
+
+def extract_plates_from_image(image: Image.Image) -> List[str]:
+    """
+    Use Gemini to extract license plate numbers from an image.
+    Called when YOLO detects vehicles. Returns empty list on rate limit or error.
+    """
+    try:
+        model = get_gemini_model()
+        response = model.generate_content(
+            [PLATE_EXTRACTION_PROMPT, image],
+            generation_config={
+                "temperature": 0.0,
+                "max_output_tokens": 512,
+            }
+        )
+        text = getattr(response, 'text', None) or ''
+        plates = _safe_parse_plates(text)
+        return plates
+    except Exception as e:
+        err_str = str(e)
+        if "429" in err_str or "quota" in err_str.lower():
+            print("[Gemini] Rate limit exceeded, skipping plate extraction", file=sys.stderr)
+            return []
+        print(f"[Gemini] Plate extraction error: {e}", file=sys.stderr)
+        return []
+
+
 def analyze_image_with_gemini(image: Image.Image) -> Dict:
     """
     Analyze image using Gemini 2.5 Flash for ILLEGAL PARKING VIOLATION detection on streets/roadways.

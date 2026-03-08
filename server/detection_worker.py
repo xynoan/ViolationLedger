@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Long-running detection worker: connects to RTSP stream, captures frames,
-runs YOLO detection (models loaded once), outputs JSON per detection to stdout.
-Used by Node.js detection_service for server-side frame capture (Option C).
+runs YOLO vehicle detection, then Gemini for plate extraction when vehicles detected.
+Outputs JSON per detection to stdout.
 """
 
 from __future__ import annotations
@@ -14,13 +14,13 @@ import sys
 import time
 
 import cv2
+from PIL import Image
 
-# Import detection logic from yolo_detection_service (loads models once)
-from yolo_detection_service import load_models, detect_frame, DEFAULT_CONF_PLATE
+from yolo_detection_service import load_models, detect_frame
+from ai_service import extract_plates_from_image
 
 DETECTION_INTERVAL_SEC = 2.5
 DEFAULT_CONF_VEHICLE = float(os.getenv("YOLO_VEHICLE_CONF", "0.35"))
-DEFAULT_CONF_PLATE = float(os.getenv("YOLO_PLATE_CONF", str(DEFAULT_CONF_PLATE)))
 
 
 def main() -> int:
@@ -33,12 +33,6 @@ def main() -> int:
         type=float,
         default=DEFAULT_CONF_VEHICLE,
         help="Vehicle detection confidence (overrides with YOLO_VEHICLE_CONF env if set)",
-    )
-    parser.add_argument(
-        "--conf-plate",
-        type=float,
-        default=DEFAULT_CONF_PLATE,
-        help="Plate detection confidence (overrides with YOLO_PLATE_CONF env if set)",
     )
     args = parser.parse_args()
 
@@ -59,9 +53,9 @@ def main() -> int:
         print(err, flush=True)
         return 1
 
-    # Load models once at startup (keeps them in memory)
-    vehicle_model, plate_model = load_models()
-    print(f"[Worker {args.camera_id}] Models loaded, starting detection loop...", file=sys.stderr)
+    # Load vehicle model once at startup
+    vehicle_model = load_models()
+    print(f"[Worker {args.camera_id}] Model loaded, starting detection loop...", file=sys.stderr)
 
     last_detect = 0.0
     frame_count = 0
@@ -94,14 +88,26 @@ def main() -> int:
                     result = detect_frame(
                         frame,
                         vehicle_model,
-                        plate_model,
                         conf_vehicle=args.conf_vehicle,
-                        conf_plate=args.conf_plate,
                     )
+                    vehicles = result["vehicles"]
+                    plates_out = []
+
+                    # Only call Gemini when YOLO detects vehicles (saves API usage)
+                    if vehicles:
+                        pil_image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                        plate_numbers = extract_plates_from_image(pil_image)
+                        if plate_numbers:
+                            print(f"[Gemini] Plates detected: {plate_numbers}", file=sys.stderr)
+                        plates_out = [
+                            {"plateNumber": p, "bbox": None, "class_name": "plate", "confidence": 0.0}
+                            for p in plate_numbers
+                        ]
+
                     out = {
                         "cameraId": args.camera_id,
-                        "vehicles": result["vehicles"],
-                        "plates": result["plates"],
+                        "vehicles": vehicles,
+                        "plates": plates_out,
                         "timestamp": now,
                         "frameIndex": frame_count,
                     }

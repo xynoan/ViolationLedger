@@ -2,6 +2,7 @@
  * Server-side detection service (Option C).
  * Manages long-running Python workers that capture frames from RTSP and run YOLO.
  * Broadcasts detections to WebSocket clients.
+ * Respects detection enabled/disabled toggle (stops workers when paused).
  */
 
 import { spawn } from 'child_process';
@@ -9,6 +10,7 @@ import { WebSocketServer } from 'ws';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import db from './database.js';
+import { getDetectionEnabled } from './detection_state.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -105,6 +107,13 @@ function stopWorker(cameraId) {
 }
 
 function syncWorkers() {
+  if (!getDetectionEnabled()) {
+    for (const [cameraId] of workers) {
+      stopWorker(cameraId);
+    }
+    return;
+  }
+
   const cameras = getOnlineCamerasWithDeviceId();
   const wanted = new Set(cameras.map((c) => c.id));
 
@@ -208,4 +217,9 @@ export function createDetectionService(httpServer) {
       }
     },
   };
+}
+
+/** Called when detection enabled state changes to immediately sync workers. */
+export function syncDetectionWorkers() {
+  syncWorkers();
 }
