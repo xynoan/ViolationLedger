@@ -290,7 +290,7 @@ export default function Vehicles() {
         <div className="flex items-start gap-2 rounded-lg border border-border bg-card/70 px-3 py-2 text-sm text-muted-foreground">
           <Info className="mt-0.5 h-4 w-4 text-primary" />
           <p className="leading-relaxed">
-            Here's where we add non-resident vehicle details if their plate number is detected on cctv, viber message will be sent to their number.
+            Here's where we add non-resident vehicle details if their plate number is detected on cctv, text message will be sent to their number.
           </p>
         </div>
         {/* Actions Bar */}
