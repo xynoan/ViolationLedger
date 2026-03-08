@@ -44,10 +44,9 @@ except Exception as e:
 COCO_VEHICLE_CLASSES = (2, 3, 5, 7)  # car, motorbike, bus, truck
 COCO_CLASS_NAMES = {2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
 
-# License plate model (data.yaml): nc=3, names: ['Invalid Plate', 'License Plate', 'Plate Content']
-PLATE_CLASS_INVALID = 0
-PLATE_CLASS_LICENSE = 1
-PLATE_CLASS_CONTENT = 2
+# License plate model (data.yaml): nc=1, names: ['License_Plate']
+# All detections are class 0 = License_Plate (valid plates for OCR).
+PLATE_CLASS_LICENSE = 0
 
 WEIGHTS_DIR = Path(__file__).resolve().parent / "models" / "weights"
 VEHICLE_MODEL_PATH = WEIGHTS_DIR / "yolov8n.pt"
@@ -68,7 +67,7 @@ class VehicleBox:
 
 @dataclass(frozen=True)
 class PlateBox:
-    cls_id: int  # 0=Invalid, 1=License Plate, 2=Plate Content
+    cls_id: int  # 0=License_Plate (1-class model)
     conf: float
     xyxy: Tuple[float, float, float, float]
 
@@ -145,7 +144,7 @@ def _vehicles_from_ultralytics_predict(result) -> List[VehicleBox]:
 
 
 def _plates_from_ultralytics_predict(result) -> List[PlateBox]:
-    """Extract plate boxes from Ultralytics result. 3-class: 0=Invalid, 1=License Plate, 2=Plate Content."""
+    """Extract plate boxes from Ultralytics result. 1-class: 0=License_Plate."""
     if result is None or getattr(result, "boxes", None) is None:
         return []
     boxes = result.boxes
@@ -203,26 +202,11 @@ def _group_overlapping_plates(plates: List[PlateBox]) -> List[List[PlateBox]]:
 def _pick_bbox_and_ocr_crop(group: List[PlateBox]) -> Tuple[Tuple[float, float, float, float], Tuple[float, float, float, float], bool]:
     """
     For one plate group: choose the primary bbox and OCR crop.
-    3-class model: prefer Plate Content (2) for OCR, fall back to License Plate (1).
-    Display bbox: License Plate (1) > Plate Content (2) > Invalid Plate (0).
-    Returns (bbox_xyxy, ocr_xyxy, should_run_ocr). OCR skipped when only Invalid Plate (0).
+    1-class model: all detections are License_Plate (0); use highest-confidence bbox for both display and OCR.
+    Returns (bbox_xyxy, ocr_xyxy, should_run_ocr). Always runs OCR when group has plates.
     """
-    # OCR crop: Plate Content (2) > License Plate (1); never use Invalid Plate (0)
-    ocr_candidates = [p for p in group if p.cls_id in (PLATE_CLASS_LICENSE, PLATE_CLASS_CONTENT)]
-    ocr_plate = max(ocr_candidates, key=lambda p: (p.cls_id == PLATE_CLASS_CONTENT, p.conf)) if ocr_candidates else None
-
-    # Display bbox: License Plate (1) > Plate Content (2) > Invalid Plate (0)
-    def bbox_priority(p: PlateBox) -> Tuple[int, float]:
-        order = {PLATE_CLASS_LICENSE: 0, PLATE_CLASS_CONTENT: 1, PLATE_CLASS_INVALID: 2}
-        return (order.get(p.cls_id, 3), -p.conf)
-
-    bbox_plate = min(group, key=lambda p: bbox_priority(p))
-
-    bbox_xyxy = bbox_plate.xyxy
-    ocr_xyxy = ocr_plate.xyxy if ocr_plate else bbox_xyxy
-    should_run_ocr = ocr_plate is not None
-
-    return bbox_xyxy, ocr_xyxy, should_run_ocr
+    best = max(group, key=lambda p: p.conf)
+    return best.xyxy, best.xyxy, True
 
 
 def clamp_xyxy(x1: float, y1: float, x2: float, y2: float, w: int, h: int) -> Tuple[int, int, int, int]:
@@ -315,9 +299,6 @@ def detect_frame(
             "class_name": "plate",
             "confidence": round(best_conf, 4),
         }
-
-        if not should_run_ocr:
-            plate_obj["invalid"] = True  # Only Invalid Plate (0) in group; skip OCR
 
         if should_run_ocr:
             x1, y1, x2, y2 = ocr_xyxy
