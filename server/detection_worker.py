@@ -43,6 +43,10 @@ def main() -> int:
     args = parser.parse_args()
 
     print(f"[Worker {args.camera_id}] Connecting to {args.rtsp_url}...", file=sys.stderr)
+
+    if "OPENCV_FFMPEG_CAPTURE_OPTIONS" not in os.environ:
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
+
     cap = cv2.VideoCapture(args.rtsp_url)
 
     if not cap.isOpened():

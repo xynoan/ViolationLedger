@@ -44,9 +44,12 @@ except Exception as e:
 COCO_VEHICLE_CLASSES = (2, 3, 5, 7)  # car, motorbike, bus, truck
 COCO_CLASS_NAMES = {2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
 
-# License plate model (data.yaml): nc=1, names: ['License_Plate']
-# All detections are class 0 = License_Plate (valid plates for OCR).
-PLATE_CLASS_LICENSE = 0
+# License plate model (data.yaml): nc=3
+# names: ['Invalid Plate', 'License Plate', 'Plate Content']
+# Class indices (from Roboflow/Ultralytics export):
+PLATE_CLASS_INVALID = 0
+PLATE_CLASS_LICENSE = 1
+PLATE_CLASS_CONTENT = 2
 
 WEIGHTS_DIR = Path(__file__).resolve().parent / "models" / "weights"
 VEHICLE_MODEL_PATH = WEIGHTS_DIR / "yolov8n.pt"
@@ -144,7 +147,13 @@ def _vehicles_from_ultralytics_predict(result) -> List[VehicleBox]:
 
 
 def _plates_from_ultralytics_predict(result) -> List[PlateBox]:
-    """Extract plate boxes from Ultralytics result. 1-class: 0=License_Plate."""
+    """Extract plate boxes from Ultralytics result.
+
+    3-class model:
+      0 = Invalid Plate
+      1 = License Plate
+      2 = Plate Content
+    """
     if result is None or getattr(result, "boxes", None) is None:
         return []
     boxes = result.boxes
@@ -202,11 +211,45 @@ def _group_overlapping_plates(plates: List[PlateBox]) -> List[List[PlateBox]]:
 def _pick_bbox_and_ocr_crop(group: List[PlateBox]) -> Tuple[Tuple[float, float, float, float], Tuple[float, float, float, float], bool]:
     """
     For one plate group: choose the primary bbox and OCR crop.
-    1-class model: all detections are License_Plate (0); use highest-confidence bbox for both display and OCR.
-    Returns (bbox_xyxy, ocr_xyxy, should_run_ocr). Always runs OCR when group has plates.
+
+    Multi-class plate model:
+      - 0 = Invalid Plate: visible but not valid for OCR; skip OCR when only invalid boxes are present.
+      - 1 = License Plate: full plate region.
+      - 2 = Plate Content: tighter crop around characters, best for OCR.
+
+    Returns (bbox_xyxy, ocr_xyxy, should_run_ocr).
     """
-    best = max(group, key=lambda p: p.conf)
-    return best.xyxy, best.xyxy, True
+    if not group:
+        # Should not happen, but return a safe default.
+        dummy = (0.0, 0.0, 1.0, 1.0)
+        return dummy, dummy, False
+
+    invalid_boxes = [p for p in group if p.cls_id == PLATE_CLASS_INVALID]
+    license_boxes = [p for p in group if p.cls_id == PLATE_CLASS_LICENSE]
+    content_boxes = [p for p in group if p.cls_id == PLATE_CLASS_CONTENT]
+
+    # If we only have "Invalid Plate" detections, treat as non-readable and skip OCR.
+    if invalid_boxes and not (license_boxes or content_boxes):
+        best_invalid = max(invalid_boxes, key=lambda p: p.conf)
+        return best_invalid.xyxy, best_invalid.xyxy, False
+
+    best_license = max(license_boxes, key=lambda p: p.conf) if license_boxes else None
+    best_content = max(content_boxes, key=lambda p: p.conf) if content_boxes else None
+
+    # For display, prefer the full license-plate box; fall back to content, then any highest-confidence box.
+    if best_license is not None:
+        bbox_xyxy = best_license.xyxy
+    elif best_content is not None:
+        bbox_xyxy = best_content.xyxy
+    else:
+        best_any = max(group, key=lambda p: p.conf)
+        bbox_xyxy = best_any.xyxy
+
+    # For OCR, prefer the "Plate Content" crop when available, otherwise use the display bbox.
+    ocr_xyxy = best_content.xyxy if best_content is not None else bbox_xyxy
+    should_run_ocr = (best_content is not None) or (best_license is not None)
+
+    return bbox_xyxy, ocr_xyxy, should_run_ocr
 
 
 def clamp_xyxy(x1: float, y1: float, x2: float, y2: float, w: int, h: int) -> Tuple[int, int, int, int]:
