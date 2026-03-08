@@ -30,3 +30,4 @@ Thumbs.db
 npm-debug.log*
 
 server/captured_images/
+server/__pycache__/
