@@ -8,10 +8,11 @@ This document describes the complete entity relationship model for the LedgerMon
 
 ## ER Diagram
 
-```mermaiderDiagram
+```mermaid
+erDiagram
     USERS ||--o{ AUDIT_LOGS : creates
     USERS ||--|| NOTIFICATION_PREFERENCES : has
-    USERS ||--o{ SMS_LOGS : receives
+    USERS ||--o{ TRUSTED_DEVICES : trusts
     
     HOSTS ||--o{ VEHICLES : accommodates
     
@@ -32,7 +33,6 @@ This document describes the complete entity relationship model for the LedgerMon
     VIOLATIONS ||--o{ SMS_LOGS : sends
     
     INCIDENTS ||--o{ NOTIFICATIONS : triggers
-    NOTIFICATIONS ||--o{ SMS_LOGS : logged-in
     
     AUDIT_LOGS : tracks user actions
 ```
@@ -52,11 +52,15 @@ Core user/admin entities in the system
 | `name` | TEXT | | User display name |
 | `role` | TEXT | NOT NULL, DEFAULT 'barangay_user' | Role: barangay_user, admin, etc. |
 | `createdAt` | TEXT | NOT NULL | ISO timestamp |
+| `viberNumber` | TEXT | | Optional Viber contact for barangay notifications |
+| `status` | TEXT | NOT NULL, DEFAULT 'active' | Account status: active/inactive |
+| `contactNumber` | TEXT | | Secondary contact number (2FA, recovery) |
+| `mustResetPassword` | INTEGER | NOT NULL, DEFAULT 1 | 1=must reset on next login |
 
 **Relationships:**
 - Has many `AUDIT_LOGS` (1:N)
 - Has one `NOTIFICATION_PREFERENCES` (1:1)
-- Receives many `SMS_LOGS` (1:N)
+- Has many `TRUSTED_DEVICES` (1:N)
 
 ---
 
@@ -186,18 +190,13 @@ Parking violation records and their lifecycle
 | `timeIssued` | TEXT | | ISO timestamp when ticket was issued |
 | `status` | TEXT | NOT NULL, CHECK IN ('warning', 'pending', 'issued', 'cancelled', 'cleared', 'resolved') | Violation status |
 | `warningExpiresAt` | TEXT | | ISO timestamp when warning expires |
-| `imageUrl` | TEXT | | Evidence image URL |
-| `imageBase64` | TEXT | | Base64 encoded evidence image |
-| `message` | TEXT | | Additional message/notes |
-| `vehicleType` | TEXT | | Type of vehicle involved |
-| `detectionId` | TEXT | FK → detections | Original detection record |
 
 **Relationships:**
-- Associated with one `VEHICLES` via plateNumber (N:1)
-- Linked from many `DETECTIONS` (N:1)
+- Associated with one `VEHICLES` via plateNumber (N:1, logical relationship)
+- Triggered by many `DETECTIONS` (1:N, logical relationship)
 - Generates many `INCIDENTS` (1:N)
 - Triggers many `NOTIFICATIONS` (1:N)
-- Sends many `SMS_LOGS` (1:N)
+- Sends many `SMS_LOGS` (1:N, via `violationId`)
 
 **Status Flow:** warning → pending → issued → (cancelled | cleared | resolved)
 
@@ -287,10 +286,8 @@ SMS communication records for violation notifications
 | `lastRetryAt` | TEXT | | ISO timestamp of last retry |
 
 **Relationships:**
-- References one `VIOLATIONS` (N:1, optional)
-- Associated with one `VEHICLES` via plateNumber (N:1)
-- Logged from one `USERS` (N:1, optional)
-- Logged from one `NOTIFICATIONS` (1:N)
+- References one `VIOLATIONS` via `violationId` (N:1, optional)
+- Associated with one `VEHICLES` via `plateNumber` (N:1, logical relationship)
 
 ---
 
@@ -322,12 +319,35 @@ User activity and system action tracking
 
 ---
 
+### 12. **TRUSTED_DEVICES**
+Trusted devices to skip 2FA for a limited time
+
+| Field | Type | Constraints | Notes |
+|-------|------|-------------|-------|
+| `id` | TEXT | PRIMARY KEY | Unique trusted device identifier |
+| `userId` | TEXT | NOT NULL, FK → users | Owning user |
+| `tokenHash` | TEXT | NOT NULL, UNIQUE | Hashed device token |
+| `createdAt` | INTEGER | NOT NULL | Creation timestamp (epoch ms) |
+| `expiresAt` | INTEGER | NOT NULL | Expiration timestamp (epoch ms) |
+| `lastUsedAt` | INTEGER | | Last used timestamp (epoch ms) |
+
+**Relationships:**
+- Belongs to one `USERS` (N:1)
+
+**Indexes:**
+- `idx_trusted_devices_tokenHash` (tokenHash, UNIQUE)
+- `idx_trusted_devices_userId` (userId)
+- `idx_trusted_devices_expiresAt` (expiresAt)
+
+---
+
 ## Key Relationships Summary
 
 | From | To | Type | Description |
 |------|-----|------|-------------|
 | USERS | AUDIT_LOGS | 1:N | User performs audit-tracked actions |
 | USERS | NOTIFICATION_PREFERENCES | 1:1 | User has notification settings |
+| USERS | TRUSTED_DEVICES | 1:N | User has trusted browser/devices |
 | HOSTS | VEHICLES | 1:N | Host accommodates multiple vehicles |
 | VEHICLES | DETECTIONS | 1:N | Vehicle has multiple detections |
 | VEHICLES | VIOLATIONS | 1:N | Vehicle has multiple violations |
@@ -336,7 +356,6 @@ User activity and system action tracking
 | DETECTIONS | VIOLATIONS | 1:N | Detection triggers violations |
 | VIOLATIONS | INCIDENTS | 1:N | Violation generates incidents |
 | VIOLATIONS | SMS_LOGS | 1:N | Violation triggers SMS notifications |
-| NOTIFICATIONS | SMS_LOGS | 1:N | Notification logged in SMS records |
 
 ---
 
@@ -366,6 +385,7 @@ User activity and system action tracking
 - `notification_preferences.userId` → `users.id` (CASCADE DELETE)
 - `vehicles.hostId` → `hosts.id` (SET NULL)
 - `audit_logs.userId` → `users.id` (CASCADE DELETE)
+- `trusted_devices.userId` → `users.id` (CASCADE DELETE)
 - `detections.cameraId` → `cameras.id` (implied)
 - `incidents.cameraId` → `cameras.id` (implied)
 
@@ -384,6 +404,7 @@ User activity and system action tracking
 - Notifications: read, timestamp, locationId
 - Vehicles: plateNumber
 - Cameras: locationId
+- Trusted devices: tokenHash, userId, expiresAt
 
 ---
 
@@ -398,6 +419,7 @@ User activity and system action tracking
 - **Notifications**: High cardinality (hundreds of thousands)
 - **SMS_Logs**: High cardinality (potentially millions)
 - **Audit_Logs**: High cardinality (hundreds of thousands)
+- **Trusted_Devices**: Medium cardinality (per active user base)
 
 ---
 
@@ -420,4 +442,4 @@ User activity and system action tracking
 
 ---
 
-*Last Updated: January 27, 2026*
+*Last Updated: March 11, 2026*

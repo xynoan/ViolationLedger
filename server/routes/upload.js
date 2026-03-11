@@ -166,7 +166,10 @@ router.post('/analyze', async (req, res) => {
         if (isRealVehicle && !plateNotVisible) {
           try {
             // Check if vehicle exists in database
-            const vehicle = db.prepare('SELECT * FROM vehicles WHERE plateNumber = ?').get(detection.plateNumber);
+            const normalizedPlate = String(detection.plateNumber || '').replace(/\s+/g, '').toUpperCase();
+            const vehicle = db
+              .prepare(`SELECT * FROM vehicles WHERE REPLACE(UPPER(plateNumber), ' ', '') = ?`)
+              .get(normalizedPlate);
             
             // Add to detected vehicles list for response
             detectedVehicles.push({

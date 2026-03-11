@@ -1,11 +1,17 @@
 import express from 'express';
 import db from '../database.js';
 import { sendViolationViber } from '../utils/viberService.js';
+import { sendViolationSms } from '../utils/smsService.js';
 
 const router = express.Router();
 
 /** Grace period in minutes before a warning becomes a ticket. Change this to adjust the grace period everywhere. */
 export const GRACE_PERIOD_MINUTES = 5;
+
+function normalizePlateForMatch(plateNumber) {
+  if (!plateNumber) return '';
+  return String(plateNumber).replace(/\s+/g, '').toUpperCase();
+}
 
 export async function createViolationFromDetection(plateNumber, cameraLocationId, detectionId = null) {
   try {
@@ -14,11 +20,17 @@ export async function createViolationFromDetection(plateNumber, cameraLocationId
     }
 
     // Get vehicle info to check if registered
-    const vehicle = db.prepare('SELECT * FROM vehicles WHERE plateNumber = ?').get(plateNumber);
+    const normalizedPlate = normalizePlateForMatch(plateNumber);
+    const vehicle = db
+      .prepare(`SELECT * FROM vehicles WHERE REPLACE(UPPER(plateNumber), ' ', '') = ?`)
+      .get(normalizedPlate);
     if (!vehicle) {
       console.log(`ℹ️  Vehicle ${plateNumber} not registered - skipping automatic violation creation`);
       return null;
     }
+
+    // Use the stored plate number (may include spaces) as canonical everywhere downstream.
+    const canonicalPlateNumber = vehicle.plateNumber;
 
     // Check if there's already an active violation for this plate at this location
     const existingViolation = db.prepare(`
@@ -26,7 +38,7 @@ export async function createViolationFromDetection(plateNumber, cameraLocationId
       WHERE plateNumber = ? 
       AND cameraLocationId = ?
       AND status IN ('warning', 'pending')
-    `).get(plateNumber, cameraLocationId);
+    `).get(canonicalPlateNumber, cameraLocationId);
 
     let violationId;
     let isExistingViolation = false;
@@ -34,12 +46,12 @@ export async function createViolationFromDetection(plateNumber, cameraLocationId
     let messageLogId = null;
     
     if (existingViolation) {
-      console.log(`ℹ️  Active violation already exists for ${plateNumber} at ${cameraLocationId}`);
+      console.log(`ℹ️  Active violation already exists for ${canonicalPlateNumber} at ${cameraLocationId}`);
       violationId = existingViolation.id;
       isExistingViolation = true;
     } else {
       // Generate new violation ID
-      violationId = `VIOL-${plateNumber}-${Date.now()}`;
+      violationId = `VIOL-${canonicalPlateNumber}-${Date.now()}`;
     }
     const timeDetected = new Date().toISOString();
     
@@ -59,7 +71,7 @@ export async function createViolationFromDetection(plateNumber, cameraLocationId
       `).run(
         violationId,
         null, // ticketId (assigned later)
-        plateNumber,
+        canonicalPlateNumber,
         cameraLocationId,
         timeDetected,
         status,
@@ -68,16 +80,28 @@ export async function createViolationFromDetection(plateNumber, cameraLocationId
       
       // Send Viber message to vehicle owner (only for new violations)
       try {
-        const viberResult = await sendViolationViber(plateNumber, cameraLocationId, violationId);
+        const viberResult = await sendViolationViber(canonicalPlateNumber, cameraLocationId, violationId);
         if (viberResult.success) {
           messageSent = true;
           messageLogId = viberResult.messageLogId;
-          console.log(`✅ Viber message sent to owner for plate ${plateNumber} (Log ID: ${messageLogId})`);
+          console.log(`✅ Viber message sent to owner for plate ${canonicalPlateNumber} (Log ID: ${messageLogId})`);
         } else {
-          console.log(`⚠️  Viber message not sent for plate ${plateNumber}: ${viberResult.error}`);
+          console.log(`⚠️  Viber message not sent for plate ${canonicalPlateNumber}: ${viberResult.error}`);
         }
       } catch (viberError) {
-        console.error(`❌ Error sending Viber message for plate ${plateNumber}:`, viberError);
+        console.error(`❌ Error sending Viber message for plate ${canonicalPlateNumber}:`, viberError);
+      }
+
+      // Send SMS message to vehicle owner (only for new violations)
+      try {
+        const smsResult = await sendViolationSms(canonicalPlateNumber, cameraLocationId, violationId);
+        if (smsResult.success) {
+          console.log(`✅ SMS sent to owner for plate ${canonicalPlateNumber} (Log ID: ${smsResult.messageLogId || 'N/A'})`);
+        } else {
+          console.log(`⚠️  SMS not sent for plate ${canonicalPlateNumber}: ${smsResult.error}`);
+        }
+      } catch (smsError) {
+        console.error(`❌ Error sending SMS for plate ${canonicalPlateNumber}:`, smsError);
       }
       
       // Create notification for new warning
@@ -86,8 +110,8 @@ export async function createViolationFromDetection(plateNumber, cameraLocationId
         const cameraId = camera?.id || null;
         
         const warningNotificationId = `NOTIF-WARNING-${violationId}-${Date.now()}`;
-        const warningTitle = `New Warning - ${plateNumber}`;
-        const warningMessage = `Illegal parking detected for vehicle ${plateNumber} at ${cameraLocationId}. ${GRACE_PERIOD_MINUTES}-minute grace period started.${messageSent ? ' Viber message sent to owner.' : ' Viber message could not be sent to owner.'}`;
+        const warningTitle = `New Warning - ${canonicalPlateNumber}`;
+        const warningMessage = `Illegal parking detected for vehicle ${canonicalPlateNumber} at ${cameraLocationId}. ${GRACE_PERIOD_MINUTES}-minute grace period started.${messageSent ? ' Viber message sent to owner.' : ' Viber message could not be sent to owner.'}`;
         
         db.prepare(`
           INSERT INTO notifications (
@@ -106,7 +130,7 @@ export async function createViolationFromDetection(plateNumber, cameraLocationId
           detectionId,
           null, // imageUrl
           null, // imageBase64
-          plateNumber,
+          canonicalPlateNumber,
           timeDetected,
           'Illegal parking warning created',
           new Date().toISOString(),
@@ -125,7 +149,7 @@ export async function createViolationFromDetection(plateNumber, cameraLocationId
     }
 
     const violation = db.prepare('SELECT * FROM violations WHERE id = ?').get(violationId);
-    console.log(`✅ Automatic violation created: ${violationId} for plate ${plateNumber} at ${cameraLocationId}`);
+    console.log(`✅ Automatic violation created: ${violationId} for plate ${canonicalPlateNumber} at ${cameraLocationId}`);
     
     return {
       ...violation,
@@ -225,7 +249,7 @@ router.get('/', (req, res) => {
         
         // Group detections by violation key (plateNumber-locationId)
         detections.forEach(detection => {
-          const key = `${detection.plateNumber}-${detection.locationId}`;
+          const key = `${normalizePlateForMatch(detection.plateNumber)}-${detection.locationId}`;
           if (!detectionsMap.has(key)) {
             detectionsMap.set(key, detection);
           }
@@ -236,7 +260,7 @@ router.get('/', (req, res) => {
     // Enrich violations with batched data
     const enrichedViolations = violations.map(violation => {
       const cameraId = camerasMap.get(violation.cameraLocationId);
-      const detectionKey = `${violation.plateNumber}-${violation.cameraLocationId}`;
+      const detectionKey = `${normalizePlateForMatch(violation.plateNumber)}-${violation.cameraLocationId}`;
       const detection = detectionsMap.get(detectionKey);
       const vehicle = vehiclesMap.get(violation.plateNumber);
       
@@ -370,7 +394,10 @@ router.post('/', async (req, res) => {
     // Pre-registration check: Vehicle must be registered before violation can be created
     // Skip check if plateNumber is 'NONE' (unreadable plate - handled separately)
     if (plateNumber && plateNumber.toUpperCase() !== 'NONE') {
-      const vehicle = db.prepare('SELECT * FROM vehicles WHERE plateNumber = ?').get(plateNumber);
+      const normalizedPlate = normalizePlateForMatch(plateNumber);
+      const vehicle = db
+        .prepare(`SELECT * FROM vehicles WHERE REPLACE(UPPER(plateNumber), ' ', '') = ?`)
+        .get(normalizedPlate);
       if (!vehicle) {
         return res.status(400).json({ 
           error: 'Vehicle not registered',

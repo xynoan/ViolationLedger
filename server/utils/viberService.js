@@ -494,9 +494,10 @@ async function handleHttpError(response, recipient) {
 
 export async function sendViolationViber(plateNumber, locationId, violationId) {
   try {
+    const normalizedPlate = String(plateNumber || '').replace(/\s+/g, '').toUpperCase();
     const vehicle = db
-      .prepare('SELECT * FROM vehicles WHERE plateNumber = ?')
-      .get(plateNumber);
+      .prepare(`SELECT * FROM vehicles WHERE REPLACE(UPPER(plateNumber), ' ', '') = ?`)
+      .get(normalizedPlate);
 
     if (!vehicle) {
       return { 
