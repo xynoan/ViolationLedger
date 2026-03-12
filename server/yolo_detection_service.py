@@ -34,6 +34,28 @@ except Exception as e:
     print(json.dumps({"vehicles": [], "plates": [], "error": f"Ultralytics required: {e}"}), file=sys.stderr)
     sys.exit(1)
 
+# Work around pandas/numpy binary issues inside Ultralytics export_formats()
+# which is called from AutoBackend._model_type() even for simple inference.
+# On some environments this raises "numpy.dtype size changed" from pandas,
+# breaking inference entirely. We don't need export functionality here, so we
+# monkeypatch export_formats to a lightweight stub.
+try:  # pragma: no cover - defensive environment-specific patch
+    from ultralytics.nn import autobackend as _ultra_autobackend
+
+    class _DummyFormats:
+        # Minimal attribute used by AutoBackend._model_type: an iterable of suffixes
+        Suffix = (".pt",)
+
+    def _safe_export_formats():
+        return _DummyFormats()
+
+    if hasattr(_ultra_autobackend, "export_formats"):
+        _ultra_autobackend.export_formats = _safe_export_formats  # type: ignore[assignment]
+except Exception:
+    # If anything goes wrong, fall back to the default behavior; inference may
+    # still work if the environment has a compatible pandas/numpy.
+    pass
+
 
 COCO_VEHICLE_CLASSES = (2, 3, 5, 7)  # car, motorbike, bus, truck
 COCO_CLASS_NAMES = {2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
@@ -105,12 +127,19 @@ def detect_frame(
     Run YOLO vehicle detection on a single frame. Returns {vehicles, plates} dict.
     plates is always empty; plate extraction is done by Gemini in detection_worker.
     """
-    vehicle_results = vehicle_model.predict(
-        frame,
-        classes=list(COCO_VEHICLE_CLASSES),
-        conf=conf_vehicle,
-        verbose=False,
-    )
+    # Redirect Ultralytics stdout spam (banner, progress) to stderr so the worker's
+    # stdout remains clean JSON for the Node server.
+    old_stdout = sys.stdout
+    sys.stdout = sys.stderr
+    try:
+        vehicle_results = vehicle_model.predict(
+            frame,
+            classes=list(COCO_VEHICLE_CLASSES),
+            conf=conf_vehicle,
+            verbose=False,
+        )
+    finally:
+        sys.stdout = old_stdout
     vehicles = _vehicles_from_ultralytics_predict(vehicle_results[0] if vehicle_results else None)
 
     vehicles_out = []

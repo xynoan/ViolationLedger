@@ -39,10 +39,17 @@ try:
     import cv2
     import numpy as np
     import easyocr
-    import pytesseract
 except ImportError as e:
     print(json.dumps({"plates": [], "error": f"Missing package: {e}"}), file=sys.stderr)
     sys.exit(1)
+
+# Tesseract is optional; if it or one of its heavy deps (like pandas/numpy) is broken,
+# we degrade gracefully to EasyOCR-only instead of crashing the whole worker.
+try:
+    import pytesseract  # type: ignore
+except Exception as e:  # pragma: no cover - environment-specific
+    pytesseract = None  # type: ignore
+    print(f"[OCR] pytesseract unavailable, continuing with EasyOCR only: {e}", file=sys.stderr)
 
 # Optional Ultralytics for plate detection; import delayed to avoid stdout spam (see get_plate_model)
 _plate_model = None

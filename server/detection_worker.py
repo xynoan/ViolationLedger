@@ -14,13 +14,44 @@ import sys
 import time
 
 import cv2
-from PIL import Image
 
 from yolo_detection_service import load_models, detect_frame
-from ai_service import extract_plates_from_image
+from ocr_only import run_ocr
+
+try:
+    import requests  # For Plate Recognizer Snapshot Cloud
+except Exception:
+    requests = None  # type: ignore
 
 DETECTION_INTERVAL_SEC = 2.5
 DEFAULT_CONF_VEHICLE = float(os.getenv("YOLO_VEHICLE_CONF", "0.35"))
+
+# Plate Recognizer Snapshot Cloud configuration.
+# If PLATERECOGNIZER_TOKEN is set and USE_PLATERECOGNIZER is truthy (default),
+# frames will be sent to Snapshot Cloud for ALPR before falling back to local OCR.
+PLATERECOGNIZER_TOKEN = os.getenv("PLATERECOGNIZER_TOKEN") or os.getenv("PLATE_RECOGNIZER_TOKEN")
+PLATERECOGNIZER_ENDPOINT = os.getenv(
+    "PLATERECOGNIZER_ENDPOINT",
+    "https://api.platerecognizer.com/v1/plate-reader/",
+)
+USE_PLATERECOGNIZER = (
+    os.getenv("USE_PLATERECOGNIZER", "1").strip().lower() not in ("0", "false", "no")
+    and bool(PLATERECOGNIZER_TOKEN)
+    and requests is not None
+)
+
+# By default, disable Gemini for RTSP ALPR and use local OCR-only or Plate Recognizer instead.
+# Set DISABLE_GEMINI_RTSP=0 (or false) if you explicitly want to re-enable Gemini here.
+DISABLE_GEMINI_RTSP = os.getenv("DISABLE_GEMINI_RTSP", "1").strip().lower() not in ("0", "false", "no")
+
+if not DISABLE_GEMINI_RTSP:
+    try:
+        from PIL import Image
+        from ai_service import extract_plates_from_image  # type: ignore
+    except Exception:
+        extract_plates_from_image = None  # type: ignore
+else:
+    extract_plates_from_image = None  # type: ignore
 
 
 def main() -> int:
@@ -93,16 +124,104 @@ def main() -> int:
                     vehicles = result["vehicles"]
                     plates_out = []
 
-                    # Only call Gemini when YOLO detects vehicles (saves API usage)
+                    # Run plate recognition when YOLO detects vehicles.
                     if vehicles:
-                        pil_image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-                        plate_numbers = extract_plates_from_image(pil_image)
-                        if plate_numbers:
-                            print(f"[Gemini] Plates detected: {plate_numbers}", file=sys.stderr)
-                        plates_out = [
-                            {"plateNumber": p, "bbox": None, "class_name": "plate", "confidence": 0.0}
-                            for p in plate_numbers
-                        ]
+                        h, w = frame.shape[:2]
+
+                        # First choice: Plate Recognizer Snapshot Cloud if configured.
+                        if USE_PLATERECOGNIZER:
+                            try:
+                                ok, encoded = cv2.imencode(".jpg", frame)
+                                if ok:
+                                    img_bytes = encoded.tobytes()
+                                    headers = {
+                                        "Authorization": f"Token {PLATERECOGNIZER_TOKEN}",
+                                    }
+                                    files = {
+                                        "upload": ("frame.jpg", img_bytes, "image/jpeg"),
+                                    }
+                                    data = {
+                                        "camera_id": str(args.camera_id),
+                                    }
+                                    resp = requests.post(
+                                        PLATERECOGNIZER_ENDPOINT,
+                                        headers=headers,
+                                        files=files,
+                                        data=data,
+                                        timeout=5,
+                                    )
+                                    resp.raise_for_status()
+                                    payload = resp.json()
+                                    results = payload.get("results") or []
+                                    for r in results:
+                                        plate = (r.get("plate") or "").upper()
+                                        score = float(r.get("score") or 0.0)
+                                        box = r.get("box") or {}
+                                        x1 = float(box.get("x1", 0.0))
+                                        y1 = float(box.get("y1", 0.0))
+                                        x2 = float(box.get("x2", 0.0))
+                                        y2 = float(box.get("y2", 0.0))
+                                        if plate:
+                                            plates_out.append({
+                                                "plateNumber": plate,
+                                                "bbox": [round(x1, 2), round(y1, 2), round(x2, 2), round(y2, 2)],
+                                                "class_name": "plate",
+                                                "confidence": round(score, 3),
+                                            })
+                                    if plates_out:
+                                        print(f"[PlateRecognizer] Plates detected: {[p['plateNumber'] for p in plates_out]}", file=sys.stderr)
+                            except Exception as e:
+                                print(f"[PlateRecognizer] Error: {e}", file=sys.stderr)
+
+                        # Fallback: local OCR-only ALPR pipeline (ocr_only.run_ocr)
+                        if not plates_out:
+                            try:
+                                # Convert BGR (OpenCV) to RGB to match ocr_only expectations.
+                                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                            except Exception:
+                                frame_rgb = frame
+
+                            try:
+                                plates = run_ocr(frame_rgb, w, h) or []
+                            except Exception as e:
+                                print(f"[ALPR] Local OCR error: {e}", file=sys.stderr)
+                                plates = []
+
+                            # Convert normalized [x, y, w, h] bboxes to absolute [x1, y1, x2, y2] pixels
+                            # to match frontend expectations in useDetectionStream/VideoPlayer.
+                            for p in plates:
+                                bbox_norm = p.get("bbox") or [0.0, 0.0, 0.0, 0.0]
+                                try:
+                                    nx, ny, nw, nh = map(float, bbox_norm)
+                                except Exception:
+                                    nx, ny, nw, nh = 0.0, 0.0, 0.0, 0.0
+                                x1 = nx * w
+                                y1 = ny * h
+                                x2 = (nx + nw) * w
+                                y2 = (ny + nh) * h
+                                plate_number = p.get("plateNumber", "UNKNOWN")
+                                conf = float(p.get("confidence") or 0.0)
+                                class_name = p.get("class_name") or "plate"
+                                plates_out.append({
+                                    "plateNumber": plate_number,
+                                    "bbox": [round(x1, 2), round(y1, 2), round(x2, 2), round(y2, 2)],
+                                    "class_name": class_name,
+                                    "confidence": round(conf, 3),
+                                })
+
+                        # Optional Gemini path (disabled by default via DISABLE_GEMINI_RTSP).
+                        if not plates_out and not DISABLE_GEMINI_RTSP and extract_plates_from_image is not None:
+                            try:
+                                pil_image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                                plate_numbers = extract_plates_from_image(pil_image)
+                                if plate_numbers:
+                                    print(f"[Gemini] Plates detected: {plate_numbers}", file=sys.stderr)
+                                plates_out = [
+                                    {"plateNumber": p, "bbox": None, "class_name": "plate", "confidence": 0.0}
+                                    for p in plate_numbers
+                                ]
+                            except Exception as e:
+                                print(f"[Gemini] Plate extraction error: {e}", file=sys.stderr)
 
                     out = {
                         "cameraId": args.camera_id,
