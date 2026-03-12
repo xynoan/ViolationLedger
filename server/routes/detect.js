@@ -34,9 +34,22 @@ router.post('/enabled', (req, res) => {
  * Body: { imageBase64: string }
  * Returns vehicles and plates from YOLO detection (yolov8n.pt + license_detection.pt).
  * Plate OCR results are logged server-side.
+ *
+ * When detection is paused via /detect/enabled, this route short-circuits
+ * and returns an empty result without running YOLO or any plate processing.
  */
 router.post('/yolo', async (req, res) => {
   try {
+    // Respect global detection toggle to avoid unnecessary processing/API calls
+    if (!getDetectionEnabled()) {
+      console.log('[YOLO] Request received while detection is paused – skipping detection');
+      return res.status(503).json({
+        error: 'Detection is currently paused',
+        vehicles: [],
+        plates: [],
+      });
+    }
+
     const { imageBase64 } = req.body;
     if (!imageBase64) {
       return res.status(400).json({ error: 'imageBase64 is required', vehicles: [], plates: [] });
@@ -46,7 +59,10 @@ router.post('/yolo', async (req, res) => {
     const result = await runYoloDetection(imageBase64);
     const vCount = (result.vehicles || []).length;
     const pCount = (result.plates || []).length;
-    console.log(`[YOLO] Detection complete: ${vCount} vehicles, ${pCount} plates` + (result.error ? ` (error: ${result.error})` : ''));
+    console.log(
+      `[YOLO] Detection complete: ${vCount} vehicles, ${pCount} plates` +
+        (result.error ? ` (error: ${result.error})` : '')
+    );
     return res.json({
       vehicles: result.vehicles || [],
       plates: result.plates || [],
