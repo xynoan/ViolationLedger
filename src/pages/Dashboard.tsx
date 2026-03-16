@@ -96,6 +96,30 @@ export default function Dashboard() {
     loadData();
   }, [loadData]);
 
+  const handleMarkTicketed = useCallback(
+    async (violationId: string) => {
+      try {
+        await violationsAPI.update(violationId, {
+          status: 'issued',
+          timeIssued: new Date().toISOString(),
+        });
+        toast({
+          title: 'Violation ticketed',
+          description: 'The violation has been marked as ticketed.',
+        });
+        await loadData();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to update violation status';
+        toast({
+          title: 'Failed to mark as ticketed',
+          description: message,
+          variant: 'destructive',
+        });
+      }
+    },
+    [loadData]
+  );
+
   const activeWarnings = violations.filter(v => v.status === 'warning');
   const issuedTickets = violations.filter(v => v.status === 'issued');
   const clearedToday = violations.filter(v => v.status === 'cleared');
@@ -210,10 +234,73 @@ export default function Dashboard() {
                     {activeWarnings.length}
                   </span>
                 </h2>
-                <div className="glass-card rounded-xl p-6 sm:p-8 text-center">
-                  <CheckCircle className="h-10 w-10 sm:h-12 sm:w-12 text-success mx-auto mb-3" />
-                  <p className="text-muted-foreground text-sm sm:text-base">No active warnings</p>
-                </div>
+
+                {activeWarnings.length === 0 ? (
+                  <div className="glass-card rounded-xl p-6 sm:p-8 text-center">
+                    <CheckCircle className="h-10 w-10 sm:h-12 sm:w-12 text-success mx-auto mb-3" />
+                    <p className="text-muted-foreground text-sm sm:text-base">No active warnings</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {activeWarnings.slice(0, 5).map((warning) => {
+                      const expiresAt =
+                        warning.warningExpiresAt instanceof Date
+                          ? warning.warningExpiresAt
+                          : warning.warningExpiresAt
+                          ? new Date(warning.warningExpiresAt)
+                          : null;
+                      const now = new Date();
+                      const msLeft = expiresAt ? expiresAt.getTime() - now.getTime() : 0;
+                      const secondsLeft = Math.max(0, Math.floor(msLeft / 1000));
+                      const label =
+                        secondsLeft > 0
+                          ? `${secondsLeft}s remaining`
+                          : 'Grace period ended';
+
+                      return (
+                        <div
+                          key={warning.id}
+                          className="glass-card rounded-xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border border-warning/30"
+                        >
+                          <div>
+                            <div className="flex items-center gap-2 mb-1">
+                              <Badge variant="outline" className="border-warning/50 text-warning text-xs sm:text-sm">
+                                {warning.plateNumber || 'UNKNOWN PLATE'}
+                              </Badge>
+                              <span className="text-xs sm:text-sm text-muted-foreground">
+                                {warning.cameraLocationId}
+                              </span>
+                            </div>
+                            <p className="text-xs sm:text-sm text-muted-foreground">
+                              Detected at{' '}
+                              {new Date(warning.timeDetected).toLocaleTimeString(undefined, {
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Badge
+                              variant={secondsLeft > 0 ? 'warning' : 'destructive'}
+                              className="text-xs sm:text-sm"
+                            >
+                              {label}
+                            </Badge>
+                            {secondsLeft === 0 && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleMarkTicketed(warning.id)}
+                              >
+                                Ticketed
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               {/* Capture Results */}

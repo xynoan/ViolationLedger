@@ -11,7 +11,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import db from './database.js';
 import { getDetectionEnabled } from './detection_state.js';
-import { sendSmsMessage } from './utils/smsService.js';
+import { createViolationFromDetection } from './routes/violations.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -30,11 +30,6 @@ const subscribers = new Map();
 /** HTTP server for WebSocket upgrade */
 let wss = null;
 
-// In-memory throttle map to avoid spamming SMS for the same plate on the same camera.
-// Key format: `${cameraId}:${normalizedPlate}` -> lastSentTimestamp (ms)
-const smsThrottle = new Map();
-const SMS_THROTTLE_MS = 5 * 60 * 1000; // 5 minutes
-
 // Prepared statement for persisting detections so Dashboard "Capture Results"
 // can reflect live detections produced by the RTSP worker, even when plates
 // are not readable.
@@ -46,66 +41,6 @@ const insertDetectionStmt = db.prepare(`
 function normalizePlateForMatch(plateNumber) {
   if (!plateNumber) return '';
   return String(plateNumber).replace(/\s+/g, '').toUpperCase();
-}
-
-async function sendPlateSmsIfRegistered(cameraId, plateNumber) {
-  const normalizedPlate = normalizePlateForMatch(plateNumber);
-  if (!normalizedPlate) return;
-
-  const key = `${cameraId}:${normalizedPlate}`;
-  const now = Date.now();
-  const lastSent = smsThrottle.get(key) || 0;
-  if (now - lastSent < SMS_THROTTLE_MS) {
-    return;
-  }
-
-  // Look up vehicle using the same normalization as violations/sms services:
-  // REPLACE(UPPER(plateNumber), ' ', '') = normalizedPlate
-  let vehicle;
-  try {
-    vehicle = db
-      .prepare(`SELECT * FROM vehicles WHERE REPLACE(UPPER(plateNumber), ' ', '') = ?`)
-      .get(normalizedPlate);
-  } catch (e) {
-    console.error('[Detection][SMS] DB lookup error for plate', plateNumber, e);
-    return;
-  }
-
-  if (!vehicle || !vehicle.contactNumber) {
-    return;
-  }
-
-  const currentTime = new Date().toLocaleString('en-US', {
-    timeZone: 'Asia/Manila',
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true,
-  });
-
-  const message =
-    `Hi ${vehicle.ownerName}, ` +
-    `your vehicle ${vehicle.plateNumber} was detected entering or parked at ${cameraId} on ${currentTime}. ` +
-    `This is an automated notification from ViolationLedger.`;
-
-  try {
-    const result = await sendSmsMessage(vehicle.contactNumber, message);
-    if (result.success) {
-      smsThrottle.set(key, now);
-      console.log(
-        `[Detection][SMS] SMS sent for plate ${vehicle.plateNumber} on camera ${cameraId} (status: ${result.status || 'accepted'})`
-      );
-    } else {
-      console.warn(
-        `[Detection][SMS] Failed to send SMS for plate ${vehicle.plateNumber} on camera ${cameraId}:`,
-        result.error
-      );
-    }
-  } catch (e) {
-    console.error('[Detection][SMS] Unexpected error while sending SMS', e);
-  }
 }
 
 async function handlePlateDetections(cameraId, msg) {
@@ -121,7 +56,30 @@ async function handlePlateDetections(cameraId, msg) {
   );
 
   for (const normalized of uniquePlates) {
-    await sendPlateSmsIfRegistered(cameraId, normalized);
+    try {
+      // Look up camera to get locationId for violation creation
+      const camera = db
+        .prepare('SELECT id, locationId FROM cameras WHERE id = ?')
+        .get(cameraId);
+      const locationId = camera?.locationId;
+      if (!locationId) {
+        console.warn(
+          `[Detection] Skipping violation for plate ${normalized} on camera ${cameraId} - no locationId`
+        );
+        continue;
+      }
+
+      // createViolationFromDetection will:
+      // - ensure vehicle is registered
+      // - create or update a 'warning' violation
+      // - send SMS to the vehicle owner
+      await createViolationFromDetection(normalized, locationId, null);
+    } catch (e) {
+      console.error(
+        '[Detection] Failed to create violation from RTSP plate detection',
+        { cameraId, plate: normalized, error: e?.message || e }
+      );
+    }
   }
 }
 
