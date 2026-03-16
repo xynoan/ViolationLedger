@@ -263,11 +263,11 @@ router.post('/:cameraId', async (req, res) => {
               violationsCreated.push(violation.id);
               console.log(`✅ Violation created: ${violation.id} for plate ${detection.plateNumber}`);
               
-              // Check if Viber message was actually sent (from violation object)
+              // Check if owner SMS was actually sent (from violation object)
               if (violation.messageSent) {
-                console.log(`✅ Viber message sent successfully to owner for plate ${detection.plateNumber}`);
+                console.log(`✅ SMS message sent successfully to owner for plate ${detection.plateNumber}`);
               } else {
-                console.log(`⚠️  Violation created but Viber message was NOT sent for plate ${detection.plateNumber}`);
+                console.log(`⚠️  Violation created but SMS message was NOT sent for plate ${detection.plateNumber}`);
                 console.log(`   Message Status: ${violation.messageSent ? 'sent' : 'not sent'}`);
                 console.log(`   Message Log ID: ${violation.messageLogId || 'N/A'}`);
               }
@@ -279,7 +279,7 @@ router.post('/:cameraId', async (req, res) => {
               if (userId) {
                 const notificationId = `NOTIF-${Date.now()}-${violation.id}`;
                 const notificationTitle = 'Illegal Parking Violation Detected';
-                const notificationMessage = `Vehicle with plate ${detection.plateNumber} detected illegally parked at ${locationId}. ${violation.messageSent ? 'Viber message sent to owner.' : 'Viber message could not be sent to owner.'} Barangay attention may be required.`;
+                const notificationMessage = `Vehicle with plate ${detection.plateNumber} detected illegally parked at ${locationId}. ${violation.messageSent ? 'SMS message sent to owner.' : 'SMS message could not be sent to owner.'} Barangay attention may be required.`;
                 
                 try {
                   statements.createNotification.run(
@@ -560,26 +560,6 @@ router.post('/:cameraId', async (req, res) => {
       }
     }
 
-    // Real-time vehicle removal detection - check immediately after saving detections
-    let resolvedCount = 0;
-    
-    // Get camera location for this capture (camera already retrieved at line 55)
-    const cameraLocationId = camera ? camera.locationId : null;
-    
-    if (cameraLocationId) {
-      // If we have detected plates for this location, check for removals
-      if (detectedPlatesByLocation.has(cameraLocationId)) {
-        const detectedPlates = detectedPlatesByLocation.get(cameraLocationId);
-        const resolved = monitoringService.checkVehicleRemovalRealTime(cameraLocationId, detectedPlates);
-        resolvedCount += resolved;
-      } else {
-        // No vehicles detected at this location - check if any active warnings should be resolved
-        // This handles the case where a capture shows no vehicles (empty parking zone)
-        const resolved = monitoringService.checkVehicleRemovalRealTime(cameraLocationId, []);
-        resolvedCount += resolved;
-      }
-    }
-
     // Ensure all processing is complete before sending response
     const totalProcessingTime = Date.now() - aiProcessingStartTime;
     console.log(`✅ Capture processing complete (${totalProcessingTime}ms) - AI: ${aiProcessingComplete ? 'Done' : 'Skipped'}, Vehicles: ${detections.filter(d => d.class_name !== 'none').length}, Violations: ${violationsCreated.length}`);
@@ -592,7 +572,7 @@ router.post('/:cameraId', async (req, res) => {
       vehicleCount: detections.filter(d => d.class_name !== 'none').length,
       violationsCreated: violationsCreated.length,
       violations: violationsCreated,
-      violationsResolved: resolvedCount,
+      violationsResolved: 0,
       incidentsCreated: incidentsCreated.length,
       notificationsCreated: notificationsCreated.length,
       aiProcessingComplete: aiProcessingComplete,

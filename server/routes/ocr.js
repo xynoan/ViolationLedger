@@ -7,8 +7,8 @@ const router = express.Router();
 /**
  * POST /api/ocr/plate
  * Body: { imageBase64: string }
- * Returns plates from OCR only (EasyOCR + Tesseract). No Gemini - safe for 24/7 live dashboard.
- * bbox is normalized [x, y, width, height] (0-1); frontend converts to pixels.
+ * Returns plates from PlateRecognizer API only (no local OCR/Gemini).
+ * bbox is absolute pixel [x1, y1, x2, y2]; frontend uses directly.
  *
  * When detection is paused via /detect/enabled, this route short-circuits
  * and returns an empty result without running OCR to avoid extra plate calls.
@@ -29,7 +29,7 @@ router.post('/plate', async (req, res) => {
       return res.status(400).json({ error: 'imageBase64 is required' });
     }
 
-    console.log('[OCR] Plate request received, running EasyOCR + Tesseract...');
+    console.log('[OCR] Plate request received, calling PlateRecognizer API...');
     const result = await runOCROnly(imageBase64);
     const plates = (result.plates || []).map((p) => ({
       plateNumber: p.plateNumber || 'NONE',

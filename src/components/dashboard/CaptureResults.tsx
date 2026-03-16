@@ -45,8 +45,8 @@ export function CaptureResults() {
 
   useEffect(() => {
     loadCaptureResults();
-    // Refresh every 30 seconds
-    const interval = setInterval(loadCaptureResults, 30000);
+    // Refresh more frequently for near real-time updates
+    const interval = setInterval(loadCaptureResults, 5000);
     return () => clearInterval(interval);
   }, []);
 

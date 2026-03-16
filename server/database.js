@@ -224,9 +224,40 @@ async function initDatabase() {
       timeDetected TEXT,
       reason TEXT,
       timestamp TEXT NOT NULL,
-      read INTEGER NOT NULL DEFAULT 0
+      read INTEGER NOT NULL DEFAULT 0,
+      handledBy TEXT,
+      handledAt TEXT,
+      status TEXT NOT NULL DEFAULT 'open'
     )
   `);
+
+  // Migrate existing notifications table to add handled fields and status if needed
+  try {
+    db.run('ALTER TABLE notifications ADD COLUMN handledBy TEXT');
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: handledBy column migration:', errorMsg);
+    }
+  }
+
+  try {
+    db.run('ALTER TABLE notifications ADD COLUMN handledAt TEXT');
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: handledAt column migration:', errorMsg);
+    }
+  }
+
+  try {
+    db.run("ALTER TABLE notifications ADD COLUMN status TEXT NOT NULL DEFAULT 'open'");
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: notifications.status column migration:', errorMsg);
+    }
+  }
   
   db.run(`
     CREATE TABLE IF NOT EXISTS sms_logs (

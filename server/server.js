@@ -41,11 +41,11 @@ if (!process.env.GEMINI_API_KEY) {
   console.warn('⚠️  GEMINI_API_KEY not set - using fallback');
 }
 
-if (!process.env.INFOBIP_API_KEY) {
-  console.warn('⚠️  INFOBIP_API_KEY not set - using default API key');
-  console.warn('   To use a custom API key: Add INFOBIP_API_KEY to your .env file in the server directory');
+if (!process.env.IPROGSMS_API_TOKEN) {
+  console.warn('⚠️  IPROGSMS_API_TOKEN not set - SMS notifications will be disabled');
+  console.warn('   To enable SMS notifications: Add IPROGSMS_API_TOKEN to your .env file in the server directory');
 } else {
-  console.log('✅ Viber service configured - INFOBIP_API_KEY found');
+  console.log('✅ SMS service configured - IPROGSMS_API_TOKEN found');
 }
 
 app.set('trust proxy', true);

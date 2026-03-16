@@ -157,7 +157,7 @@ LedgerMonitor is a full-stack parking management and violation detection system 
 │  │  • Monitoring Service: Continuous system monitoring & health checks      │   │
 │  │  • Cleanup Service: Periodic image cleanup & maintenance                 │   │
 │  │  • AI Detection Service: Vehicle detection & plate recognition           │   │
-│  │  • Notification Service: Multi-channel alerting (Viber, Email)           │   │
+│  │  • Notification Service: SMS alerting (iProgSMS)                         │   │
 │  └──────────────────────────────────────────────────────────────────────────┘   │
 │                                                                                   │
 └─────────────────────────────────────────────────────────────────────────────────┘
@@ -198,7 +198,7 @@ LedgerMonitor is a full-stack parking management and violation detection system 
 │  ┌──────────────────────────────┬──────────────────────────────────────────┐   │
 │  │   AI Detection Service        │    Notification Services                │   │
 │  │   (Python - ai_service.py)    │                                        │   │
-│  │                               │  • Infobip API: Viber messaging        │   │
+│  │                               │  • iProgSMS API: SMS messaging        │   │
 │  │  Features:                    │  • GEMINI_API_KEY: AI processing       │   │
 │  │  • Vehicle Detection          │  • Email Service (optional)            │   │
 │  │  • License Plate Recognition  │  • SMS Service (optional)              │   │
@@ -217,7 +217,7 @@ LedgerMonitor is a full-stack parking management and violation detection system 
 │  │                    External Service Dependencies                         │   │
 │  │                                                                          │   │
 │  │  • GEMINI_API_KEY: Google Gemini for AI vision tasks                    │   │
-│  │  • INFOBIP_API_KEY: Viber & SMS notifications                           │   │
+│  │  • IPROGSMS_API_TOKEN: SMS notifications                               │   │
 │  │  • Environment Variables: Loaded from .env files                        │   │
 │  │  • Port Fallback: Automatic port detection (3001, 3002, 3003...)       │   │
 │  └──────────────────────────────────────────────────────────────────────────┘   │
@@ -278,7 +278,7 @@ LedgerMonitor is a full-stack parking management and violation detection system 
 - `ai_service.py`: Vehicle/plate detection
 - `monitoring_service.js`: System monitoring
 - `cleanup_service.js`: Image cleanup
-- `viberService.js`: Notifications
+*** End Patch
 
 ---
 
@@ -315,7 +315,7 @@ Store Detection in Database
     ↓
 Generate Violation/Ticket if Needed
     ↓
-Send Notification (Viber/Email)
+Send Notification (SMS/Email)
     ↓
 Update Dashboard in Real-time
 ```
@@ -370,7 +370,7 @@ Update UI
 | Service | Purpose | Provider |
 |---------|---------|----------|
 | AI Vision | Detection & Recognition | Custom Python/Google |
-| Notifications | Viber & SMS | Infobip API |
+| Notifications | SMS | iProgSMS API |
 | AI Processing | Vision Tasks | Google Gemini API |
 
 ---
@@ -450,7 +450,7 @@ Update UI
 - `PORT`: Server port (default: 3001)
 - `NODE_ENV`: Environment (development/production)
 - `GEMINI_API_KEY`: Google AI vision API
-- `INFOBIP_API_KEY`: Notification service API
+- `IPROGSMS_API_TOKEN`: Notification SMS service API token
 - Database connection strings (if not SQLite)
 
 ---

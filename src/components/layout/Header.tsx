@@ -35,6 +35,9 @@ interface Notification {
   imageBase64?: string;
   timestamp: Date;
   read: boolean;
+  handledBy?: string | null;
+  handledAt?: Date | null;
+  status?: 'open' | 'in_progress' | 'resolved' | string;
 }
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
@@ -73,6 +76,8 @@ export function Header({ title, subtitle, action }: HeaderProps) {
   };
 
   const handleNotificationClick = async (notification: Notification) => {
+    // For warning_expired, we show an explicit "Handle this" button instead of
+    // claiming on simple click, so just mark as read here.
     // Mark as read
     if (!notification.read) {
       try {
@@ -178,6 +183,25 @@ export function Header({ title, subtitle, action }: HeaderProps) {
                               <span className="text-warning">• {notification.reason}</span>
                             )}
                           </div>
+                          {notification.type === 'warning_expired' && (!notification.handledBy || notification.status === 'open') && (
+                            <div className="mt-2">
+                              <Button
+                                size="xs"
+                                variant="outline"
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  try {
+                                    await notificationsAPI.handle(notification.id);
+                                    await loadNotifications();
+                                  } catch (error) {
+                                    console.error('Error handling notification:', error);
+                                  }
+                                }}
+                              >
+                                Handle this
+                              </Button>
+                            </div>
+                          )}
                           {imageSrc && (
                             <img 
                               src={imageSrc} 

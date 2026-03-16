@@ -1,6 +1,7 @@
 import db from './database.js';
 import { shouldCreateNotification } from './routes/notifications.js';
 import { GRACE_PERIOD_MINUTES } from './routes/violations.js';
+import { sendSmsMessage } from './utils/smsService.js';
 import { analyzeVideoStream, processVideoDetectionResults } from './ai_detection_service.js';
 
 /**
@@ -90,66 +91,14 @@ class MonitoringService {
   }
 
   /**
-   * Real-time vehicle removal check - called immediately when new detections arrive
-   * Checks if vehicles with active warnings at a specific location have been removed
-   * @param {string} locationId - Location ID to check
-   * @param {Array<string>} detectedPlates - Array of plate numbers detected in the latest capture
-   * @returns {number} - Number of violations resolved
+   * Real-time vehicle removal check (disabled).
+   * Violation status is now only updated manually (e.g. when ticketed),
+   * so this method no longer clears violations automatically.
+   * It is kept for compatibility and always returns 0.
    */
   checkVehicleRemovalRealTime(locationId, detectedPlates) {
-    try {
-      if (!locationId) {
-        return 0;
-      }
-
-      // Handle null/undefined detectedPlates
-      const plates = detectedPlates || [];
-
-      // Get all active warnings for this location
-      const activeWarnings = db.prepare(`
-        SELECT * FROM violations 
-        WHERE status = 'warning'
-        AND cameraLocationId = ?
-      `).all(locationId);
-
-      if (activeWarnings.length === 0) {
-        return 0;
-      }
-
-      // Create a set of detected plates for quick lookup
-      // If plates array is empty, all warnings should be resolved (no vehicles detected)
-      const detectedPlatesSet = new Set(plates.map(p => p.toUpperCase()));
-
-      let resolvedCount = 0;
-
-      for (const warning of activeWarnings) {
-        const plateUpper = warning.plateNumber.toUpperCase();
-        
-        // If the plate is not in the detected plates (or no plates detected), vehicle has been removed
-        if (!detectedPlatesSet.has(plateUpper)) {
-          try {
-            db.prepare(`
-              UPDATE violations 
-              SET status = 'cleared' 
-              WHERE id = ?
-            `).run(warning.id);
-            resolvedCount++;
-            console.log(`⚡ [REAL-TIME] Marked violation ${warning.id} as cleared - vehicle ${warning.plateNumber} removed from ${locationId}`);
-          } catch (error) {
-            console.error(`❌ Error marking violation ${warning.id} as resolved:`, error);
-          }
-        }
-      }
-
-      if (resolvedCount > 0) {
-        console.log(`⚡ [REAL-TIME] Resolved ${resolvedCount} violation(s) at ${locationId} - vehicle(s) removed`);
-      }
-
-      return resolvedCount;
-    } catch (error) {
-      console.error('❌ Error in real-time vehicle removal check:', error);
-      return 0;
-    }
+    // Auto-clear behavior removed by design.
+    return 0;
   }
 
   async checkAndUpdate() {
@@ -161,6 +110,7 @@ class MonitoringService {
       `).all();
 
       if (activeWarnings.length === 0) {
+        console.log('ℹ️  Monitoring check: no active warnings found.');
         return;
       }
 
@@ -206,7 +156,6 @@ class MonitoringService {
         }
       }
 
-      let resolvedCount = 0;
       let notifiedCount = 0;
 
       for (const warning of activeWarnings) {
@@ -216,22 +165,20 @@ class MonitoringService {
         const expiresAt = warning.warningExpiresAt ? new Date(warning.warningExpiresAt) : null;
         const isExpired = expiresAt && now >= expiresAt;
 
-        // Case 1: Vehicle has been removed - mark as cleared
-        if (!isStillPresent) {
-          try {
-            db.prepare(`
-              UPDATE violations 
-              SET status = 'cleared' 
-              WHERE id = ?
-            `).run(warning.id);
-            resolvedCount++;
-            console.log(`✅ Marked violation ${warning.id} as cleared - vehicle removed`);
-          } catch (error) {
-            console.error(`❌ Error marking violation ${warning.id} as resolved:`, error);
-          }
+        console.log(
+          `🔍 Monitoring check for violation ${warning.id}: plate=${warning.plateNumber}, location=${warning.cameraLocationId}, ` +
+          `expiresAt=${expiresAt ? expiresAt.toISOString() : 'N/A'}, isExpired=${Boolean(isExpired)}, isStillPresent=${isStillPresent}`
+        );
+
+        if (isExpired && !isStillPresent) {
+          console.log(
+            `ℹ️  Violation ${warning.id} is expired but vehicle is no longer detected at ${warning.cameraLocationId}. ` +
+            'No Barangay notification/SMS will be sent.'
+          );
         }
-        // Case 2: Vehicle still present after grace period - notify Barangay
-        else if (isExpired && isStillPresent) {
+
+        // Vehicle still present after grace period - notify Barangay
+        if (isExpired && isStillPresent) {
           // Check if notification already exists for this violation
           const existingNotification = db.prepare(`
             SELECT * FROM notifications 
@@ -241,6 +188,14 @@ class MonitoringService {
             AND locationId = ?
             AND read = 0
           `).get(warning.plateNumber, warning.cameraLocationId);
+
+          if (existingNotification) {
+            console.log(
+              `ℹ️  Skipping new notification/SMS for violation ${warning.id}: ` +
+              'existing unread warning_expired notification already present ' +
+              `(notificationId=${existingNotification.id}).`
+            );
+          }
 
           if (!existingNotification) {
             // Vehicle is still present after grace period
@@ -280,6 +235,10 @@ class MonitoringService {
             const user = db.prepare('SELECT id FROM users LIMIT 1').get();
             const userId = user ? user.id : null;
             
+            if (!userId) {
+              console.log('ℹ️  Skipping notification: no users found to check preferences for warning_expired.');
+            }
+
             if (userId && shouldCreateNotification(userId, 'warning_expired')) {
               // Create notification
               const notificationId = `NOTIF-${Date.now()}-${warning.id}`;
@@ -318,12 +277,69 @@ class MonitoringService {
             } else {
               console.log(`ℹ️  Notification skipped (preferences disabled or no user): warning_expired`);
             }
+
+            // Send follow-up SMS to active Barangay users so they can ticket
+            try {
+              const enforcers = db
+                .prepare(`
+                  SELECT id, name, contactNumber 
+                  FROM users 
+                  WHERE role = 'barangay_user' 
+                    AND status = 'active' 
+                    AND contactNumber IS NOT NULL 
+                    AND TRIM(contactNumber) != ''
+                `)
+                .all();
+
+              if (enforcers && enforcers.length > 0) {
+                console.log(
+                  `📱 Preparing to send follow-up SMS to ${enforcers.length} Barangay user(s) for plate ${warning.plateNumber} (violation ${warning.id}).`
+                );
+                const message = `Vehicle with plate ${warning.plateNumber} was warned but is still illegally parked at ${warning.cameraLocationId} after the ${GRACE_PERIOD_MINUTES}-minute grace period. You may now ticket this vehicle.`;
+
+                for (const user of enforcers) {
+                  const result = await sendSmsMessage(user.contactNumber, message);
+                  if (result.success) {
+                    console.log(
+                      `✅ Follow-up SMS sent to Barangay user ${user.id} (${user.contactNumber}) for plate ${warning.plateNumber} (violation ${warning.id})`
+                    );
+                  } else {
+                    console.log(
+                      `⚠️  Failed to send follow-up SMS to Barangay user ${user.id} (${user.contactNumber}) for plate ${warning.plateNumber}: ${result.error}`
+                    );
+                  }
+                }
+              } else {
+                console.log(
+                  'ℹ️  No active Barangay users with contact numbers found for follow-up SMS.'
+                );
+              }
+            } catch (smsError) {
+              console.error(
+                `❌ Error sending follow-up SMS to Barangay users for plate ${warning.plateNumber} (violation ${warning.id}):`,
+                smsError
+              );
+            }
+
+            // Move violation to 'pending' so it no longer counts as an active warning
+            try {
+              db.prepare(`
+                UPDATE violations
+                SET status = 'pending'
+                WHERE id = ?
+              `).run(warning.id);
+            } catch (statusError) {
+              console.error(
+                `❌ Error updating violation ${warning.id} status to 'pending' after grace period:`,
+                statusError
+              );
+            }
           }
         }
       }
 
-      if (resolvedCount > 0 || notifiedCount > 0) {
-        console.log(`✅ Monitoring check complete: ${resolvedCount} resolved, ${notifiedCount} notified`);
+      if (notifiedCount > 0) {
+        console.log(`✅ Monitoring check complete: 0 resolved, ${notifiedCount} notified`);
       } else {
         console.log('✅ Monitoring check complete: No updates needed');
       }

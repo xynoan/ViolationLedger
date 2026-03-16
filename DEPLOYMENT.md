@@ -172,7 +172,7 @@ Visit **https://yourdomain.com**. You should see LedgerMonitor and can log in wi
 - `PORT=3001` — must match Nginx `proxy_pass`.
 - `NODE_ENV=production` — set when running (e.g. in PM2).
 - `GEMINI_API_KEY` — if you use AI features.
-- Optional: SMTP, Infobip/Viber, camera URLs, etc. (see `server/.env.example`).
+- Optional: SMTP, SMS (iProgSMS), camera URLs, etc. (see `server/.env.example`).
 
 ## Updating after code changes
 

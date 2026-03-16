@@ -3,11 +3,11 @@ import db from '../database.js';
 import { analyzeImageWithAI } from '../ai_detection_service.js';
 import monitoringService from '../monitoring_service.js';
 import cleanupService from '../cleanup_service.js';
-import { getViberServiceStatus } from '../utils/viberService.js';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import fs from 'fs-extra';
 import { spawn } from 'child_process';
+import { getSmsServiceStatus } from '../utils/smsService.js';
 
 function readEnvFile() {
   const envPath = join(__dirname, '..', '.env');
@@ -224,12 +224,12 @@ router.get('/status', async (req, res) => {
     ]);
     
     const monitoringServices = checkMonitoringServices();
-    const viberService = getViberServiceStatus();
+    const messagingService = getSmsServiceStatus();
     
     const statuses = [
       database.status,
       aiService.status,
-      viberService.status, // Use Viber as primary
+      messagingService.status,
       monitoringServices.monitoring.status
     ];
     
@@ -245,7 +245,7 @@ router.get('/status', async (req, res) => {
       services: {
         database,
         ai: aiService,
-        messaging: viberService,
+        messaging: messagingService,
         monitoring: monitoringServices
       },
       system: systemInfo

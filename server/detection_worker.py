@@ -16,7 +16,14 @@ import time
 import cv2
 
 from yolo_detection_service import load_models, detect_frame
-from ocr_only import run_ocr
+
+
+def run_ocr(*_args, **_kwargs):
+    """
+    Disabled local OCR fallback.
+    Plate recognition now relies solely on the PlateRecognizer API.
+    """
+    return []
 
 try:
     import requests  # For Plate Recognizer Snapshot Cloud
@@ -25,6 +32,11 @@ except Exception:
 
 DETECTION_INTERVAL_SEC = 2.5
 DEFAULT_CONF_VEHICLE = float(os.getenv("YOLO_VEHICLE_CONF", "0.35"))
+
+# Directory where captured JPEG frames are stored so the Node.js server
+# can serve them from /captured_images (shared with captures.js).
+CAPTURED_IMAGES_DIR = os.path.join(os.path.dirname(__file__), "captured_images")
+os.makedirs(CAPTURED_IMAGES_DIR, exist_ok=True)
 
 # Plate Recognizer Snapshot Cloud configuration.
 # If PLATERECOGNIZER_TOKEN is set and USE_PLATERECOGNIZER is truthy (default),
@@ -124,8 +136,24 @@ def main() -> int:
                     vehicles = result["vehicles"]
                     plates_out = []
 
-                    # Run plate recognition when YOLO detects vehicles.
+                    # Derive a stable timestamp string for this detection cycle.
+                    timestamp_str = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))
+                    ts_id = timestamp_str.replace("-", "").replace(":", "").replace("T", "").replace("Z", "")
+                    image_filename = None
+
+                    # If we detected any vehicles, save the current frame as a JPEG
+                    # so the dashboard can show a still image for this detection.
                     if vehicles:
+                        try:
+                            ok, encoded = cv2.imencode(".jpg", frame)
+                            if ok:
+                                image_filename = f"capture-{args.camera_id}-{ts_id}.jpg"
+                                filepath = os.path.join(CAPTURED_IMAGES_DIR, image_filename)
+                                with open(filepath, "wb") as f:
+                                    f.write(encoded.tobytes())
+                        except Exception as e:
+                            print(f"[Worker {args.camera_id}] Failed to save capture frame: {e}", file=sys.stderr)
+
                         h, w = frame.shape[:2]
 
                         # First choice: Plate Recognizer Snapshot Cloud if configured.
@@ -227,8 +255,9 @@ def main() -> int:
                         "cameraId": args.camera_id,
                         "vehicles": vehicles,
                         "plates": plates_out,
-                        "timestamp": now,
+                        "timestamp": timestamp_str,
                         "frameIndex": frame_count,
+                        "imageUrl": image_filename,
                     }
                     print(json.dumps(out, ensure_ascii=False), flush=True)
                 except Exception as e:

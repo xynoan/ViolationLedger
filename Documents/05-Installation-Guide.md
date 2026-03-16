@@ -154,14 +154,14 @@ This guide will help you set up the Park Smart Monitor system step by step. Foll
 ```
 VITE_API_URL=http://localhost:3001/api
 PORT=3001
-PHILSMS_API_TOKEN=your_sms_api_token_here
+IPROGSMS_API_TOKEN=your_sms_api_token_here
 GEMINI_API_KEY=your_ai_api_key_here
 ```
 
 **Get API Keys:**
 
-**For SMS Service (PhilSMS):**
-1. Go to https://app.philsms.com/
+**For SMS Service (iProgSMS):**
+1. Go to your iProgSMS provider portal
 2. Create an account or log in
 3. Go to API settings
 4. Copy your API token
@@ -401,7 +401,7 @@ GEMINI_API_KEY=your_ai_api_key_here
 ### Issue: SMS Not Sending
 
 **Solutions:**
-- Verify PHILSMS_API_TOKEN is set correctly
+- Verify IPROGSMS_API_TOKEN is set correctly
 - Check SMS service account has credits
 - Verify phone numbers are in correct format (09XXXXXXXXX)
 - Check internet connection

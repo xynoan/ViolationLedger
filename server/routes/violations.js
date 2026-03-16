@@ -1,12 +1,14 @@
 import express from 'express';
 import db from '../database.js';
-import { sendViolationViber } from '../utils/viberService.js';
 import { sendViolationSms } from '../utils/smsService.js';
 
 const router = express.Router();
 
-/** Grace period in minutes before a warning becomes a ticket. Change this to adjust the grace period everywhere. */
-export const GRACE_PERIOD_MINUTES = 5;
+/**
+ * Grace period in minutes before a warning becomes a ticket.
+ * Set to 1 minute for testing; adjust here for production.
+ */
+export const GRACE_PERIOD_MINUTES = 1;
 
 function normalizePlateForMatch(plateNumber) {
   if (!plateNumber) return '';
@@ -32,7 +34,8 @@ export async function createViolationFromDetection(plateNumber, cameraLocationId
     // Use the stored plate number (may include spaces) as canonical everywhere downstream.
     const canonicalPlateNumber = vehicle.plateNumber;
 
-    // Check if there's already an active violation for this plate at this location
+    // Check if there's already an active violation for this plate at this location.
+    // If found, re-use it and DO NOT reset the warning timer.
     const existingViolation = db.prepare(`
       SELECT * FROM violations 
       WHERE plateNumber = ? 
@@ -40,19 +43,27 @@ export async function createViolationFromDetection(plateNumber, cameraLocationId
       AND status IN ('warning', 'pending')
     `).get(canonicalPlateNumber, cameraLocationId);
 
-    let violationId;
-    let isExistingViolation = false;
-    let messageSent = false;
-    let messageLogId = null;
-    
     if (existingViolation) {
-      console.log(`ℹ️  Active violation already exists for ${canonicalPlateNumber} at ${cameraLocationId}`);
-      violationId = existingViolation.id;
-      isExistingViolation = true;
-    } else {
-      // Generate new violation ID
-      violationId = `VIOL-${canonicalPlateNumber}-${Date.now()}`;
+      console.log(
+        `ℹ️  Active violation already exists for ${canonicalPlateNumber} at ${cameraLocationId} ` +
+        `(status=${existingViolation.status}, warningExpiresAt=${existingViolation.warningExpiresAt || 'null'}) - ` +
+        'keeping existing warning timer and skipping new violation creation.'
+      );
+
+      return {
+        ...existingViolation,
+        timeDetected: new Date(existingViolation.timeDetected),
+        timeIssued: existingViolation.timeIssued ? new Date(existingViolation.timeIssued) : null,
+        warningExpiresAt: existingViolation.warningExpiresAt
+          ? new Date(existingViolation.warningExpiresAt)
+          : null,
+        messageSent: false,
+        messageLogId: null
+      };
     }
+
+    // No existing active violation at this location - create a new warning
+    const violationId = `VIOL-${canonicalPlateNumber}-${Date.now()}`;
     const timeDetected = new Date().toISOString();
     
     // Set status to 'warning' (automatic violations start as warnings)
@@ -63,8 +74,11 @@ export async function createViolationFromDetection(plateNumber, cameraLocationId
     expiresDate.setMinutes(expiresDate.getMinutes() + GRACE_PERIOD_MINUTES);
     const expiresAt = expiresDate.toISOString();
     
+    let messageSent = false;
+    let messageLogId = null;
+    
     // Create violation only if it's a new violation
-    if (!isExistingViolation) {
+    if (true) {
       db.prepare(`
         INSERT INTO violations (id, ticketId, plateNumber, cameraLocationId, timeDetected, status, warningExpiresAt)
         VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -78,24 +92,12 @@ export async function createViolationFromDetection(plateNumber, cameraLocationId
         expiresAt
       );
       
-      // Send Viber message to vehicle owner (only for new violations)
-      try {
-        const viberResult = await sendViolationViber(canonicalPlateNumber, cameraLocationId, violationId);
-        if (viberResult.success) {
-          messageSent = true;
-          messageLogId = viberResult.messageLogId;
-          console.log(`✅ Viber message sent to owner for plate ${canonicalPlateNumber} (Log ID: ${messageLogId})`);
-        } else {
-          console.log(`⚠️  Viber message not sent for plate ${canonicalPlateNumber}: ${viberResult.error}`);
-        }
-      } catch (viberError) {
-        console.error(`❌ Error sending Viber message for plate ${canonicalPlateNumber}:`, viberError);
-      }
-
       // Send SMS message to vehicle owner (only for new violations)
       try {
         const smsResult = await sendViolationSms(canonicalPlateNumber, cameraLocationId, violationId);
         if (smsResult.success) {
+          messageSent = true;
+          messageLogId = smsResult.messageLogId || null;
           console.log(`✅ SMS sent to owner for plate ${canonicalPlateNumber} (Log ID: ${smsResult.messageLogId || 'N/A'})`);
         } else {
           console.log(`⚠️  SMS not sent for plate ${canonicalPlateNumber}: ${smsResult.error}`);
@@ -111,7 +113,7 @@ export async function createViolationFromDetection(plateNumber, cameraLocationId
         
         const warningNotificationId = `NOTIF-WARNING-${violationId}-${Date.now()}`;
         const warningTitle = `New Warning - ${canonicalPlateNumber}`;
-        const warningMessage = `Illegal parking detected for vehicle ${canonicalPlateNumber} at ${cameraLocationId}. ${GRACE_PERIOD_MINUTES}-minute grace period started.${messageSent ? ' Viber message sent to owner.' : ' Viber message could not be sent to owner.'}`;
+        const warningMessage = `Illegal parking detected for vehicle ${canonicalPlateNumber} at ${cameraLocationId}. ${GRACE_PERIOD_MINUTES}-minute grace period started.${messageSent ? ' SMS message sent to owner.' : ' SMS message could not be sent to owner.'}`;
         
         db.prepare(`
           INSERT INTO notifications (

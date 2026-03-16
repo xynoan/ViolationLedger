@@ -257,6 +257,9 @@ export const notificationsAPI = {
   delete: (id: string) => fetchAPI(`/notifications/${id}`, {
     method: 'DELETE',
   }),
+  handle: (id: string) => fetchAPI(`/notifications/${id}/handle`, {
+    method: 'PUT',
+  }),
 };
 
 // Upload API
@@ -322,7 +325,6 @@ export interface CreateUserPayload {
   password: string;
   name: string;
   role?: string;
-  viberNumber?: string;
   contactNumber?: string;
   status?: UserStatus;
 }
@@ -332,7 +334,6 @@ export interface UpdateUserPayload {
   password?: string;
   name?: string;
   role?: string;
-  viberNumber?: string;
   contactNumber?: string;
   status?: UserStatus;
 }

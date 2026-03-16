@@ -38,7 +38,6 @@ interface User {
   email: string;
   name: string | null;
   role: 'admin' | 'barangay_user' | 'encoder';
-  viberNumber: string | null;
   contactNumber: string | null;
   status: 'active' | 'inactive';
   createdAt: string;
@@ -61,7 +60,6 @@ export default function UserManagement() {
     confirmPassword: '',
     name: '',
     role: 'encoder' as 'admin' | 'barangay_user' | 'encoder',
-    viberNumber: '',
     contactNumber: '',
     status: 'active' as 'active' | 'inactive',
   });
@@ -99,7 +97,6 @@ export default function UserManagement() {
         confirmPassword: '',
         name: user.name || '',
         role: user.role,
-        viberNumber: user.viberNumber || '',
         contactNumber: user.contactNumber || '',
         status: user.status || 'active',
       });
@@ -112,7 +109,6 @@ export default function UserManagement() {
         confirmPassword: '',
         name: '',
         role: 'encoder',
-        viberNumber: '',
         contactNumber: '',
         status: 'active',
       });
@@ -129,7 +125,6 @@ export default function UserManagement() {
       confirmPassword: '',
       name: '',
       role: 'encoder',
-      viberNumber: '',
       contactNumber: '',
       status: 'active',
     });
@@ -194,15 +189,6 @@ export default function UserManagement() {
       }
     }
 
-    if (formData.role === 'barangay_user' && !formData.viberNumber.trim()) {
-      toast({
-        title: "Validation Error",
-        description: "Viber number is required for Barangay users. Notifications are sent to this number when no plate is visible on an image.",
-        variant: "destructive",
-      });
-      return;
-    }
-
     if (formData.password && formData.password !== formData.confirmPassword) {
       toast({
         title: "Validation Error",
@@ -220,7 +206,6 @@ export default function UserManagement() {
           email: formData.email,
           name: formData.name.trim(),
           role: formData.role,
-          viberNumber: formData.role === 'barangay_user' ? formData.viberNumber.trim() || null : null,
           contactNumber: formData.contactNumber.trim() || null,
           status: formData.status,
         };
@@ -240,7 +225,6 @@ export default function UserManagement() {
           password: formData.password,
           name: formData.name.trim(),
           role,
-          viberNumber: formData.role === 'barangay_user' ? formData.viberNumber.trim() || undefined : undefined,
           contactNumber: formData.contactNumber.trim() || undefined,
           status: formData.status,
         });
@@ -605,7 +589,7 @@ export default function UserManagement() {
                 <>
                   <Select
                     value={formData.role === 'admin' ? 'encoder' : formData.role}
-                    onValueChange={(value: 'encoder' | 'barangay_user') => setFormData((prev) => ({ ...prev, role: value, viberNumber: value === 'barangay_user' ? prev.viberNumber : '' }))}
+                    onValueChange={(value: 'encoder' | 'barangay_user') => setFormData((prev) => ({ ...prev, role: value }))}
                     disabled={isSubmitting}
                   >
                     <SelectTrigger id="role">
@@ -617,7 +601,7 @@ export default function UserManagement() {
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">
-                    Encoders can add vehicles. Barangay users receive Viber notifications when no plate is visible on an image.
+                    Encoders can add vehicles. Barangay users manage violations and receive system notifications.
                   </p>
                 </>
               )}
@@ -640,44 +624,7 @@ export default function UserManagement() {
                 </SelectContent>
               </Select>
             </div>
-            {/* Viber Number: shown when adding a user and Barangay User is chosen */}
-            {!selectedUser && formData.role === 'barangay_user' && (
-              <div className="space-y-2">
-                <Label htmlFor="viberNumber-new">
-                  Viber Number <span className="text-destructive">*</span>
-                </Label>
-                <Input
-                  id="viberNumber-new"
-                  type="tel"
-                  value={formData.viberNumber}
-                  onChange={(e) => setFormData({ ...formData, viberNumber: e.target.value })}
-                  placeholder="09XXXXXXXXX or +639XXXXXXXXX"
-                  disabled={isSubmitting}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Notifications are sent to this number when license plate is not visible or readable on a captured image.
-                </p>
-              </div>
-            )}
-            {/* Viber Number: shown when editing a Barangay user */}
-            {selectedUser && selectedUser.role === 'barangay_user' && (
-              <div className="space-y-2">
-                <Label htmlFor="viberNumber-edit">
-                  Viber Number <span className="text-destructive">*</span>
-                </Label>
-                <Input
-                  id="viberNumber-edit"
-                  type="tel"
-                  value={formData.viberNumber}
-                  onChange={(e) => setFormData({ ...formData, viberNumber: e.target.value })}
-                  placeholder="09XXXXXXXXX or +639XXXXXXXXX"
-                  disabled={isSubmitting}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Notifications are sent to this number when license plate is not visible or readable on a captured image.
-                </p>
-              </div>
-            )}
+            {/* Contact number is used for 2FA and notification SMS */}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={handleCloseDialog} disabled={isSubmitting}>

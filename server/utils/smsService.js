@@ -1,12 +1,11 @@
 import db from '../database.js';
-import { normalizePhoneNumber } from './phoneUtils.js';
 import { GRACE_PERIOD_MINUTES } from '../routes/violations.js';
 
-const INFOBIP_BASE_URL = process.env.INFOBIP_BASE_URL || 'api.infobip.com';
-const INFOBIP_API_KEY = process.env.INFOBIP_SMS_API_KEY || process.env.INFOBIP_API_KEY || '';
-const INFOBIP_SMS_API_URL = `https://${INFOBIP_BASE_URL}/sms/2/text/advanced`;
-const SMS_SENDER = process.env.INFOBIP_SMS_SENDER || process.env.SMS_SENDER || 'ViolationLedger';
-const MAX_SMS_LENGTH = 918; // conservative for multipart/encoding differences
+// iProgSMS configuration
+const IPROGSMS_API_TOKEN = process.env.IPROGSMS_API_TOKEN || '';
+const IPROGSMS_BASE_URL = process.env.IPROGSMS_BASE_URL || 'https://www.iprogsms.com';
+const IPROGSMS_SEND_PATH = '/api/v1/sms_messages';
+const MAX_SMS_LENGTH = Number.parseInt(process.env.SMS_MAX_LENGTH || '', 10) || 160;
 
 function normalizePlateForMatch(plateNumber) {
   if (!plateNumber) return '';
@@ -14,86 +13,68 @@ function normalizePlateForMatch(plateNumber) {
 }
 
 function validateConfig() {
-  if (!INFOBIP_API_KEY) {
-    return { valid: false, error: 'INFOBIP_SMS_API_KEY (or INFOBIP_API_KEY) not configured in environment' };
+  if (!IPROGSMS_API_TOKEN) {
+    return { valid: false, error: 'IPROGSMS_API_TOKEN not configured in environment' };
   }
-  if (!INFOBIP_BASE_URL) {
-    return { valid: false, error: 'INFOBIP_BASE_URL not configured in environment' };
+  if (!IPROGSMS_BASE_URL) {
+    return { valid: false, error: 'IPROGSMS_BASE_URL not configured in environment' };
   }
   return { valid: true };
+}
+
+function fitSmsMessage(text, maxLen = MAX_SMS_LENGTH) {
+  const normalized = String(text ?? '').trim();
+  if (normalized.length <= maxLen) return normalized;
+  if (maxLen <= 3) return normalized.slice(0, Math.max(0, maxLen));
+  return `${normalized.slice(0, maxLen - 3)}...`;
 }
 
 export async function sendSmsMessage(recipient, message) {
   const configCheck = validateConfig();
   if (!configCheck.valid) return { success: false, error: configCheck.error };
 
-  if (!message || typeof message !== 'string' || message.trim().length === 0) {
-    return { success: false, error: 'Message cannot be empty' };
-  }
-
-  const normalizedRecipient = normalizePhoneNumber(recipient);
+  const text = fitSmsMessage(message);
+  const normalizedRecipient = String(recipient || '').trim();
   if (!normalizedRecipient) {
     return { success: false, error: 'Invalid recipient phone number format' };
   }
 
-  const text = message.trim();
-  if (text.length > MAX_SMS_LENGTH) {
-    return { success: false, error: `Message exceeds maximum length of ${MAX_SMS_LENGTH} characters` };
-  }
-
-  // Infobip SMS Advanced format
-  const payload = {
-    messages: [
-      {
-        destinations: [{ to: normalizedRecipient }],
-        from: SMS_SENDER,
-        text
-      }
-    ]
-  };
+  // iProgSMS expects api_token, message, phone_number (per template)
+  const url = new URL(IPROGSMS_SEND_PATH, IPROGSMS_BASE_URL);
+  const bodyParams = new URLSearchParams();
+  bodyParams.set('api_token', IPROGSMS_API_TOKEN);
+  bodyParams.set('message', text);
+  bodyParams.set('phone_number', normalizedRecipient);
 
   const abortController = new AbortController();
   const timeoutId = setTimeout(() => abortController.abort(), 30000);
 
   try {
-    const response = await fetch(INFOBIP_SMS_API_URL, {
+    const response = await fetch(url.toString(), {
       method: 'POST',
       headers: {
-        Authorization: `App ${INFOBIP_API_KEY}`,
-        'Content-Type': 'application/json',
-        Accept: 'application/json'
+        'Content-Type': 'application/x-www-form-urlencoded',
       },
-      body: JSON.stringify(payload),
-      signal: abortController.signal
+      body: bodyParams.toString(),
+      signal: abortController.signal,
     });
 
-    const data = await response.json().catch(() => null);
+    const textBody = await response.text();
 
     if (!response.ok) {
-      const msg = data?.requestError?.serviceException?.text || data?.requestError?.message || `HTTP ${response.status}: ${response.statusText}`;
-      return { success: false, error: msg, httpStatus: response.status };
+      return {
+        success: false,
+        error: `HTTP ${response.status}: ${response.statusText} - ${textBody || 'No response body'}`,
+        httpStatus: response.status,
+      };
     }
 
-    const messageData = data?.messages?.[0];
-    const statusGroupId = messageData?.status?.groupId;
-    const statusName = messageData?.status?.groupName || messageData?.status?.name;
-
-    // Infobip: groupId 1 = PENDING, 3 = DELIVERED (provider dependent). Treat 1/3 as success-ish.
-    const isSuccess = statusGroupId === 1 || statusGroupId === 3;
-
-    if (!isSuccess) {
-      const errText =
-        messageData?.status?.description ||
-        messageData?.error?.description ||
-        statusName ||
-        'SMS provider rejected message';
-      return { success: false, error: errText, status: statusName };
-    }
-
+    // iProgSMS docs are not fully specified here; consider any 2xx as success
     return {
       success: true,
-      messageId: messageData?.messageId,
-      status: statusName || 'accepted'
+      messageId: null,
+      status: 'accepted',
+      rawResponse: textBody,
     };
   } catch (err) {
     const errorMsg = err?.name === 'AbortError' ? 'SMS request timeout (30s exceeded)' : err?.message || 'Network error';
@@ -174,6 +155,21 @@ export async function sendViolationSms(plateNumber, locationId, violationId) {
     });
     return { success: false, error: err.message || 'Unexpected error in sendViolationSms' };
   }
+}
+
+export function getSmsServiceStatus() {
+  const configCheck = validateConfig();
+
+  return {
+    provider: 'iProgSMS',
+    configured: configCheck.valid,
+    status: configCheck.valid ? 'healthy' : 'unhealthy',
+    apiUrl: IPROGSMS_BASE_URL,
+    message: configCheck.valid
+      ? 'iProgSMS SMS service ready'
+      : configCheck.error,
+    maxMessageLength: MAX_SMS_LENGTH
+  };
 }
 
 export default {
