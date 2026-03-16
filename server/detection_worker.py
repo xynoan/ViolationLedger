@@ -16,7 +16,14 @@ import time
 import cv2
 
 from yolo_detection_service import load_models, detect_frame
-from ocr_only import run_ocr
+
+
+def run_ocr(*_args, **_kwargs):
+    """
+    Disabled local OCR fallback.
+    Plate recognition now relies solely on the PlateRecognizer API.
+    """
+    return []
 
 try:
     import requests  # For Plate Recognizer Snapshot Cloud

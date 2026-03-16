@@ -10,7 +10,6 @@ const __dirname = dirname(__filename);
 
 const AI_SERVICE_PATH = join(__dirname, 'ai_service.py');
 const VIDEO_ANALYSIS_SERVICE_PATH = join(__dirname, 'video_analysis_service.py');
-const OCR_ONLY_PATH = join(__dirname, 'ocr_only.py');
 const YOLO_DETECTION_SERVICE_PATH = join(__dirname, 'yolo_detection_service.py');
 
 /**
@@ -223,96 +222,87 @@ Full error: ${stderr.substring(0, 300)}`;
 }
 
 /**
- * Run OCR-only plate recognition (EasyOCR + Tesseract). No Gemini - for 24/7 live dashboard.
+ * Plate recognition via PlateRecognizer Snapshot API (no local OCR/Gemini).
  * @param {string} imageBase64 - Base64 encoded image data (raw or data URL)
- * @returns {Promise<{ plates: Array<{ plateNumber: string, confidence: number, bbox: number[] }> }>}
+ * @returns {Promise<{ plates: Array<{ plateNumber: string, confidence: number, bbox: number[] }>, error: string | null }>}
  */
 export async function runOCROnly(imageBase64) {
-  return new Promise(async (resolve) => {
-    if (!imageBase64) {
-      return resolve({ plates: [], error: 'imageBase64 required' });
-    }
+  if (!imageBase64) {
+    return { plates: [], error: 'imageBase64 required' };
+  }
 
-    if (!fs.existsSync(OCR_ONLY_PATH)) {
-      console.warn('⚠️  ocr_only.py not found, returning empty plates');
-      return resolve({ plates: [], error: 'OCR service not available' });
-    }
+  const token = process.env.PLATERECOGNIZER_TOKEN || process.env.PLATE_RECOGNIZER_TOKEN;
+  const endpoint =
+    process.env.PLATERECOGNIZER_ENDPOINT ||
+    'https://api.platerecognizer.com/v1/plate-reader/';
 
+  if (!token) {
+    console.warn('[PlateRecognizer] Missing PLATERECOGNIZER_TOKEN/PLATE_RECOGNIZER_TOKEN');
+    return { plates: [], error: 'PlateRecognizer token not configured' };
+  }
+
+  try {
     const raw = imageBase64.includes(',') ? imageBase64.split(',')[1] : imageBase64;
-    let tempBase64File = null;
-    const OCR_TIMEOUT_MS = 30000;
-    let timeoutId = null;
-    let processCompleted = false;
+    const buffer = Buffer.from(raw, 'base64');
 
-    const cleanup = async () => {
-      if (tempBase64File) {
-        try { await fs.remove(tempBase64File); } catch (e) { /* ignore */ }
-      }
-      if (timeoutId) clearTimeout(timeoutId);
-    };
+    const blob = new Blob([buffer], { type: 'image/jpeg' });
+    const formData = new FormData();
+    formData.append('upload', blob, 'frame.jpg');
 
-    try {
-      tempBase64File = join(tmpdir(), `ocr-base64-${randomUUID()}.txt`);
-      await fs.writeFile(tempBase64File, raw, 'utf8');
-    } catch (e) {
-      return resolve({ plates: [], error: e.message });
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        Authorization: `Token ${token}`,
+      },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      console.warn('[PlateRecognizer] Non-200 response:', response.status, text.slice(0, 300));
+      return {
+        plates: [],
+        error: `PlateRecognizer error ${response.status}`,
+      };
     }
 
-    const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
-    const pythonProcess = spawn(pythonCmd, [OCR_ONLY_PATH, '--base64-file', tempBase64File], {
-      cwd: __dirname,
-      env: { ...process.env, PYTHONUNBUFFERED: '1' },
-    });
+    const payload = await response.json();
+    const results = Array.isArray(payload.results) ? payload.results : [];
 
-    let stdout = '';
-    let stderr = '';
+    const plates = results
+      .map((r) => {
+        const plate = (r.plate || '').toString().toUpperCase();
+        const score = Number(r.score || 0);
+        const box = r.box || {};
+        const x1 = Number(box.x1 || 0);
+        const y1 = Number(box.y1 || 0);
+        const x2 = Number(box.x2 || 0);
+        const y2 = Number(box.y2 || 0);
+        if (!plate) return null;
+        return {
+          plateNumber: plate,
+          confidence: Number.isFinite(score) ? score : 0,
+          // Absolute pixel bbox from PlateRecognizer, forwarded as-is.
+          bbox: [x1, y1, x2, y2],
+          class_name: 'plate',
+        };
+      })
+      .filter(Boolean);
 
-    timeoutId = setTimeout(async () => {
-      if (!processCompleted) {
-        processCompleted = true;
-        try { pythonProcess.kill('SIGTERM'); } catch (_) {}
-        await cleanup();
-        resolve({ plates: [], error: 'OCR timeout' });
-      }
-    }, OCR_TIMEOUT_MS);
+    if (plates.length > 0) {
+      console.log('[PlateRecognizer] Plates:', plates.map((p) => p.plateNumber).join(', '));
+    } else {
+      console.log('[PlateRecognizer] No plates detected.');
+    }
 
-    pythonProcess.stdout.on('data', (data) => { stdout += data.toString(); });
-    pythonProcess.stderr.on('data', (data) => { stderr += data.toString(); });
-
-    pythonProcess.on('close', async (code) => {
-      if (processCompleted) return;
-      processCompleted = true;
-      await cleanup();
-
-      try {
-        const out = stdout.trim();
-        if (!out) {
-          console.warn('[OCR] Empty stdout from ocr_only.py', stderr.slice(0, 200));
-          return resolve({ plates: [], error: stderr.slice(0, 200) || 'Empty OCR output' });
-        }
-        const result = JSON.parse(out);
-        const plates = Array.isArray(result.plates) ? result.plates : [];
-        if (plates.length === 0 && (stderr || result.error)) {
-          console.warn('[OCR] No plates. stderr:', stderr.slice(0, 500), 'result.error:', result.error);
-        }
-        resolve({
-          plates,
-          error: result.error || null,
-        });
-      } catch (e) {
-        console.warn('[OCR] Parse error:', e.message, 'stdout preview:', stdout.slice(0, 300));
-        resolve({ plates: [], error: e.message });
-      }
-    });
-
-    pythonProcess.on('error', async (err) => {
-      if (!processCompleted) {
-        processCompleted = true;
-        await cleanup();
-        resolve({ plates: [], error: err.message });
-      }
-    });
-  });
+    return { plates, error: null };
+  } catch (err) {
+    console.error('[PlateRecognizer] Request failed:', err);
+    return {
+      plates: [],
+      error: err && err.message ? err.message : 'PlateRecognizer request failed',
+    };
+  }
 }
 
 /**

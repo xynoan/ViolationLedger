@@ -257,6 +257,9 @@ export const notificationsAPI = {
   delete: (id: string) => fetchAPI(`/notifications/${id}`, {
     method: 'DELETE',
   }),
+  handle: (id: string) => fetchAPI(`/notifications/${id}/handle`, {
+    method: 'PUT',
+  }),
 };
 
 // Upload API

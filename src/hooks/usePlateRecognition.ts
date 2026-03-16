@@ -72,19 +72,17 @@ export function usePlateRecognition(
           console.log('[Plate OCR] Done. No plates detected.', result?.error ? `(${result.error})` : '');
         }
 
-        const next: PlateDetection[] = plates.map((p: { plateNumber: string; confidence: number; bbox: number[] }) => {
-          const [nx, ny, nw, nh] = p.bbox;
-          const x1 = nx * w;
-          const y1 = ny * h;
-          const x2 = (nx + nw) * w;
-          const y2 = (ny + nh) * h;
-          return {
-            bbox: [x1, y1, x2, y2],
-            class_name: 'plate',
-            confidence: p.confidence ?? 0.8,
-            plateNumber: p.plateNumber,
-          };
-        });
+        const next: PlateDetection[] = plates.map(
+          (p: { plateNumber: string; confidence: number; bbox: number[] }) => {
+            const [x1, y1, x2, y2] = p.bbox;
+            return {
+              bbox: [x1, y1, x2, y2],
+              class_name: 'plate',
+              confidence: p.confidence ?? 0.8,
+              plateNumber: p.plateNumber,
+            };
+          }
+        );
 
         setDetections(next);
       } catch (e) {

@@ -34,7 +34,8 @@ export async function createViolationFromDetection(plateNumber, cameraLocationId
     // Use the stored plate number (may include spaces) as canonical everywhere downstream.
     const canonicalPlateNumber = vehicle.plateNumber;
 
-    // Check if there's already an active violation for this plate at this location
+    // Check if there's already an active violation for this plate at this location.
+    // If found, re-use it and DO NOT reset the warning timer.
     const existingViolation = db.prepare(`
       SELECT * FROM violations 
       WHERE plateNumber = ? 
@@ -42,19 +43,27 @@ export async function createViolationFromDetection(plateNumber, cameraLocationId
       AND status IN ('warning', 'pending')
     `).get(canonicalPlateNumber, cameraLocationId);
 
-    let violationId;
-    let isExistingViolation = false;
-    let messageSent = false;
-    let messageLogId = null;
-    
     if (existingViolation) {
-      console.log(`ℹ️  Active violation already exists for ${canonicalPlateNumber} at ${cameraLocationId}`);
-      violationId = existingViolation.id;
-      isExistingViolation = true;
-    } else {
-      // Generate new violation ID
-      violationId = `VIOL-${canonicalPlateNumber}-${Date.now()}`;
+      console.log(
+        `ℹ️  Active violation already exists for ${canonicalPlateNumber} at ${cameraLocationId} ` +
+        `(status=${existingViolation.status}, warningExpiresAt=${existingViolation.warningExpiresAt || 'null'}) - ` +
+        'keeping existing warning timer and skipping new violation creation.'
+      );
+
+      return {
+        ...existingViolation,
+        timeDetected: new Date(existingViolation.timeDetected),
+        timeIssued: existingViolation.timeIssued ? new Date(existingViolation.timeIssued) : null,
+        warningExpiresAt: existingViolation.warningExpiresAt
+          ? new Date(existingViolation.warningExpiresAt)
+          : null,
+        messageSent: false,
+        messageLogId: null
+      };
     }
+
+    // No existing active violation at this location - create a new warning
+    const violationId = `VIOL-${canonicalPlateNumber}-${Date.now()}`;
     const timeDetected = new Date().toISOString();
     
     // Set status to 'warning' (automatic violations start as warnings)
@@ -65,8 +74,11 @@ export async function createViolationFromDetection(plateNumber, cameraLocationId
     expiresDate.setMinutes(expiresDate.getMinutes() + GRACE_PERIOD_MINUTES);
     const expiresAt = expiresDate.toISOString();
     
+    let messageSent = false;
+    let messageLogId = null;
+    
     // Create violation only if it's a new violation
-    if (!isExistingViolation) {
+    if (true) {
       db.prepare(`
         INSERT INTO violations (id, ticketId, plateNumber, cameraLocationId, timeDetected, status, warningExpiresAt)
         VALUES (?, ?, ?, ?, ?, ?, ?)

@@ -1,7 +1,11 @@
 import express from 'express';
 import db from '../database.js';
+import { authenticateToken } from '../middleware/auth.js';
 
 const router = express.Router();
+
+// All notification routes require authentication
+router.use(authenticateToken);
 
 function getStatements() {
   return {
@@ -10,6 +14,11 @@ function getStatements() {
     getById: db.prepare('SELECT * FROM notifications WHERE id = ?'),
     markAsRead: db.prepare('UPDATE notifications SET read = 1 WHERE id = ?'),
     markAllAsRead: db.prepare('UPDATE notifications SET read = 1'),
+    markHandled: db.prepare(`
+      UPDATE notifications
+      SET handledBy = ?, handledAt = ?, status = 'in_progress', read = 1
+      WHERE id = ? AND (handledBy IS NULL OR handledBy = '')
+    `),
     delete: db.prepare('DELETE FROM notifications WHERE id = ?'),
   };
 }
@@ -30,12 +39,14 @@ router.get('/', (req, res) => {
     const maxLimit = Math.min(parseInt(limit) || 100, 500);
     notifications = notifications.slice(0, maxLimit);
     
-    res.json(notifications.map(notif => ({
-      ...notif,
-      read: notif.read === 1,
-      timestamp: new Date(notif.timestamp),
-      timeDetected: notif.timeDetected ? new Date(notif.timeDetected) : null
-    })));
+    res.json(
+      notifications.map((notif) => ({
+        ...notif,
+        read: notif.read === 1,
+        timestamp: new Date(notif.timestamp),
+        timeDetected: notif.timeDetected ? new Date(notif.timeDetected) : null,
+      }))
+    );
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -54,7 +65,7 @@ router.get('/:id', (req, res) => {
       ...notification,
       read: notification.read === 1,
       timestamp: new Date(notification.timestamp),
-      timeDetected: notification.timeDetected ? new Date(notification.timeDetected) : null
+      timeDetected: notification.timeDetected ? new Date(notification.timeDetected) : null,
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -76,7 +87,7 @@ router.put('/:id/read', (req, res) => {
       ...notification,
       read: true,
       timestamp: new Date(notification.timestamp),
-      timeDetected: notification.timeDetected ? new Date(notification.timeDetected) : null
+      timeDetected: notification.timeDetected ? new Date(notification.timeDetected) : null,
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -105,6 +116,33 @@ router.delete('/:id', (req, res) => {
     
     statements.delete.run(req.params.id);
     res.status(204).send();
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Claim/handle a notification (e.g. for warning_expired)
+router.put('/:id/handle', (req, res) => {
+  try {
+    const statements = getStatements();
+    const notification = statements.getById.get(req.params.id);
+    
+    if (!notification) {
+      return res.status(404).json({ error: 'Notification not found' });
+    }
+
+    const now = new Date().toISOString();
+    // Only allow first handler to claim; subsequent calls will no-op
+    statements.markHandled.run(req.user.id, now, req.params.id);
+
+    const updated = statements.getById.get(req.params.id);
+
+    res.json({
+      ...updated,
+      read: updated.read === 1,
+      timestamp: new Date(updated.timestamp),
+      timeDetected: updated.timeDetected ? new Date(updated.timeDetected) : null,
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

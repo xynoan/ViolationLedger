@@ -110,6 +110,7 @@ class MonitoringService {
       `).all();
 
       if (activeWarnings.length === 0) {
+        console.log('ℹ️  Monitoring check: no active warnings found.');
         return;
       }
 
@@ -164,6 +165,18 @@ class MonitoringService {
         const expiresAt = warning.warningExpiresAt ? new Date(warning.warningExpiresAt) : null;
         const isExpired = expiresAt && now >= expiresAt;
 
+        console.log(
+          `🔍 Monitoring check for violation ${warning.id}: plate=${warning.plateNumber}, location=${warning.cameraLocationId}, ` +
+          `expiresAt=${expiresAt ? expiresAt.toISOString() : 'N/A'}, isExpired=${Boolean(isExpired)}, isStillPresent=${isStillPresent}`
+        );
+
+        if (isExpired && !isStillPresent) {
+          console.log(
+            `ℹ️  Violation ${warning.id} is expired but vehicle is no longer detected at ${warning.cameraLocationId}. ` +
+            'No Barangay notification/SMS will be sent.'
+          );
+        }
+
         // Vehicle still present after grace period - notify Barangay
         if (isExpired && isStillPresent) {
           // Check if notification already exists for this violation
@@ -175,6 +188,14 @@ class MonitoringService {
             AND locationId = ?
             AND read = 0
           `).get(warning.plateNumber, warning.cameraLocationId);
+
+          if (existingNotification) {
+            console.log(
+              `ℹ️  Skipping new notification/SMS for violation ${warning.id}: ` +
+              'existing unread warning_expired notification already present ' +
+              `(notificationId=${existingNotification.id}).`
+            );
+          }
 
           if (!existingNotification) {
             // Vehicle is still present after grace period
@@ -214,6 +235,10 @@ class MonitoringService {
             const user = db.prepare('SELECT id FROM users LIMIT 1').get();
             const userId = user ? user.id : null;
             
+            if (!userId) {
+              console.log('ℹ️  Skipping notification: no users found to check preferences for warning_expired.');
+            }
+
             if (userId && shouldCreateNotification(userId, 'warning_expired')) {
               // Create notification
               const notificationId = `NOTIF-${Date.now()}-${warning.id}`;
@@ -267,17 +292,20 @@ class MonitoringService {
                 .all();
 
               if (enforcers && enforcers.length > 0) {
+                console.log(
+                  `📱 Preparing to send follow-up SMS to ${enforcers.length} Barangay user(s) for plate ${warning.plateNumber} (violation ${warning.id}).`
+                );
                 const message = `Vehicle with plate ${warning.plateNumber} was warned but is still illegally parked at ${warning.cameraLocationId} after the ${GRACE_PERIOD_MINUTES}-minute grace period. You may now ticket this vehicle.`;
 
                 for (const user of enforcers) {
                   const result = await sendSmsMessage(user.contactNumber, message);
                   if (result.success) {
                     console.log(
-                      `✅ Follow-up SMS sent to Barangay user ${user.id} for plate ${warning.plateNumber} (violation ${warning.id})`
+                      `✅ Follow-up SMS sent to Barangay user ${user.id} (${user.contactNumber}) for plate ${warning.plateNumber} (violation ${warning.id})`
                     );
                   } else {
                     console.log(
-                      `⚠️  Failed to send follow-up SMS to Barangay user ${user.id} for plate ${warning.plateNumber}: ${result.error}`
+                      `⚠️  Failed to send follow-up SMS to Barangay user ${user.id} (${user.contactNumber}) for plate ${warning.plateNumber}: ${result.error}`
                     );
                   }
                 }
