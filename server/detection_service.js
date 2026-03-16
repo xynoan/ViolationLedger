@@ -35,6 +35,14 @@ let wss = null;
 const smsThrottle = new Map();
 const SMS_THROTTLE_MS = 5 * 60 * 1000; // 5 minutes
 
+// Prepared statement for persisting detections so Dashboard "Capture Results"
+// can reflect live detections produced by the RTSP worker, even when plates
+// are not readable.
+const insertDetectionStmt = db.prepare(`
+  INSERT INTO detections (id, cameraId, plateNumber, timestamp, confidence, imageUrl, bbox, class_name, imageBase64)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+`);
+
 function normalizePlateForMatch(plateNumber) {
   if (!plateNumber) return '';
   return String(plateNumber).replace(/\s+/g, '').toUpperCase();
@@ -117,6 +125,48 @@ async function handlePlateDetections(cameraId, msg) {
   }
 }
 
+/**
+ * Persist vehicle detections from the RTSP worker into the detections table so
+ * the dashboard capture list updates whenever a vehicle is detected, even if
+ * the plate is not visible/readable.
+ */
+function saveVehicleDetectionsFromWorker(cameraId, msg) {
+  try {
+    const vehicles = Array.isArray(msg?.vehicles) ? msg.vehicles : [];
+    if (!vehicles.length) return;
+
+    const timestamp = typeof msg?.timestamp === 'string'
+      ? msg.timestamp
+      : new Date().toISOString();
+    const timestampId = timestamp.replace(/[-:]/g, '').split('.')[0];
+    const imageUrl = typeof msg?.imageUrl === 'string' ? msg.imageUrl : null;
+
+    vehicles.forEach((v, index) => {
+      if (!v || typeof v.class_name !== 'string') return;
+
+      const detectionId = `DET-${cameraId}-${timestampId}-${index}`;
+      const plateNumber = 'NONE'; // We don't have a stable plate association here
+      const confidence = typeof v.confidence === 'number' ? v.confidence : 0.0;
+      const bbox = v.bbox ? JSON.stringify(v.bbox) : null;
+      const className = v.class_name || 'vehicle';
+
+      insertDetectionStmt.run(
+        detectionId,
+        cameraId,
+        plateNumber,
+        timestamp,
+        confidence,
+        imageUrl,
+        bbox,
+        className,
+        null // imageBase64
+      );
+    });
+  } catch (e) {
+    console.error('[Detection] Failed to persist vehicle detections from worker:', e);
+  }
+}
+
 function getOnlineCamerasWithDeviceId() {
   try {
     const rows = db.prepare('SELECT id, deviceId FROM cameras WHERE status = ? AND deviceId IS NOT NULL AND deviceId != ?').all('online', '');
@@ -158,10 +208,11 @@ function startWorker(cameraId, deviceId) {
       if (!line.trim()) continue;
       try {
         const msg = JSON.parse(line);
-        // Fire-and-forget SMS handling; do not block broadcast.
+        // Fire-and-forget side effects; do not block broadcast.
         handlePlateDetections(cameraId, msg).catch((e) => {
           console.error('[Detection][SMS] handlePlateDetections error:', e);
         });
+        saveVehicleDetectionsFromWorker(cameraId, msg);
         broadcast(cameraId, msg);
       } catch (e) {
         console.warn('[Detection] Parse error:', e.message, 'line:', line.slice(0, 80));

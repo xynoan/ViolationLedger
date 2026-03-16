@@ -4,8 +4,11 @@ import { sendViolationSms } from '../utils/smsService.js';
 
 const router = express.Router();
 
-/** Grace period in minutes before a warning becomes a ticket. Change this to adjust the grace period everywhere. */
-export const GRACE_PERIOD_MINUTES = 5;
+/**
+ * Grace period in minutes before a warning becomes a ticket.
+ * Set to 1 minute for testing; adjust here for production.
+ */
+export const GRACE_PERIOD_MINUTES = 1;
 
 function normalizePlateForMatch(plateNumber) {
   if (!plateNumber) return '';

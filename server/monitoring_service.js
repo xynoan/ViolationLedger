@@ -1,6 +1,7 @@
 import db from './database.js';
 import { shouldCreateNotification } from './routes/notifications.js';
 import { GRACE_PERIOD_MINUTES } from './routes/violations.js';
+import { sendViolationSms } from './utils/smsService.js';
 import { analyzeVideoStream, processVideoDetectionResults } from './ai_detection_service.js';
 
 /**
@@ -317,6 +318,43 @@ class MonitoringService {
               }
             } else {
               console.log(`ℹ️  Notification skipped (preferences disabled or no user): warning_expired`);
+            }
+
+            // Send follow-up SMS to owner indicating escalation permission
+            try {
+              const smsResult = await sendViolationSms(
+                warning.plateNumber,
+                warning.cameraLocationId,
+                warning.id
+              );
+              if (smsResult.success) {
+                console.log(
+                  `✅ Follow-up SMS sent for plate ${warning.plateNumber} after grace period (violation ${warning.id})`
+                );
+              } else {
+                console.log(
+                  `⚠️  Follow-up SMS not sent for plate ${warning.plateNumber} (violation ${warning.id}): ${smsResult.error}`
+                );
+              }
+            } catch (smsError) {
+              console.error(
+                `❌ Error sending follow-up SMS for plate ${warning.plateNumber} (violation ${warning.id}):`,
+                smsError
+              );
+            }
+
+            // Move violation to 'pending' so it no longer counts as an active warning
+            try {
+              db.prepare(`
+                UPDATE violations
+                SET status = 'pending'
+                WHERE id = ?
+              `).run(warning.id);
+            } catch (statusError) {
+              console.error(
+                `❌ Error updating violation ${warning.id} status to 'pending' after grace period:`,
+                statusError
+              );
             }
           }
         }
