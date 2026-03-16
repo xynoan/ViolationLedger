@@ -2,7 +2,7 @@ import express from 'express';
 import db from '../database.js';
 import crypto from 'crypto';
 import { authenticateToken } from '../middleware/auth.js';
-import { sendViberMessage } from '../utils/viberService.js';
+import { sendSmsMessage } from '../utils/smsService.js';
 
 const router = express.Router();
 
@@ -136,7 +136,7 @@ router.post('/login', async (req, res) => {
       twoFASessions.set(tempTokenId, { userId: user.id, code, expiresAt });
 
       const message = `Your ViolationLedger login code is: ${code}. It expires in 10 minutes. Do not share this code.`;
-      const sendResult = await sendViberMessage(contactNumber, message);
+      const sendResult = await sendSmsMessage(contactNumber, message);
       if (!sendResult.success) {
         twoFASessions.delete(tempTokenId);
         console.error('2FA send failed:', sendResult.error);

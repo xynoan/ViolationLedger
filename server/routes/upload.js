@@ -7,7 +7,6 @@ import { existsSync } from 'fs';
 import { analyzeImageWithAI, processDetectionResults } from '../ai_detection_service.js';
 import { createViolationFromDetection } from './violations.js';
 import { shouldCreateNotification } from './notifications.js';
-import { sendViberMessage } from '../utils/viberService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -130,7 +129,7 @@ router.post('/analyze', async (req, res) => {
     const notificationsCreated = [];
     const violationsCreated = [];
     const detectedVehicles = []; // Store detected vehicles with owner info
-    let actualMessageSent = false; // Track if Viber message was actually sent successfully
+    let actualMessageSent = false; // Kept for frontend compatibility (true when owner notification SMS was sent)
     
     for (const detection of detections) {
       try {
@@ -162,7 +161,7 @@ router.post('/analyze', async (req, res) => {
         // Check if it's a real vehicle (not 'none' class)
         const isRealVehicle = detection.class_name && detection.class_name.toLowerCase() !== 'none';
         
-        // Case 1: Real vehicle with visible plate - check database and send Viber message
+        // Case 1: Real vehicle with visible plate - check database and create violation (with SMS notification)
         if (isRealVehicle && !plateNotVisible) {
           try {
             // Check if vehicle exists in database
@@ -181,7 +180,7 @@ router.post('/analyze', async (req, res) => {
             });
             
             if (vehicle) {
-              // Vehicle exists - create violation and send Viber message
+              // Vehicle exists - create violation and send SMS notification
               const violation = await createViolationFromDetection(
                 detection.plateNumber,
                 uploadLocationId,
@@ -189,12 +188,12 @@ router.post('/analyze', async (req, res) => {
               );
               if (violation) {
                 violationsCreated.push(violation.id);
-                // Check if Viber message was actually sent (from violation object)
+                // Check if owner SMS was actually sent (from violation object)
                 if (violation.messageSent) {
                   actualMessageSent = true;
-                  console.log(`✅ Violation created and Viber message sent to owner for plate ${detection.plateNumber}`);
+                  console.log(`✅ Violation created and SMS sent to owner for plate ${detection.plateNumber}`);
                 } else {
-                  console.log(`⚠️  Violation created but Viber message was not sent for plate ${detection.plateNumber}`);
+                  console.log(`⚠️  Violation created but SMS message was not sent for plate ${detection.plateNumber}`);
                 }
               }
             } else {
@@ -336,24 +335,6 @@ router.post('/analyze', async (req, res) => {
             } catch (notifError) {
               console.error(`Failed to create notification:`, notifError);
             }
-            // Send Viber to barangay users (when no plate visible - notification goes to their Viber number)
-            try {
-              const barangayUsers = db.prepare(`
-                SELECT id, viberNumber FROM users WHERE role = 'barangay_user' AND viberNumber IS NOT NULL AND viberNumber != ''
-              `).all();
-              for (const u of barangayUsers) {
-                if (u.viberNumber) {
-                  const viberResult = await sendViberMessage(u.viberNumber, plateMessage);
-                  if (viberResult.success) {
-                    console.log(`✅ Viber sent to Barangay user ${u.id} (plate not visible)`);
-                  } else {
-                    console.warn(`⚠️ Viber not sent to Barangay user ${u.id}: ${viberResult.error}`);
-                  }
-                }
-              }
-            } catch (viberErr) {
-              console.error(`Failed to send Viber to Barangay users:`, viberErr);
-            }
           } else {
             console.error(`❌ No user found - cannot send notification to authorities`);
           }
@@ -375,10 +356,10 @@ router.post('/analyze', async (req, res) => {
       notificationsCreated: notificationsCreated.length,
       aiAnalysisError: aiAnalysisError || undefined,
       detectedVehicles: detectedVehicles, // Include detected vehicles with owner info
-      results: {
+        results: {
         plateDetected: detections.some(d => d.plateNumber && d.plateNumber !== 'NONE'),
         vehicleDetected: detections.some(d => d.class_name && d.class_name.toLowerCase() !== 'none'),
-        smsSent: actualMessageSent, // Viber message send status (kept as smsSent for frontend compatibility)
+        smsSent: actualMessageSent, // Owner SMS send status (kept as smsSent for frontend compatibility)
         barangayNotified: notificationsCreated.length > 0 || incidentsCreated.length > 0
       }
     });

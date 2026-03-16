@@ -322,7 +322,6 @@ export interface CreateUserPayload {
   password: string;
   name: string;
   role?: string;
-  viberNumber?: string;
   contactNumber?: string;
   status?: UserStatus;
 }
@@ -332,7 +331,6 @@ export interface UpdateUserPayload {
   password?: string;
   name?: string;
   role?: string;
-  viberNumber?: string;
   contactNumber?: string;
   status?: UserStatus;
 }

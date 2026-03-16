@@ -298,7 +298,7 @@ export default function Analytics() {
             <CardContent className="pt-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-muted-foreground">Viber Sent</p>
+                  <p className="text-sm text-muted-foreground">SMS Sent</p>
                   <p className="text-2xl font-bold">{analytics.sms.total}</p>
                 </div>
                 <MessageSquare className="h-8 w-8 text-primary" />

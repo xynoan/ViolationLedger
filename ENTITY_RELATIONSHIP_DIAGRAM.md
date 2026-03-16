@@ -52,7 +52,7 @@ Core user/admin entities in the system
 | `name` | TEXT | | User display name |
 | `role` | TEXT | NOT NULL, DEFAULT 'barangay_user' | Role: barangay_user, admin, etc. |
 | `createdAt` | TEXT | NOT NULL | ISO timestamp |
-| `viberNumber` | TEXT | | Optional Viber contact for barangay notifications |
+| `viberNumber` | TEXT | | (Legacy) Unused Viber contact field |
 | `status` | TEXT | NOT NULL, DEFAULT 'active' | Account status: active/inactive |
 | `contactNumber` | TEXT | | Secondary contact number (2FA, recovery) |
 | `mustResetPassword` | INTEGER | NOT NULL, DEFAULT 1 | 1=must reset on next login |

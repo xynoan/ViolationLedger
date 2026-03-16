@@ -1,6 +1,5 @@
 import express from 'express';
 import db from '../database.js';
-import { sendViolationViber } from '../utils/viberService.js';
 import { sendViolationSms } from '../utils/smsService.js';
 
 const router = express.Router();
@@ -78,24 +77,12 @@ export async function createViolationFromDetection(plateNumber, cameraLocationId
         expiresAt
       );
       
-      // Send Viber message to vehicle owner (only for new violations)
-      try {
-        const viberResult = await sendViolationViber(canonicalPlateNumber, cameraLocationId, violationId);
-        if (viberResult.success) {
-          messageSent = true;
-          messageLogId = viberResult.messageLogId;
-          console.log(`✅ Viber message sent to owner for plate ${canonicalPlateNumber} (Log ID: ${messageLogId})`);
-        } else {
-          console.log(`⚠️  Viber message not sent for plate ${canonicalPlateNumber}: ${viberResult.error}`);
-        }
-      } catch (viberError) {
-        console.error(`❌ Error sending Viber message for plate ${canonicalPlateNumber}:`, viberError);
-      }
-
       // Send SMS message to vehicle owner (only for new violations)
       try {
         const smsResult = await sendViolationSms(canonicalPlateNumber, cameraLocationId, violationId);
         if (smsResult.success) {
+          messageSent = true;
+          messageLogId = smsResult.messageLogId || null;
           console.log(`✅ SMS sent to owner for plate ${canonicalPlateNumber} (Log ID: ${smsResult.messageLogId || 'N/A'})`);
         } else {
           console.log(`⚠️  SMS not sent for plate ${canonicalPlateNumber}: ${smsResult.error}`);
@@ -111,7 +98,7 @@ export async function createViolationFromDetection(plateNumber, cameraLocationId
         
         const warningNotificationId = `NOTIF-WARNING-${violationId}-${Date.now()}`;
         const warningTitle = `New Warning - ${canonicalPlateNumber}`;
-        const warningMessage = `Illegal parking detected for vehicle ${canonicalPlateNumber} at ${cameraLocationId}. ${GRACE_PERIOD_MINUTES}-minute grace period started.${messageSent ? ' Viber message sent to owner.' : ' Viber message could not be sent to owner.'}`;
+        const warningMessage = `Illegal parking detected for vehicle ${canonicalPlateNumber} at ${cameraLocationId}. ${GRACE_PERIOD_MINUTES}-minute grace period started.${messageSent ? ' SMS message sent to owner.' : ' SMS message could not be sent to owner.'}`;
         
         db.prepare(`
           INSERT INTO notifications (

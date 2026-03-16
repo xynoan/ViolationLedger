@@ -263,11 +263,11 @@ router.post('/:cameraId', async (req, res) => {
               violationsCreated.push(violation.id);
               console.log(`✅ Violation created: ${violation.id} for plate ${detection.plateNumber}`);
               
-              // Check if Viber message was actually sent (from violation object)
+              // Check if owner SMS was actually sent (from violation object)
               if (violation.messageSent) {
-                console.log(`✅ Viber message sent successfully to owner for plate ${detection.plateNumber}`);
+                console.log(`✅ SMS message sent successfully to owner for plate ${detection.plateNumber}`);
               } else {
-                console.log(`⚠️  Violation created but Viber message was NOT sent for plate ${detection.plateNumber}`);
+                console.log(`⚠️  Violation created but SMS message was NOT sent for plate ${detection.plateNumber}`);
                 console.log(`   Message Status: ${violation.messageSent ? 'sent' : 'not sent'}`);
                 console.log(`   Message Log ID: ${violation.messageLogId || 'N/A'}`);
               }
@@ -279,7 +279,7 @@ router.post('/:cameraId', async (req, res) => {
               if (userId) {
                 const notificationId = `NOTIF-${Date.now()}-${violation.id}`;
                 const notificationTitle = 'Illegal Parking Violation Detected';
-                const notificationMessage = `Vehicle with plate ${detection.plateNumber} detected illegally parked at ${locationId}. ${violation.messageSent ? 'Viber message sent to owner.' : 'Viber message could not be sent to owner.'} Barangay attention may be required.`;
+                const notificationMessage = `Vehicle with plate ${detection.plateNumber} detected illegally parked at ${locationId}. ${violation.messageSent ? 'SMS message sent to owner.' : 'SMS message could not be sent to owner.'} Barangay attention may be required.`;
                 
                 try {
                   statements.createNotification.run(

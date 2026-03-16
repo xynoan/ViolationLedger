@@ -67,7 +67,7 @@ This document provides a clear and precise schematic diagram of the LedgerMonito
 │  │  │  • Cleanup Service       - Database maintenance & cleanup                    │ │   │
 │  │  │  • Capture Service       - Image capture scheduling (every 5 min)           │ │   │
 │  │  │  • Detection Service     - Violation detection & processing                 │ │   │
-│  │  │  • Notification Service  - SMS/Viber message sending                        │ │   │
+│  │  │  • Notification Service  - SMS message sending (iProgSMS)                   │ │   │
 │  │  │  • Audit Service        - Activity logging & tracking                       │ │   │
 │  │  └───────────────────────────────────────────────────────────────────────────────┘ │   │
 │  │                                                                                       │   │
@@ -90,7 +90,7 @@ This document provides a clear and precise schematic diagram of the LedgerMonito
 │  │  • vehicles       - Registered vehicle information                                 │   │
 │  │  • violations     - Parking violation records                                     │   │
 │  │  • detections     - AI detection results                                           │   │
-│  │  • notifications  - SMS/Viber notification logs                                    │   │
+│  │  • notifications  - SMS notification logs                                          │   │
 │  │  • audit_logs     - System activity audit trail                                    │   │
 │  │  • hosts          - Network host configurations                                    │   │
 │  │  • incidents      - System incident records                                       │   │
@@ -125,16 +125,16 @@ This document provides a clear and precise schematic diagram of the LedgerMonito
         │                           │                           │
 ┌───────▼────────┐        ┌─────────▼────────┐        ┌─────────▼────────┐
 │                │        │                  │        │                  │
-│ Google Gemini  │        │ Viber/Infobip   │        │ React Frontend   │
-│   AI Service   │        │   SMS Service   │        │   Dashboard      │
+│ Google Gemini  │        │  iProgSMS SMS   │        │ React Frontend   │
+│   AI Service   │        │   Service       │        │   Dashboard      │
 │   (Cloud)      │        │     (Cloud)     │        │   (Port 8080)    │
 │                │        │                  │        │                  │
-│ • Image        │        │ • SMS/Viber     │        │ • Dashboard      │
-│   Analysis     │        │   Messaging     │        │ • Camera Mgmt    │
-│ • Vehicle      │        │ • Warning       │        │ • Violations     │
-│   Detection    │        │   Delivery      │        │ • Analytics      │
-│ • License      │        │ • Notification  │        │ • User Mgmt      │
-│   Plate OCR    │        │   Logging       │        │ • Settings       │
+│ • Image        │        │ • SMS Messaging │        │ • Dashboard      │
+│   Analysis     │        │ • Warning       │        │ • Camera Mgmt    │
+│ • Vehicle      │        │   Delivery      │        │ • Violations     │
+│   Detection    │        │ • Notification  │        │ • Analytics      │
+│ • License      │        │   Logging       │        │ • User Mgmt      │
+│   Plate OCR    │        │                  │        │ • Settings       │
 │                │        │                  │        │                  │
 └────────────────┘        └─────────┬────────┘        └─────────┬────────┘
                                     │                           │
@@ -148,7 +148,6 @@ This document provides a clear and precise schematic diagram of the LedgerMonito
 │  │  • Receive SMS       │                        │  • View Dashboard   │                    │
 │  │    Warnings          │                        │  • Manage Violations│                    │
 │  │  • Mobile Phone      │                        │  • Issue Tickets    │                    │
-│  │  • Viber Messages    │                        │  • View Analytics   │                    │
 │  └──────────────────────┘                        └──────────────────────┘                    │
 │                                                                                               │
 │  ┌──────────────────────┐                        ┌──────────────────────┐                    │
@@ -312,7 +311,7 @@ This document provides a clear and precise schematic diagram of the LedgerMonito
 | **Express Server** | SQLite DB | SQL | Data persistence |
 | **Express Server** | Python AI Service | HTTP/Subprocess | Image analysis |
 | **Express Server** | Google Gemini | HTTPS/REST API | AI image processing |
-| **Express Server** | Viber/Infobip | HTTPS/REST API | SMS/Viber messaging |
+| **Express Server** | iProgSMS | HTTPS/REST API | SMS messaging |
 | **Express Server** | React Frontend | HTTP/REST API | Web interface |
 | **React Frontend** | Express Server | HTTP/REST API | Data retrieval & updates |
 | **Monitoring Service** | Cameras | HTTP/RTSP | Health checks |
@@ -341,7 +340,7 @@ This document provides a clear and precise schematic diagram of the LedgerMonito
 
 ### External Services
 - **AI Service:** Google Gemini API
-- **Messaging:** Viber/Infobip API
+- **Messaging:** iProgSMS API
 - **Models:** Hugging Face ML Models
 
 ### Infrastructure
