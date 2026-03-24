@@ -127,6 +127,20 @@ Paste (and fix the domain):
 server {
     listen 80;
     server_name yourdomain.com www.yourdomain.com;
+    # Proxy go2rtc WebSocket under the same HTTPS domain.
+    # Frontend uses: wss://yourdomain.com/go2rtc/api/ws?src=cam1
+    location /go2rtc/ {
+        proxy_pass http://127.0.0.1:1984/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 86400;
+    }
+
     location / {
         proxy_pass http://127.0.0.1:3001;
         proxy_http_version 1.1;
@@ -165,7 +179,7 @@ Visit **https://yourdomain.com**. You should see LedgerMonitor and can log in wi
 **Root (for build):**
 
 - `VITE_API_URL=/api` — already set by `npm run build:prod` for same-domain use.
-- `VITE_GO2RTC_WS_URL` — only if you run go2rtc on another host/port; set when building, e.g. `VITE_GO2RTC_WS_URL=wss://yourdomain.com/ws npm run build:prod`.
+- `VITE_GO2RTC_WS_URL` — only if you run go2rtc on another host/path; recommended with proxy: `VITE_GO2RTC_WS_URL=wss://yourdomain.com/go2rtc npm run build:prod`.
 
 **Server (`server/.env`):**
 
@@ -190,7 +204,7 @@ pm2 restart ledger-monitor
 
 If you use go2rtc for RTSP camera streams, run it on the same server (or another) and either:
 
-- Proxy its WebSocket under your domain (e.g. `/ws` → go2rtc), then set `VITE_GO2RTC_WS_URL=wss://yourdomain.com/ws` and rebuild the frontend, or  
+- Proxy its WebSocket under your domain (e.g. `/go2rtc` → go2rtc), then set `VITE_GO2RTC_WS_URL=wss://yourdomain.com/go2rtc` and rebuild the frontend, or  
 - Expose go2rtc on a separate port and set `VITE_GO2RTC_WS_URL=wss://yourdomain.com:1984` (and open that port / firewall) when building.
 
 ## Troubleshooting

@@ -284,7 +284,7 @@ export default function Cameras() {
                   />
                   <p className="text-xs text-muted-foreground">
                     This should match the stream key from your <code>go2rtc.yaml</code>, for example
-                    `cam1` when you connect via <code>/api/ws?src=cam1</code>.
+                    `cam1` when you connect via <code>/go2rtc/api/ws?src=cam1</code>.
                   </p>
                 </div>
                 {/* Camera Configuration Options */}

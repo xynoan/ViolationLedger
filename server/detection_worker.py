@@ -46,6 +46,10 @@ PLATERECOGNIZER_ENDPOINT = os.getenv(
     "PLATERECOGNIZER_ENDPOINT",
     "https://api.platerecognizer.com/v1/plate-reader/",
 )
+PLATERECOGNIZER_TIMEOUT_SEC = float(os.getenv("PLATERECOGNIZER_TIMEOUT_SEC", "20"))
+PLATERECOGNIZER_CONNECT_TIMEOUT_SEC = float(os.getenv("PLATERECOGNIZER_CONNECT_TIMEOUT_SEC", "5"))
+PLATERECOGNIZER_JPEG_QUALITY = int(os.getenv("PLATERECOGNIZER_JPEG_QUALITY", "80"))
+PLATERECOGNIZER_MAX_WIDTH = int(os.getenv("PLATERECOGNIZER_MAX_WIDTH", "1280"))
 USE_PLATERECOGNIZER = (
     os.getenv("USE_PLATERECOGNIZER", "1").strip().lower() not in ("0", "false", "no")
     and bool(PLATERECOGNIZER_TOKEN)
@@ -159,7 +163,18 @@ def main() -> int:
                         # First choice: Plate Recognizer Snapshot Cloud if configured.
                         if USE_PLATERECOGNIZER:
                             try:
-                                ok, encoded = cv2.imencode(".jpg", frame)
+                                upload_frame = frame
+                                if PLATERECOGNIZER_MAX_WIDTH > 0 and w > PLATERECOGNIZER_MAX_WIDTH:
+                                    scale = float(PLATERECOGNIZER_MAX_WIDTH) / float(w)
+                                    new_w = int(w * scale)
+                                    new_h = int(h * scale)
+                                    upload_frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+                                ok, encoded = cv2.imencode(
+                                    ".jpg",
+                                    upload_frame,
+                                    [int(cv2.IMWRITE_JPEG_QUALITY), int(max(10, min(100, PLATERECOGNIZER_JPEG_QUALITY)))],
+                                )
                                 if ok:
                                     img_bytes = encoded.tobytes()
                                     headers = {
@@ -176,7 +191,7 @@ def main() -> int:
                                         headers=headers,
                                         files=files,
                                         data=data,
-                                        timeout=5,
+                                        timeout=(PLATERECOGNIZER_CONNECT_TIMEOUT_SEC, PLATERECOGNIZER_TIMEOUT_SEC),
                                     )
                                     resp.raise_for_status()
                                     payload = resp.json()

@@ -9,8 +9,26 @@ interface UseCameraStreamOptions {
   isOnline: boolean;
 }
 
-const GO2RTC_WS_URL =
-  (import.meta.env as any).VITE_GO2RTC_WS_URL || 'ws://localhost:1984';
+const DEFAULT_GO2RTC_WS_URL = (() => {
+  // Default to same-origin via reverse proxy path to avoid mixed-content/CORS issues.
+  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  return `${proto}://${window.location.host}/go2rtc`;
+})();
+
+const normalizeGo2rtcWsUrl = (rawUrl?: string): string => {
+  const fallback = DEFAULT_GO2RTC_WS_URL;
+  const trimmed = rawUrl?.trim();
+  if (!trimmed) return fallback;
+
+  // Prevent mixed-content WS errors on HTTPS pages (production domains).
+  if (window.location.protocol === 'https:' && trimmed.startsWith('ws://')) {
+    return `wss://${trimmed.slice('ws://'.length)}`;
+  }
+
+  return trimmed;
+};
+
+const GO2RTC_WS_URL = normalizeGo2rtcWsUrl((import.meta.env as any).VITE_GO2RTC_WS_URL);
 
 export function useCameraStream({ deviceId, isOnline }: UseCameraStreamOptions) {
   const [stream, setStream] = useState<MediaStream | null>(null);
@@ -80,11 +98,20 @@ export function useCameraStream({ deviceId, isOnline }: UseCameraStreamOptions) 
         const ws = new WebSocket(wsUrl);
         wsRef.current = ws;
 
-        ws.onerror = () => {
+        ws.onerror = (event) => {
+          // Browser WebSocket errors are intentionally opaque; log URL to debug reachability/config.
+          console.error('go2rtc WebSocket error', { wsUrl, event });
           isConnectingRef.current = false;
         };
 
-        ws.onclose = () => {
+        ws.onclose = (event) => {
+          // Helps distinguish server-not-listening vs policy/reverse-proxy closes.
+          console.warn('go2rtc WebSocket closed', {
+            wsUrl,
+            code: event.code,
+            reason: event.reason,
+            wasClean: event.wasClean,
+          });
           isConnectingRef.current = false;
           // Attempt simple reconnect if camera is still marked online
           if (isOnline && currentSrcRef.current) {
