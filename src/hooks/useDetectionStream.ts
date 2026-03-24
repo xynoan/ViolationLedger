@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 
+const WS_DISABLED = (import.meta.env as any).VITE_DISABLE_WS !== 'false';
+
 export interface Detection {
   bbox: number[];
   class_name: string;
@@ -29,6 +31,13 @@ export function useDetectionStream(
   const reconnectTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
+    if (WS_DISABLED) {
+      setDetections([]);
+      setIsConnected(false);
+      setLastError(null);
+      return;
+    }
+
     if (!enabled || !cameraId?.trim()) {
       setDetections([]);
       setIsConnected(false);

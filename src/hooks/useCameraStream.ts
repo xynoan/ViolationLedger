@@ -29,6 +29,7 @@ const normalizeGo2rtcWsUrl = (rawUrl?: string): string => {
 };
 
 const GO2RTC_WS_URL = normalizeGo2rtcWsUrl((import.meta.env as any).VITE_GO2RTC_WS_URL);
+const WS_DISABLED = (import.meta.env as any).VITE_DISABLE_WS !== 'false';
 
 export function useCameraStream({ deviceId, isOnline }: UseCameraStreamOptions) {
   const [stream, setStream] = useState<MediaStream | null>(null);
@@ -84,7 +85,7 @@ export function useCameraStream({ deviceId, isOnline }: UseCameraStreamOptions) 
 
   const connect = useCallback(
     async (src: string) => {
-      if (!isOnline || !src || isConnectingRef.current) {
+      if (WS_DISABLED || !isOnline || !src || isConnectingRef.current) {
         return;
       }
 
@@ -209,6 +210,11 @@ export function useCameraStream({ deviceId, isOnline }: UseCameraStreamOptions) 
   useEffect(() => {
     const src = deviceId?.trim();
 
+    if (WS_DISABLED) {
+      cleanupConnection();
+      return;
+    }
+
     // If camera is offline or no src configured, tear everything down
     if (!isOnline || !src) {
       cleanupConnection();
@@ -229,6 +235,8 @@ export function useCameraStream({ deviceId, isOnline }: UseCameraStreamOptions) 
   }, [deviceId, isOnline]);
 
   const refresh = useCallback(() => {
+    if (WS_DISABLED) return;
+
     const src = deviceId?.trim();
     if (!src || !isOnline) return;
 
