@@ -1,5 +1,6 @@
 import express from 'express';
 import db from '../database.js';
+import { authenticateToken, requireRole } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -42,7 +43,7 @@ router.get('/:id', (req, res) => {
   }
 });
 
-router.post('/', (req, res) => {
+router.post('/', authenticateToken, requireRole('admin'), (req, res) => {
   try {
     const { id, name, contactNumber, address } = req.body;
     
@@ -82,7 +83,7 @@ router.post('/', (req, res) => {
 });
 
 // PUT update host
-router.put('/:id', (req, res) => {
+router.put('/:id', authenticateToken, requireRole('admin'), (req, res) => {
   try {
     const { name, contactNumber, address } = req.body;
     const host = db.prepare('SELECT * FROM hosts WHERE id = ?').get(req.params.id);
@@ -124,7 +125,7 @@ router.put('/:id', (req, res) => {
   }
 });
 
-router.delete('/:id', (req, res) => {
+router.delete('/:id', authenticateToken, requireRole('admin'), (req, res) => {
   try {
     const host = db.prepare('SELECT * FROM hosts WHERE id = ?').get(req.params.id);
     if (!host) {

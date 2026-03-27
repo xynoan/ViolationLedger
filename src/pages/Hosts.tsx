@@ -31,6 +31,8 @@ export default function Hosts() {
   usePageTracking();
   const { user } = useAuth();
   const isBarangayUser = user?.role === 'barangay_user';
+  const isEncoder = user?.role === 'encoder';
+  const isReadOnly = isBarangayUser || isEncoder;
   const [hosts, setHosts] = useState<Host[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -77,10 +79,10 @@ export default function Hosts() {
   };
 
   const handleOpenDialog = (host?: Host) => {
-    if (isBarangayUser) {
+    if (isReadOnly) {
       toast({
         title: "Permission Denied",
-        description: "Barangay users are not allowed to modify hosts.",
+        description: "Your account is not allowed to modify hosts.",
         variant: "destructive",
       });
       return;
@@ -104,10 +106,10 @@ export default function Hosts() {
   };
 
   const handleSaveHost = async () => {
-    if (isBarangayUser) {
+    if (isReadOnly) {
       toast({
         title: "Permission Denied",
-        description: "Barangay users are not allowed to modify hosts.",
+        description: "Your account is not allowed to modify hosts.",
         variant: "destructive",
       });
       return;
@@ -151,10 +153,10 @@ export default function Hosts() {
   };
 
   const handleDeleteHost = async (id: string) => {
-    if (isBarangayUser) {
+    if (isReadOnly) {
       toast({
         title: "Permission Denied",
-        description: "Barangay users are not allowed to modify hosts.",
+        description: "Your account is not allowed to modify hosts.",
         variant: "destructive",
       });
       return;
@@ -212,7 +214,7 @@ export default function Hosts() {
             />
           </div>
 
-          {!isBarangayUser && (
+          {!isReadOnly && (
             <Dialog open={isDialogOpen} onOpenChange={(open) => open ? handleOpenDialog() : handleCloseDialog()}>
               <DialogTrigger asChild>
                 <Button className="w-full sm:w-auto">
@@ -278,7 +280,7 @@ export default function Hosts() {
                 <div key={host.id} className="glass-card rounded-xl p-4 space-y-3">
                   <div className="flex items-center justify-between">
                     <span className="font-semibold text-lg">{host.name}</span>
-                    {!isBarangayUser && (
+                    {!isReadOnly && (
                       <div className="flex items-center gap-1">
                         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleOpenDialog(host)}>
                           <Edit className="h-4 w-4" />
@@ -334,7 +336,7 @@ export default function Hosts() {
                           {host.address || '-'}
                         </TableCell>
                         <TableCell className="text-right">
-                          {!isBarangayUser && (
+                          {!isReadOnly && (
                             <div className="flex items-center justify-end gap-2">
                               <Button variant="ghost" size="icon" onClick={() => handleOpenDialog(host)}>
                                 <Edit className="h-4 w-4" />
@@ -364,7 +366,7 @@ export default function Hosts() {
             <p className="text-muted-foreground mb-6">
               Add your first host to the registry
             </p>
-            {!isBarangayUser && (
+            {!isReadOnly && (
               <Button onClick={() => handleOpenDialog()}>
                 <Plus className="h-4 w-4 mr-2" />
                 Add Your First Host
