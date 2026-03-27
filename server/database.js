@@ -61,7 +61,7 @@ async function initDatabase() {
   db.run(`
     CREATE TABLE IF NOT EXISTS vehicles (
       id TEXT PRIMARY KEY,
-      plateNumber TEXT NOT NULL UNIQUE,
+      plateNumber TEXT UNIQUE,
       ownerName TEXT NOT NULL,
       contactNumber TEXT NOT NULL,
       registeredAt TEXT NOT NULL,

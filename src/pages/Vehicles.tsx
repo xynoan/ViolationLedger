@@ -154,7 +154,7 @@ export default function Vehicles() {
       });
       return;
     }
-    if (!formData.plateNumber || !formData.ownerName || !formData.purposeOfVisit) {
+    if (!formData.ownerName || !formData.purposeOfVisit) {
       toast({
         title: "Validation Error",
         description: "Please fill in plate number, owner name, and purpose of visit",

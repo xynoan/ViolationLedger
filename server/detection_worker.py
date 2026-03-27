@@ -266,6 +266,10 @@ def main() -> int:
                             except Exception as e:
                                 print(f"[Gemini] Plate extraction error: {e}", file=sys.stderr)
 
+                    else:
+                        print(f"No plates detected", file=sys.stderr)
+                        # plates_out = [{"plateNumber": v["plateNumber"], "bbox": v["bbox"], "class_name": v["class_name"], "confidence": v["confidence"]} for v in vehicles]
+
                     out = {
                         "cameraId": args.camera_id,
                         "vehicles": vehicles,

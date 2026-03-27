@@ -1,6 +1,6 @@
 import express from 'express';
 import db from '../database.js';
-import { sendViolationSms } from '../utils/smsService.js';
+import { sendViolationSms, NoPlateNumberSms } from '../utils/smsService.js';
 
 const router = express.Router();
 
@@ -17,19 +17,11 @@ function normalizePlateForMatch(plateNumber) {
 
 export async function createViolationFromDetection(plateNumber, cameraLocationId, detectionId = null) {
   try {
-    if (!plateNumber || plateNumber.toUpperCase() === 'NONE' || plateNumber.toUpperCase() === 'BLUR') {
-      return null;
-    }
-
     // Get vehicle info to check if registered
     const normalizedPlate = normalizePlateForMatch(plateNumber);
     const vehicle = db
       .prepare(`SELECT * FROM vehicles WHERE REPLACE(UPPER(plateNumber), ' ', '') = ?`)
       .get(normalizedPlate);
-    if (!vehicle) {
-      console.log(`ℹ️  Vehicle ${plateNumber} not registered - skipping automatic violation creation`);
-      return null;
-    }
 
     // Use the stored plate number (may include spaces) as canonical everywhere downstream.
     const canonicalPlateNumber = vehicle.plateNumber;
@@ -105,7 +97,22 @@ export async function createViolationFromDetection(plateNumber, cameraLocationId
       } catch (smsError) {
         console.error(`❌ Error sending SMS for plate ${canonicalPlateNumber}:`, smsError);
       }
-      
+    
+      // Separate SMS Message if no Plate Number detected
+      if (!vehicle || vehicle.plateNumber == null) {
+        const noPlateViolationID = `VIOL-NOPLATE-${Date.now()}`;
+        try {
+          const smsResult = await NoPlateNumberSms(cameraLocationId, noPlateViolationID);
+          if (smsResult.success) {
+            messageSent = true;
+            messageLogId = smsResult.messageLogId || null;
+          } else {
+            console.log(`SMS not sent: ${smsResult.error}`);
+          }
+        } catch (smsError) {
+          console.error('Error sending SMS:', smsError);
+        }
+      }      
       // Create notification for new warning
       try {
         const camera = db.prepare('SELECT * FROM cameras WHERE locationId = ?').get(cameraLocationId);

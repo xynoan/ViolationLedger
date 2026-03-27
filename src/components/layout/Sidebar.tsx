@@ -35,7 +35,7 @@ const navItems = [
   { path: '/analytics', icon: BarChart3, label: 'Analytics', adminOnly: false },
   { path: '/users', icon: Users, label: 'User Management', adminOnly: true },
   { path: '/audit-logs', icon: ClipboardList, label: 'Audit Logs', adminOnly: true },
-  { path: '/settings', icon: Settings, label: 'Settings', adminOnly: false },
+  { path: '/health', icon: Settings, label: 'System Health & Configuration', adminOnly: false },
 ];
 
 function NavContent({ collapsed, onNavigate }: { collapsed?: boolean; onNavigate?: () => void }) {
@@ -51,7 +51,7 @@ function NavContent({ collapsed, onNavigate }: { collapsed?: boolean; onNavigate
       return item.path === '/vehicles' || item.path === '/hosts';
     }
     // Barangay users should not see Settings page
-    if (isBarangayUser && item.path === '/settings') {
+    if (isBarangayUser && item.path === '/health') {
       return false;
     }
     return !item.adminOnly || isAdmin;

@@ -24,15 +24,15 @@ const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
 /** cameraId -> ChildProcess */
 const workers = new Map();
 
+/** cameraId -> boolean, first frame received */
+const firstFrameReceived = new Map();
+
 /** cameraId -> Set<WebSocket> */
 const subscribers = new Map();
 
 /** HTTP server for WebSocket upgrade */
 let wss = null;
 
-// Prepared statement for persisting detections so Dashboard "Capture Results"
-// can reflect live detections produced by the RTSP worker, even when plates
-// are not readable.
 const insertDetectionStmt = db.prepare(`
   INSERT INTO detections (id, cameraId, plateNumber, timestamp, confidence, imageUrl, bbox, class_name, imageBase64)
   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -47,8 +47,6 @@ async function handlePlateDetections(cameraId, msg) {
   const plates = Array.isArray(msg?.plates) ? msg.plates : [];
   if (!plates.length) return;
 
-  // Plate Recognizer already returns uppercase plates without spaces.
-  // We still normalize before lookup to stay consistent with Vehicles registry.
   const uniquePlates = new Set(
     plates
       .map((p) => (p && typeof p.plateNumber === 'string' ? normalizePlateForMatch(p.plateNumber) : ''))
@@ -57,53 +55,32 @@ async function handlePlateDetections(cameraId, msg) {
 
   for (const normalized of uniquePlates) {
     try {
-      // Look up camera to get locationId for violation creation
-      const camera = db
-        .prepare('SELECT id, locationId FROM cameras WHERE id = ?')
-        .get(cameraId);
+      const camera = db.prepare('SELECT id, locationId FROM cameras WHERE id = ?').get(cameraId);
       const locationId = camera?.locationId;
       if (!locationId) {
-        console.warn(
-          `[Detection] Skipping violation for plate ${normalized} on camera ${cameraId} - no locationId`
-        );
+        console.warn(`[Detection] Skipping violation for plate ${normalized} on camera ${cameraId} - no locationId`);
         continue;
       }
-
-      // createViolationFromDetection will:
-      // - ensure vehicle is registered
-      // - create or update a 'warning' violation
-      // - send SMS to the vehicle owner
       await createViolationFromDetection(normalized, locationId, null);
     } catch (e) {
-      console.error(
-        '[Detection] Failed to create violation from RTSP plate detection',
-        { cameraId, plate: normalized, error: e?.message || e }
-      );
+      console.error('[Detection] Failed to create violation from RTSP plate detection', { cameraId, plate: normalized, error: e?.message || e });
     }
   }
 }
 
-/**
- * Persist vehicle detections from the RTSP worker into the detections table so
- * the dashboard capture list updates whenever a vehicle is detected, even if
- * the plate is not visible/readable.
- */
 function saveVehicleDetectionsFromWorker(cameraId, msg) {
   try {
     const vehicles = Array.isArray(msg?.vehicles) ? msg.vehicles : [];
     if (!vehicles.length) return;
 
-    const timestamp = typeof msg?.timestamp === 'string'
-      ? msg.timestamp
-      : new Date().toISOString();
+    const timestamp = typeof msg?.timestamp === 'string' ? msg.timestamp : new Date().toISOString();
     const timestampId = timestamp.replace(/[-:]/g, '').split('.')[0];
     const imageUrl = typeof msg?.imageUrl === 'string' ? msg.imageUrl : null;
 
     vehicles.forEach((v, index) => {
       if (!v || typeof v.class_name !== 'string') return;
-
       const detectionId = `DET-${cameraId}-${timestampId}-${index}`;
-      const plateNumber = 'NONE'; // We don't have a stable plate association here
+      const plateNumber = 'NONE';
       const confidence = typeof v.confidence === 'number' ? v.confidence : 0.0;
       const bbox = v.bbox ? JSON.stringify(v.bbox) : null;
       const className = v.class_name || 'vehicle';
@@ -117,7 +94,7 @@ function saveVehicleDetectionsFromWorker(cameraId, msg) {
         imageUrl,
         bbox,
         className,
-        null // imageBase64
+        null
       );
     });
   } catch (e) {
@@ -125,10 +102,10 @@ function saveVehicleDetectionsFromWorker(cameraId, msg) {
   }
 }
 
-function getOnlineCamerasWithDeviceId() {
+function getCamerasWithDeviceId() {
   try {
-    const rows = db.prepare('SELECT id, deviceId FROM cameras WHERE status = ? AND deviceId IS NOT NULL AND deviceId != ?').all('online', '');
-    return rows.filter((r) => r.deviceId && String(r.deviceId).trim());
+    const rows = db.prepare('SELECT id, deviceId FROM cameras WHERE deviceId IS NOT NULL AND deviceId != ?').all('');
+    return rows.filter(r => r.deviceId && String(r.deviceId).trim());
   } catch (e) {
     console.error('[Detection] DB error:', e);
     return [];
@@ -158,22 +135,33 @@ function startWorker(cameraId, deviceId) {
   });
 
   let buffer = '';
+  firstFrameReceived.set(cameraId, false);
+
   proc.stdout.on('data', (data) => {
     buffer += data.toString();
     const lines = buffer.split('\n');
     buffer = lines.pop() || '';
+
     for (const line of lines) {
       if (!line.trim()) continue;
       try {
         const msg = JSON.parse(line);
-        // Fire-and-forget side effects; do not block broadcast.
-        handlePlateDetections(cameraId, msg).catch((e) => {
-          console.error('[Detection][SMS] handlePlateDetections error:', e);
-        });
+
+        // Only mark camera online after first valid detection
+        if (!firstFrameReceived.get(cameraId) && msg?.vehicles?.length > 0) {
+          firstFrameReceived.set(cameraId, true);
+          const now = new Date().toISOString();
+          db.prepare('UPDATE cameras SET status = ?, lastCapture = ? WHERE id = ?')
+            .run('online', now, cameraId);
+          console.log(`[Detection] Camera ${cameraId} marked ONLINE`);
+        }
+
+        handlePlateDetections(cameraId, msg).catch(console.error);
         saveVehicleDetectionsFromWorker(cameraId, msg);
         broadcast(cameraId, msg);
+
       } catch (e) {
-        console.warn('[Detection] Parse error:', e.message, 'line:', line.slice(0, 80));
+        console.warn('[Detection] Parse error:', e.message);
       }
     }
   });
@@ -185,14 +173,29 @@ function startWorker(cameraId, deviceId) {
 
   proc.on('close', (code, signal) => {
     workers.delete(cameraId);
-    if (code !== 0 && code !== null) {
-      console.warn(`[Detection] Worker ${cameraId} exited: code=${code} signal=${signal}`);
+    firstFrameReceived.delete(cameraId);
+    try {
+      db.prepare('UPDATE cameras SET status = ? WHERE id = ?').run('offline', cameraId);
+      console.log(`[Detection] Camera ${cameraId} set to offline`);
+    } catch (e) {
+      console.error(`[Detection] Failed to mark camera ${cameraId} offline`, e);
+    }
+
+    if (getDetectionEnabled()) {
+      console.log(`[Detection] Will retry worker for ${cameraId} in 5s`);
+      setTimeout(() => startWorker(cameraId, deviceId), 5000);
     }
   });
 
   proc.on('error', (err) => {
     console.error(`[Detection] Worker ${cameraId} error:`, err);
     workers.delete(cameraId);
+    firstFrameReceived.delete(cameraId);
+
+    if (getDetectionEnabled()) {
+      console.log(`[Detection] Will retry worker for ${cameraId} in 5s due to error`);
+      setTimeout(() => startWorker(cameraId, deviceId), 5000);
+    }
   });
 
   workers.set(cameraId, proc);
@@ -203,31 +206,26 @@ function stopWorker(cameraId) {
   if (proc) {
     proc.kill('SIGTERM');
     workers.delete(cameraId);
+    firstFrameReceived.delete(cameraId);
     console.log(`[Detection] Stopped worker for ${cameraId}`);
   }
 }
 
 function syncWorkers() {
   if (!getDetectionEnabled()) {
-    for (const [cameraId] of workers) {
-      stopWorker(cameraId);
-    }
+    for (const [cameraId] of workers) stopWorker(cameraId);
     return;
   }
 
-  const cameras = getOnlineCamerasWithDeviceId();
+  const cameras = getCamerasWithDeviceId();
   const wanted = new Set(cameras.map((c) => c.id));
 
   for (const [cameraId] of workers) {
-    if (!wanted.has(cameraId)) {
-      stopWorker(cameraId);
-    }
+    if (!wanted.has(cameraId)) stopWorker(cameraId);
   }
 
   for (const cam of cameras) {
-    if (!workers.has(cam.id)) {
-      startWorker(cam.id, cam.deviceId);
-    }
+    if (!workers.has(cam.id)) startWorker(cam.id, cam.deviceId);
   }
 }
 
@@ -237,16 +235,12 @@ function broadcast(cameraId, msg) {
 
   const payload = JSON.stringify({ type: 'detection', cameraId, ...msg });
   for (const ws of subs) {
-    if (ws.readyState === 1) {
-      ws.send(payload);
-    }
+    if (ws.readyState === 1) ws.send(payload);
   }
 }
 
 function subscribe(ws, cameraId) {
-  if (!subscribers.has(cameraId)) {
-    subscribers.set(cameraId, new Set());
-  }
+  if (!subscribers.has(cameraId)) subscribers.set(cameraId, new Set());
   subscribers.get(cameraId).add(ws);
 }
 
@@ -268,50 +262,36 @@ function unsubscribeAll(ws) {
 export function createDetectionService(httpServer) {
   if (wss) return;
 
-  wss = new WebSocketServer({
-    server: httpServer,
-    path: '/api/detect/ws',
-  });
+  wss = new WebSocketServer({ server: httpServer, path: '/api/detect/ws' });
 
   wss.on('connection', (ws, req) => {
     const url = new URL(req.url || '', `http://${req.headers.host}`);
     const cameraIds = url.searchParams.get('cameraIds')?.split(',').map((s) => s.trim()).filter(Boolean) || [];
 
-    for (const id of cameraIds) {
-      subscribe(ws, id);
-    }
+    for (const id of cameraIds) subscribe(ws, id);
 
     ws.on('message', (data) => {
       try {
         const msg = JSON.parse(data.toString());
         if (msg.type === 'subscribe' && Array.isArray(msg.cameraIds)) {
-          for (const id of msg.cameraIds) {
-            subscribe(ws, id);
-          }
+          for (const id of msg.cameraIds) subscribe(ws, id);
         } else if (msg.type === 'unsubscribe' && Array.isArray(msg.cameraIds)) {
-          for (const id of msg.cameraIds) {
-            unsubscribe(ws, id);
-          }
+          for (const id of msg.cameraIds) unsubscribe(ws, id);
         }
       } catch (_) {}
     });
 
-    ws.on('close', () => {
-      unsubscribeAll(ws);
-    });
+    ws.on('close', () => unsubscribeAll(ws));
   });
 
   syncWorkers();
   const syncInterval = setInterval(syncWorkers, SYNC_INTERVAL_MS);
-
   console.log('[Detection] Service started. WebSocket at /api/detect/ws');
 
   return {
     stop() {
       clearInterval(syncInterval);
-      for (const [cameraId] of workers) {
-        stopWorker(cameraId);
-      }
+      for (const [cameraId] of workers) stopWorker(cameraId);
       if (wss) {
         wss.close();
         wss = null;
@@ -320,7 +300,6 @@ export function createDetectionService(httpServer) {
   };
 }
 
-/** Called when detection enabled state changes to immediately sync workers. */
 export function syncDetectionWorkers() {
   syncWorkers();
 }

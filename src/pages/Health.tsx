@@ -1,9 +1,7 @@
 import { useState, useEffect } from 'react';
 import { 
-  Settings as SettingsIcon, 
   Database, 
   Brain, 
-  MessageSquare, 
   Activity,
   CheckCircle2, 
   AlertCircle, 
@@ -80,16 +78,15 @@ function formatUptime(seconds: number): string {
   return `${minutes}m`;
 }
 
-export default function Settings() {
+export default function Health() {
   usePageTracking();
   const { user } = useAuth();
   const [healthStatus, setHealthStatus] = useState<HealthStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-
-  if (user?.role === 'barangay_user') {
-    return <Navigate to="/" replace />;
-  }
+  const headerTitle = 'System Health & Configuration';
+  const headerSubtitle = 'Check the health of the system and configuration';
+  const isBarangayUser = user?.role === 'barangay_user';
 
   const fetchHealthStatus = async () => {
     try {
@@ -110,32 +107,44 @@ export default function Settings() {
   };
 
   useEffect(() => {
+    if (isBarangayUser) {
+      setLoading(false);
+      return;
+    }
+
     fetchHealthStatus();
     // Auto-refresh every 30 seconds
     const interval = setInterval(fetchHealthStatus, 30000);
     return () => clearInterval(interval);
-  }, []);
+  }, [isBarangayUser]);
+
+  if (isBarangayUser) {
+    return <Navigate to="/" replace />;
+  }
 
   const handleRefresh = () => {
     setRefreshing(true);
     fetchHealthStatus();
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen">
-        <Header title="Settings" subtitle="System Health & Configuration" />
+  return (
+    <div className="min-h-screen">
+      <Header 
+        title={headerTitle}
+        subtitle={headerSubtitle}
+        action={
+          <Button onClick={handleRefresh} disabled={refreshing} variant="outline" size="sm">
+            <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
+        }
+      />
+
+      {loading ? (
         <div className="p-6 flex items-center justify-center">
           <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>
-      </div>
-    );
-  }
-
-  if (!healthStatus) {
-    return (
-      <div className="min-h-screen">
-        <Header title="Settings" subtitle="System Health & Configuration" />
+      ) : !healthStatus ? (
         <div className="p-6">
           <Card>
             <CardContent className="pt-6">
@@ -150,23 +159,7 @@ export default function Settings() {
             </CardContent>
           </Card>
         </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="min-h-screen">
-      <Header 
-        title="Settings" 
-        subtitle="System Health & Configuration"
-        action={
-          <Button onClick={handleRefresh} disabled={refreshing} variant="outline" size="sm">
-            <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
-            Refresh
-          </Button>
-        }
-      />
-
+      ) : (
       <div className="p-4 sm:p-6 space-y-6">
         {/* Overall Status */}
         <Card>
@@ -401,6 +394,7 @@ export default function Settings() {
           </CardContent>
         </Card>
       </div>
+      )}
     </div>
   );
 }

@@ -15,7 +15,7 @@ import Warnings from "./pages/Warnings";
 import Tickets from "./pages/Tickets";
 import ViolationsHistory from "./pages/ViolationsHistory";
 import UploadImage from "./pages/UploadImage";
-import Settings from "./pages/Settings";
+import Health from "./pages/Health";
 import Analytics from "./pages/Analytics";
 import UserManagement from "./pages/UserManagement";
 import AuditLogs from "./pages/AuditLogs";
@@ -60,7 +60,7 @@ const App = () => (
                       <Route path="/tickets" element={<Tickets />} />
                       <Route path="/violations" element={<ViolationsHistory />} />
                       <Route path="/upload" element={<UploadImage />} />
-                      <Route path="/settings" element={<Settings />} />
+                      <Route path="/health" element={<Health />} />
                       <Route path="/analytics" element={<Analytics />} />
                       <Route path="/users" element={<UserManagement />} />
                       <Route path="/audit-logs" element={<AuditLogs />} />
