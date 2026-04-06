@@ -34,7 +34,7 @@ const navItems = [
   { path: '/violations', icon: History, label: 'Violations History', adminOnly: false },
   { path: '/analytics', icon: BarChart3, label: 'Analytics', adminOnly: false },
   { path: '/users', icon: Users, label: 'User Management', adminOnly: true },
-  { path: '/audit-logs', icon: ClipboardList, label: 'Audit Logs', adminOnly: true },
+  { path: '/audit-logs', icon: ClipboardList, label: 'Activity Logs', adminOnly: true },
   { path: '/settings', icon: Settings, label: 'Settings', adminOnly: false },
 ];
 
