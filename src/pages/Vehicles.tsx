@@ -22,6 +22,15 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from '@/hooks/use-toast';
@@ -50,6 +59,8 @@ export default function Vehicles() {
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
   const [editingVehicle, setEditingVehicle] = useState<Vehicle | null>(null);
   const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
+  const [vehicleToDelete, setVehicleToDelete] = useState<Vehicle | null>(null);
+  const [isDeletingVehicle, setIsDeletingVehicle] = useState(false);
   const [formData, setFormData] = useState({
     plateNumber: '',
     ownerName: '',
@@ -289,8 +300,7 @@ export default function Vehicles() {
     return host?.name || null;
   };
 
-  const handleDeleteVehicle = async (id: string) => {
-    // Encoders and Barangay users cannot delete vehicles
+  const requestDeleteVehicle = (vehicle: Vehicle) => {
     if (isEncoder || isBarangayUser) {
       toast({
         title: "Permission Denied",
@@ -299,13 +309,24 @@ export default function Vehicles() {
       });
       return;
     }
-    
+    setVehicleToDelete(vehicle);
+  };
+
+  const confirmDeleteVehicle = async () => {
+    if (!vehicleToDelete) return;
+    if (isEncoder || isBarangayUser) {
+      setVehicleToDelete(null);
+      return;
+    }
+    const id = vehicleToDelete.id;
+    setIsDeletingVehicle(true);
     try {
       await vehiclesAPI.delete(id);
       toast({
         title: "Vehicle Deleted",
         description: "Vehicle removed from registry",
       });
+      setVehicleToDelete(null);
       loadVehicles();
     } catch (error: any) {
       toast({
@@ -313,8 +334,13 @@ export default function Vehicles() {
         description: error.message || "Failed to delete vehicle",
         variant: "destructive",
       });
+    } finally {
+      setIsDeletingVehicle(false);
     }
   };
+
+  const deleteButtonClassName =
+    'h-8 w-8 border-red-600 text-red-600 hover:bg-red-600/15 hover:text-red-700 dark:hover:bg-red-600/20';
 
   const handleViewVehicle = (vehicle: Vehicle) => {
     setSelectedVehicle(vehicle);
@@ -538,7 +564,7 @@ export default function Vehicles() {
                       className="flex-1 bg-green-600 text-white hover:bg-green-700"
                       onClick={handleSaveVehicle}
                     >
-                      {editingVehicle ? 'Save Changes' : 'Register '}
+                      {editingVehicle ? 'Save Changes' : 'Register Vehicle'}
                     </Button>
                   </DialogFooter>
                 </div>
@@ -560,11 +586,13 @@ export default function Vehicles() {
                         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleOpenDialog(vehicle)}>
                           <Edit className="h-4 w-4" />
                         </Button>
-                        <Button 
-                          variant="ghost" 
+                        <Button
+                          type="button"
+                          variant="outline"
                           size="icon"
-                          onClick={() => handleDeleteVehicle(vehicle.id)}
-                          className="text-destructive hover:text-destructive h-8 w-8"
+                          onClick={() => requestDeleteVehicle(vehicle)}
+                          className={deleteButtonClassName}
+                          aria-label="Delete vehicle"
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
@@ -625,11 +653,13 @@ export default function Vehicles() {
                                 <Button variant="ghost" size="icon" onClick={() => handleOpenDialog(vehicle)}>
                                   <Edit className="h-4 w-4" />
                                 </Button>
-                                <Button 
-                                  variant="ghost" 
+                                <Button
+                                  type="button"
+                                  variant="outline"
                                   size="icon"
-                                  onClick={() => handleDeleteVehicle(vehicle.id)}
-                                  className="text-destructive hover:text-destructive"
+                                  onClick={() => requestDeleteVehicle(vehicle)}
+                                  className={deleteButtonClassName}
+                                  aria-label="Delete vehicle"
                                 >
                                   <Trash2 className="h-4 w-4" />
                                 </Button>
@@ -695,6 +725,43 @@ export default function Vehicles() {
                 )}
               </DialogContent>
             </Dialog>
+
+            <AlertDialog
+              open={!!vehicleToDelete}
+              onOpenChange={(open) => {
+                if (!open) setVehicleToDelete(null);
+              }}
+            >
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Delete vehicle</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Are you sure you want to delete this record?
+                    {vehicleToDelete && (
+                      <>
+                        {' '}
+                        This will permanently remove{' '}
+                        <span className="font-mono font-medium text-foreground">
+                          {vehicleToDelete.plateNumber}
+                        </span>{' '}
+                        from the registry.
+                      </>
+                    )}
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel disabled={isDeletingVehicle}>Cancel</AlertDialogCancel>
+                  <Button
+                    type="button"
+                    className="bg-red-600 text-white hover:bg-red-700 focus-visible:ring-red-600"
+                    disabled={isDeletingVehicle}
+                    onClick={() => void confirmDeleteVehicle()}
+                  >
+                    {isDeletingVehicle ? 'Deleting…' : 'Delete'}
+                  </Button>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </>
         ) : (
           <div className="glass-card rounded-xl p-8 sm:p-12 text-center">

@@ -21,6 +21,15 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/hooks/use-toast';
@@ -36,6 +45,8 @@ export default function Hosts() {
   const [searchTerm, setSearchTerm] = useState('');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingHost, setEditingHost] = useState<Host | null>(null);
+  const [hostToDelete, setHostToDelete] = useState<Host | null>(null);
+  const [isDeletingHost, setIsDeletingHost] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
     contactNumber: '',
@@ -150,7 +161,7 @@ export default function Hosts() {
     }
   };
 
-  const handleDeleteHost = async (id: string) => {
+  const requestDeleteHost = (host: Host) => {
     if (isBarangayUser) {
       toast({
         title: "Permission Denied",
@@ -159,12 +170,24 @@ export default function Hosts() {
       });
       return;
     }
+    setHostToDelete(host);
+  };
+
+  const confirmDeleteHost = async () => {
+    if (!hostToDelete) return;
+    if (isBarangayUser) {
+      setHostToDelete(null);
+      return;
+    }
+    const id = hostToDelete.id;
+    setIsDeletingHost(true);
     try {
       await hostsAPI.delete(id);
       toast({
         title: "Host Deleted",
         description: "Host removed from registry",
       });
+      setHostToDelete(null);
       loadHosts();
     } catch (error: any) {
       toast({
@@ -172,8 +195,13 @@ export default function Hosts() {
         description: error.message || "Failed to delete host",
         variant: "destructive",
       });
+    } finally {
+      setIsDeletingHost(false);
     }
   };
+
+  const deleteButtonClassName =
+    'h-8 w-8 border-red-600 text-red-600 hover:bg-red-600/15 hover:text-red-700 dark:hover:bg-red-600/20';
 
   if (isLoading) {
     return (
@@ -283,11 +311,13 @@ export default function Hosts() {
                         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleOpenDialog(host)}>
                           <Edit className="h-4 w-4" />
                         </Button>
-                        <Button 
-                          variant="ghost" 
+                        <Button
+                          type="button"
+                          variant="outline"
                           size="icon"
-                          onClick={() => handleDeleteHost(host.id)}
-                          className="text-destructive hover:text-destructive h-8 w-8"
+                          onClick={() => requestDeleteHost(host)}
+                          className={deleteButtonClassName}
+                          aria-label="Delete host"
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
@@ -339,11 +369,13 @@ export default function Hosts() {
                               <Button variant="ghost" size="icon" onClick={() => handleOpenDialog(host)}>
                                 <Edit className="h-4 w-4" />
                               </Button>
-                              <Button 
-                                variant="ghost" 
+                              <Button
+                                type="button"
+                                variant="outline"
                                 size="icon"
-                                onClick={() => handleDeleteHost(host.id)}
-                                className="text-destructive hover:text-destructive"
+                                onClick={() => requestDeleteHost(host)}
+                                className={deleteButtonClassName}
+                                aria-label="Delete host"
                               >
                                 <Trash2 className="h-4 w-4" />
                               </Button>
@@ -356,6 +388,41 @@ export default function Hosts() {
                 </Table>
               </div>
             </div>
+
+            <AlertDialog
+              open={!!hostToDelete}
+              onOpenChange={(open) => {
+                if (!open) setHostToDelete(null);
+              }}
+            >
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Delete host</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Are you sure you want to delete this record?
+                    {hostToDelete && (
+                      <>
+                        {' '}
+                        This will permanently remove{' '}
+                        <span className="font-semibold text-foreground">{hostToDelete.name}</span>{' '}
+                        from the registry.
+                      </>
+                    )}
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel disabled={isDeletingHost}>Cancel</AlertDialogCancel>
+                  <Button
+                    type="button"
+                    className="bg-red-600 text-white hover:bg-red-700 focus-visible:ring-red-600"
+                    disabled={isDeletingHost}
+                    onClick={() => void confirmDeleteHost()}
+                  >
+                    {isDeletingHost ? 'Deleting…' : 'Delete'}
+                  </Button>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </>
         ) : (
           <div className="glass-card rounded-xl p-8 sm:p-12 text-center">
