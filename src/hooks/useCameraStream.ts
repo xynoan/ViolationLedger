@@ -20,8 +20,18 @@ const normalizeGo2rtcWsUrl = (rawUrl?: string): string => {
   const trimmed = rawUrl?.trim();
   if (!trimmed) return fallback;
 
-  // Prevent mixed-content WS errors on HTTPS pages (production domains).
+  // On HTTPS pages, a configured ws:// URL to another host/port causes mixed-content
+  // or TLS mismatch issues. Prefer same-origin reverse proxy path instead.
   if (window.location.protocol === 'https:' && trimmed.startsWith('ws://')) {
+    try {
+      const configured = new URL(trimmed);
+      if (configured.host !== window.location.host) {
+        return fallback;
+      }
+    } catch {
+      return fallback;
+    }
+
     return `wss://${trimmed.slice('ws://'.length)}`;
   }
 
