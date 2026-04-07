@@ -29,9 +29,7 @@ const normalizeGo2rtcWsUrl = (rawUrl?: string): string => {
 };
 
 const GO2RTC_WS_URL = normalizeGo2rtcWsUrl((import.meta.env as any).VITE_GO2RTC_WS_URL);
-/** Opt-out: set `VITE_DISABLE_WS=true` to turn off WebSocket streams. Default is enabled. */
-const WS_DISABLED =
-  String((import.meta.env as any).VITE_DISABLE_WS ?? '').toLowerCase() === 'true';
+const WS_DISABLED = (import.meta.env as any).VITE_DISABLE_WS !== 'false';
 
 export function useCameraStream({ deviceId, isOnline }: UseCameraStreamOptions) {
   const [stream, setStream] = useState<MediaStream | null>(null);

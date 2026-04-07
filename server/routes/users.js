@@ -3,7 +3,7 @@ import db from '../database.js';
 import crypto from 'crypto';
 import { authenticateToken, requireRole } from '../middleware/auth.js';
 import { auditLog } from '../middleware/audit.js';
-import { sendActivationEmailStub } from '../utils/emailStub.js';
+import { sendAccountActivationEmail } from '../utils/activationEmail.js';
 
 const router = express.Router();
 
@@ -12,7 +12,7 @@ router.use(auditLog);
 router.get('/', requireRole('admin'), (req, res) => {
   try {
     const users = db.prepare(`
-      SELECT id, email, name, role, contactNumber, status, createdAt 
+      SELECT id, email, name, role, contactNumber, status, createdAt, isActivated
       FROM users 
       ORDER BY createdAt DESC
     `).all();
@@ -27,7 +27,7 @@ router.get('/', requireRole('admin'), (req, res) => {
 router.get('/:id', requireRole('admin'), (req, res) => {
   try {
     const user = db.prepare(`
-      SELECT id, email, name, role, contactNumber, status, createdAt 
+      SELECT id, email, name, role, contactNumber, status, createdAt, isActivated
       FROM users 
       WHERE id = ?
     `).get(req.params.id);
@@ -68,14 +68,19 @@ router.post('/', requireRole('admin'), async (req, res) => {
     // Hash password
     const passwordHash = crypto.createHash('sha256').update(password).digest('hex');
     
-    // Generate user ID
+    // Generate user ID and activation token (24h)
     const userId = `USER-${Date.now()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
     const now = new Date().toISOString();
-    
-    // Insert user into database
+    const activationToken = crypto.randomBytes(32).toString('hex');
+    const activationExpires = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+
+    // Insert user — not activated until they use the email link
     db.prepare(`
-      INSERT INTO users (id, email, password, name, role, viberNumber, createdAt, status, contactNumber, mustResetPassword)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO users (
+        id, email, password, name, role, viberNumber, createdAt, status, contactNumber, mustResetPassword,
+        isActivated, activationToken, activationExpires
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       userId,
       email.toLowerCase().trim(),
@@ -86,7 +91,10 @@ router.post('/', requireRole('admin'), async (req, res) => {
       now,
       'active',
       contactNumber ? String(contactNumber).trim() : null,
-      1
+      1,
+      0,
+      activationToken,
+      activationExpires
     );
     
     // Create default notification preferences for new user
@@ -97,19 +105,25 @@ router.post('/', requireRole('admin'), async (req, res) => {
     
     // Return user without password
     const newUser = db.prepare(`
-      SELECT id, email, name, role, contactNumber, status, createdAt 
+      SELECT id, email, name, role, contactNumber, status, createdAt, isActivated
       FROM users 
       WHERE id = ?
     `).get(userId);
-    
-    // Send activation email (real SMTP if configured, else stub logs to console)
+
     try {
-      await sendActivationEmailStub(newUser, password);
+      await sendAccountActivationEmail({
+        email: newUser.email,
+        name: newUser.name,
+        activationToken,
+      });
     } catch (emailError) {
       console.error('Error sending activation email:', emailError);
     }
-    
-    res.status(201).json(newUser);
+
+    res.status(201).json({
+      message: 'Account created. Please check your email to activate your account.',
+      user: newUser,
+    });
   } catch (error) {
     console.error('Error creating user:', error);
     res.status(500).json({ error: error.message });

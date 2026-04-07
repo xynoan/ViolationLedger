@@ -17,15 +17,33 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from '@/hooks/use-toast';
 import { vehiclesAPI, hostsAPI } from '@/lib/api';
 import { useAuth } from '@/hooks/useAuth';
+
+const RENTED_OPTIONS = ['Court', 'Community Center', 'Barangay Hall'] as const;
+const RENTED_NONE = '__rented_none__';
+const PURPOSE_OPTIONS = ['Visit resident', 'Barangay hall', 'Reservation'] as const;
+
+const digitsOnly = (value: string) => value.replace(/\D/g, '');
+const lettersAndSpacesOnly = (value: string) => value.replace(/[^a-zA-Z\s]/g, '');
+const ownerNameValid = (value: string) => /^[a-zA-Z\s]+$/.test(value.trim());
 
 export default function Vehicles() {
   usePageTracking();
@@ -41,6 +59,8 @@ export default function Vehicles() {
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
   const [editingVehicle, setEditingVehicle] = useState<Vehicle | null>(null);
   const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
+  const [vehicleToDelete, setVehicleToDelete] = useState<Vehicle | null>(null);
+  const [isDeletingVehicle, setIsDeletingVehicle] = useState(false);
   const [formData, setFormData] = useState({
     plateNumber: '',
     ownerName: '',
@@ -127,9 +147,9 @@ export default function Vehicles() {
     if (vehicle) {
       setEditingVehicle(vehicle);
       setFormData({
-        plateNumber: vehicle.plateNumber,
+        plateNumber: vehicle.plateNumber.toUpperCase(),
         ownerName: vehicle.ownerName,
-        contactNumber: vehicle.contactNumber,
+        contactNumber: digitsOnly(vehicle.contactNumber),
         hostId: vehicle.hostId || '',
         rented: vehicle.rented || '',
         purposeOfVisit: vehicle.purposeOfVisit || '',
@@ -154,7 +174,12 @@ export default function Vehicles() {
       });
       return;
     }
-    if (!formData.ownerName || !formData.purposeOfVisit) {
+    const plateTrimmed = formData.plateNumber.trim();
+    const ownerTrimmed = formData.ownerName.trim();
+    const contactClean = digitsOnly(formData.contactNumber);
+    const contactFromHost = !!formData.hostId && !formData.rented;
+
+    if (!plateTrimmed || !ownerTrimmed || !formData.purposeOfVisit) {
       toast({
         title: "Validation Error",
         description: "Please fill in plate number, owner name, and purpose of visit",
@@ -163,9 +188,28 @@ export default function Vehicles() {
       return;
     }
 
-    // If host is selected and not rented, contact number will be fetched from host
-    // If rented, contact number is required
-    if (formData.rented && !formData.contactNumber) {
+    if (!ownerNameValid(formData.ownerName)) {
+      toast({
+        title: "Validation Error",
+        description: "Owner name may only contain letters and spaces",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const purposeIsAllowed =
+      PURPOSE_OPTIONS.includes(formData.purposeOfVisit as (typeof PURPOSE_OPTIONS)[number]) ||
+      (!!editingVehicle && formData.purposeOfVisit === editingVehicle.purposeOfVisit);
+    if (!purposeIsAllowed) {
+      toast({
+        title: "Validation Error",
+        description: "Please select a valid purpose of visit",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (formData.rented && !contactClean) {
       toast({
         title: "Validation Error",
         description: "Contact number is required when vehicle is rented",
@@ -174,12 +218,28 @@ export default function Vehicles() {
       return;
     }
 
+    if (!contactFromHost && !contactClean) {
+      toast({
+        title: "Validation Error",
+        description: "Contact number is required",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const payloadBase = {
+      plateNumber: plateTrimmed.toUpperCase(),
+      ownerName: ownerTrimmed,
+      contactNumber: contactClean,
+      hostId: formData.hostId || null,
+      rented: formData.rented || null,
+      purposeOfVisit: formData.purposeOfVisit,
+    };
+
     try {
       if (editingVehicle) {
         await vehiclesAPI.update(editingVehicle.id, {
-          ...formData,
-          hostId: formData.hostId || null,
-          rented: formData.rented || null,
+          ...payloadBase,
         });
         toast({
           title: "Vehicle Updated",
@@ -189,9 +249,7 @@ export default function Vehicles() {
         const vehicleId = `VEH-${Date.now()}`;
         await vehiclesAPI.create({
           id: vehicleId,
-          ...formData,
-          hostId: formData.hostId || null,
-          rented: formData.rented || null,
+          ...payloadBase,
           dataSource: 'barangay', // All vehicles are provided by Barangay
         });
         toast({
@@ -225,8 +283,8 @@ export default function Vehicles() {
       setFormData({
         ...formData,
         hostId: hostId,
-        contactNumber: selectedHost.contactNumber, // Automatically fill contact number from host
-        rented: '', // Clear rented field when host is selected
+        contactNumber: digitsOnly(selectedHost.contactNumber),
+        rented: '',
       });
     } else {
       setFormData({
@@ -242,8 +300,7 @@ export default function Vehicles() {
     return host?.name || null;
   };
 
-  const handleDeleteVehicle = async (id: string) => {
-    // Encoders and Barangay users cannot delete vehicles
+  const requestDeleteVehicle = (vehicle: Vehicle) => {
     if (isEncoder || isBarangayUser) {
       toast({
         title: "Permission Denied",
@@ -252,13 +309,24 @@ export default function Vehicles() {
       });
       return;
     }
-    
+    setVehicleToDelete(vehicle);
+  };
+
+  const confirmDeleteVehicle = async () => {
+    if (!vehicleToDelete) return;
+    if (isEncoder || isBarangayUser) {
+      setVehicleToDelete(null);
+      return;
+    }
+    const id = vehicleToDelete.id;
+    setIsDeletingVehicle(true);
     try {
       await vehiclesAPI.delete(id);
       toast({
         title: "Vehicle Deleted",
         description: "Vehicle removed from registry",
       });
+      setVehicleToDelete(null);
       loadVehicles();
     } catch (error: any) {
       toast({
@@ -266,8 +334,13 @@ export default function Vehicles() {
         description: error.message || "Failed to delete vehicle",
         variant: "destructive",
       });
+    } finally {
+      setIsDeletingVehicle(false);
     }
   };
+
+  const deleteButtonClassName =
+    'h-8 w-8 border-red-600 text-red-600 hover:bg-red-600/15 hover:text-red-700 dark:hover:bg-red-600/20';
 
   const handleViewVehicle = (vehicle: Vehicle) => {
     setSelectedVehicle(vehicle);
@@ -329,8 +402,12 @@ export default function Vehicles() {
                       id="plateNumber"
                       placeholder="ABC 1234"
                       value={formData.plateNumber}
-                      onChange={(e) => setFormData({ ...formData, plateNumber: e.target.value })}
-                      className="bg-secondary"
+                      onChange={(e) =>
+                        setFormData({ ...formData, plateNumber: e.target.value.toUpperCase() })
+                      }
+                      className="bg-secondary uppercase"
+                      autoCapitalize="characters"
+                      spellCheck={false}
                     />
                   </div>
                   <div className="space-y-2">
@@ -339,8 +416,15 @@ export default function Vehicles() {
                       id="ownerName"
                       placeholder="Juan dela Cruz"
                       value={formData.ownerName}
-                      onChange={(e) => setFormData({ ...formData, ownerName: e.target.value })}
+                      onChange={(e) =>
+                        setFormData({
+                          ...formData,
+                          ownerName: lettersAndSpacesOnly(e.target.value),
+                        })
+                      }
                       className="bg-secondary"
+                      inputMode="text"
+                      autoComplete="name"
                     />
                   </div>
                   <div className="space-y-2">
@@ -377,31 +461,53 @@ export default function Vehicles() {
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="rented">Rented (Optional)</Label>
-                    <Input
-                      id="rented"
-                      placeholder="Court, etc."
-                      value={formData.rented}
-                      onChange={(e) => {
-                        const rentedValue = e.target.value;
-                        setFormData(prev => ({ 
-                          ...prev, 
-                          rented: rentedValue,
-                        }));
-                      }}
-                      className="bg-secondary"
-                    />
+                    <Select
+                      value={
+                        formData.rented &&
+                        !RENTED_OPTIONS.includes(formData.rented as (typeof RENTED_OPTIONS)[number])
+                          ? formData.rented
+                          : formData.rented || RENTED_NONE
+                      }
+                      onValueChange={(v) =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          rented: v === RENTED_NONE ? '' : v,
+                        }))
+                      }
+                    >
+                      <SelectTrigger id="rented" className="bg-secondary">
+                        <SelectValue placeholder="None" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={RENTED_NONE}>None</SelectItem>
+                        {RENTED_OPTIONS.map((opt) => (
+                          <SelectItem key={opt} value={opt}>
+                            {opt}
+                          </SelectItem>
+                        ))}
+                        {formData.rented &&
+                          !RENTED_OPTIONS.includes(formData.rented as (typeof RENTED_OPTIONS)[number]) &&
+                          formData.rented !== '' && (
+                            <SelectItem value={formData.rented}>{formData.rented}</SelectItem>
+                          )}
+                      </SelectContent>
+                    </Select>
                     <p className="text-xs text-muted-foreground">
-                      If vehicle is rented, enter the location (e.g., Court). Contact number will be the renter's.
+                      If vehicle is rented, choose the location. Contact number will be the renter&apos;s.
                     </p>
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="contactNumber">Contact Number *</Label>
                     <Input
                       id="contactNumber"
-                      placeholder="+639171234567"
+                      placeholder="09171234567"
                       value={formData.contactNumber}
-                      onChange={(e) => setFormData({ ...formData, contactNumber: e.target.value })}
+                      onChange={(e) =>
+                        setFormData({ ...formData, contactNumber: digitsOnly(e.target.value) })
+                      }
                       className="bg-secondary"
+                      inputMode="numeric"
+                      autoComplete="tel"
                       disabled={!!formData.hostId && !formData.rented}
                     />
                     {formData.hostId && !formData.rented && (
@@ -412,20 +518,55 @@ export default function Vehicles() {
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="purposeOfVisit">Purpose of Visit *</Label>
-                    <Input
-                      id="purposeOfVisit"
-                      placeholder="e.g., Delivery, Appointment with Kap, Visit resident"
-                      value={formData.purposeOfVisit}
-                      onChange={(e) => setFormData({ ...formData, purposeOfVisit: e.target.value })}
-                      className="bg-secondary"
-                    />
+                    <Select
+                      value={
+                        formData.purposeOfVisit &&
+                        !PURPOSE_OPTIONS.includes(formData.purposeOfVisit as (typeof PURPOSE_OPTIONS)[number])
+                          ? formData.purposeOfVisit
+                          : formData.purposeOfVisit || undefined
+                      }
+                      onValueChange={(v) => setFormData({ ...formData, purposeOfVisit: v })}
+                    >
+                      <SelectTrigger id="purposeOfVisit" className="bg-secondary">
+                        <SelectValue placeholder="Select purpose of visit" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {PURPOSE_OPTIONS.map((opt) => (
+                          <SelectItem key={opt} value={opt}>
+                            {opt}
+                          </SelectItem>
+                        ))}
+                        {formData.purposeOfVisit &&
+                          !PURPOSE_OPTIONS.includes(
+                            formData.purposeOfVisit as (typeof PURPOSE_OPTIONS)[number],
+                          ) && (
+                            <SelectItem value={formData.purposeOfVisit}>
+                              {formData.purposeOfVisit}
+                            </SelectItem>
+                          )}
+                      </SelectContent>
+                    </Select>
                     <p className="text-xs text-muted-foreground">
                       Required for all vehicles entering the barangay
                     </p>
                   </div>
-                  <Button onClick={handleSaveVehicle} className="w-full">
-                    {editingVehicle ? 'Save Changes' : 'Register Vehicle'}
-                  </Button>
+                  <DialogFooter className="!flex-row gap-2 pt-2 sm:justify-stretch">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="flex-1 border-red-600 bg-red-600 text-white hover:bg-red-700 hover:text-white"
+                      onClick={handleCloseDialog}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      type="button"
+                      className="flex-1 bg-green-600 text-white hover:bg-green-700"
+                      onClick={handleSaveVehicle}
+                    >
+                      {editingVehicle ? 'Save Changes' : 'Register Vehicle'}
+                    </Button>
+                  </DialogFooter>
                 </div>
               </DialogContent>
             </Dialog>
@@ -445,11 +586,13 @@ export default function Vehicles() {
                         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleOpenDialog(vehicle)}>
                           <Edit className="h-4 w-4" />
                         </Button>
-                        <Button 
-                          variant="ghost" 
+                        <Button
+                          type="button"
+                          variant="outline"
                           size="icon"
-                          onClick={() => handleDeleteVehicle(vehicle.id)}
-                          className="text-destructive hover:text-destructive h-8 w-8"
+                          onClick={() => requestDeleteVehicle(vehicle)}
+                          className={deleteButtonClassName}
+                          aria-label="Delete vehicle"
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
@@ -510,11 +653,13 @@ export default function Vehicles() {
                                 <Button variant="ghost" size="icon" onClick={() => handleOpenDialog(vehicle)}>
                                   <Edit className="h-4 w-4" />
                                 </Button>
-                                <Button 
-                                  variant="ghost" 
+                                <Button
+                                  type="button"
+                                  variant="outline"
                                   size="icon"
-                                  onClick={() => handleDeleteVehicle(vehicle.id)}
-                                  className="text-destructive hover:text-destructive"
+                                  onClick={() => requestDeleteVehicle(vehicle)}
+                                  className={deleteButtonClassName}
+                                  aria-label="Delete vehicle"
                                 >
                                   <Trash2 className="h-4 w-4" />
                                 </Button>
@@ -580,6 +725,43 @@ export default function Vehicles() {
                 )}
               </DialogContent>
             </Dialog>
+
+            <AlertDialog
+              open={!!vehicleToDelete}
+              onOpenChange={(open) => {
+                if (!open) setVehicleToDelete(null);
+              }}
+            >
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Delete vehicle</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Are you sure you want to delete this record?
+                    {vehicleToDelete && (
+                      <>
+                        {' '}
+                        This will permanently remove{' '}
+                        <span className="font-mono font-medium text-foreground">
+                          {vehicleToDelete.plateNumber}
+                        </span>{' '}
+                        from the registry.
+                      </>
+                    )}
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel disabled={isDeletingVehicle}>Cancel</AlertDialogCancel>
+                  <Button
+                    type="button"
+                    className="bg-red-600 text-white hover:bg-red-700 focus-visible:ring-red-600"
+                    disabled={isDeletingVehicle}
+                    onClick={() => void confirmDeleteVehicle()}
+                  >
+                    {isDeletingVehicle ? 'Deleting…' : 'Delete'}
+                  </Button>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </>
         ) : (
           <div className="glass-card rounded-xl p-8 sm:p-12 text-center">

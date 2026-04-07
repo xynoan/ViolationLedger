@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Car, AlertTriangle, CheckCircle, Camera, Plus, RefreshCw, Pause, Play } from 'lucide-react';
+import { Car, AlertTriangle, CheckCircle, Camera, Plus, RefreshCw, Pause, Play, ScanSearch } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
@@ -12,6 +12,20 @@ import { Vehicle, Camera as CameraType, Violation } from '@/types/parking';
 import { vehiclesAPI, camerasAPI, violationsAPI, detectionsAPI, detectionAPI } from '@/lib/api';
 import { toast } from '@/hooks/use-toast';
 
+/** Plate text was read successfully (stored confidence reflects recognizer / pipeline score). */
+function isReadablePlate(pn: unknown): boolean {
+  if (pn == null || typeof pn !== 'string') return false;
+  const u = pn.trim().toUpperCase();
+  return u !== '' && u !== 'NONE' && u !== 'BLUR';
+}
+
+/** Stored values are typically 0–1; tolerate 0–100. */
+function normalizeConfidence(c: unknown): number {
+  const n = Number(c);
+  if (!Number.isFinite(n)) return 0;
+  return n > 1 ? n / 100 : n;
+}
+
 export default function Dashboard() {
   usePageTracking();
   const navigate = useNavigate();
@@ -19,6 +33,9 @@ export default function Dashboard() {
   const [cameras, setCameras] = useState<CameraType[]>([]);
   const [violations, setViolations] = useState<Violation[]>([]);
   const [allCaptures, setAllCaptures] = useState(0);
+  /** Average model confidence when a plate string was read (not ground-truth accuracy). */
+  const [plateConfidenceAvg, setPlateConfidenceAvg] = useState<number | null>(null);
+  const [plateReadCount, setPlateReadCount] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [detectionEnabled, setDetectionEnabled] = useState(true);
   const [detectionToggleLoading, setDetectionToggleLoading] = useState(false);
@@ -79,8 +96,25 @@ export default function Dashboard() {
         ? detectionsData.filter((d: any) => d.class_name && d.class_name.toLowerCase() !== 'none')
         : [];
       setAllCaptures(validDetections.length);
+
+      const withReadablePlate = Array.isArray(detectionsData)
+        ? detectionsData.filter((d: any) => isReadablePlate(d.plateNumber))
+        : [];
+      if (withReadablePlate.length > 0) {
+        const sum = withReadablePlate.reduce(
+          (s, d: any) => s + normalizeConfidence(d.confidence),
+          0
+        );
+        setPlateConfidenceAvg(sum / withReadablePlate.length);
+        setPlateReadCount(withReadablePlate.length);
+      } else {
+        setPlateConfidenceAvg(null);
+        setPlateReadCount(0);
+      }
     } catch (error) {
       console.error('Error loading dashboard data:', error);
+      setPlateConfidenceAvg(null);
+      setPlateReadCount(0);
       const errorMessage = error instanceof Error ? error.message : 'Failed to load dashboard data';
       toast({
         title: "Connection Error",
@@ -176,7 +210,7 @@ export default function Dashboard() {
         </div>
 
         {/* Stats Grid */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
           <StatCard
             title="Registered Vehicles"
             value={vehicles.length}
@@ -199,6 +233,17 @@ export default function Dashboard() {
             value={clearedToday.length}
             icon={CheckCircle}
             variant="success"
+          />
+          <StatCard
+            title="Plate recognition"
+            value={plateConfidenceAvg !== null ? `${Math.round(plateConfidenceAvg * 100)}%` : '—'}
+            subtitle={
+              plateReadCount > 0
+                ? `Avg. confidence · ${plateReadCount} plate read${plateReadCount === 1 ? '' : 's'}`
+                : 'No successful plate reads yet'
+            }
+            icon={ScanSearch}
+            variant="default"
           />
         </div>
 

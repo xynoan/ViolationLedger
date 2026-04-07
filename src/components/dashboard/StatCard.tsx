@@ -5,6 +5,8 @@ interface StatCardProps {
   title: string;
   value: string | number;
   icon: LucideIcon;
+  /** Optional line below the value (e.g. sample size or definition). */
+  subtitle?: string;
   trend?: {
     value: number;
     isPositive: boolean;
@@ -12,7 +14,7 @@ interface StatCardProps {
   variant?: 'default' | 'warning' | 'destructive' | 'success';
 }
 
-export function StatCard({ title, value, icon: Icon, trend, variant = 'default' }: StatCardProps) {
+export function StatCard({ title, value, icon: Icon, subtitle, trend, variant = 'default' }: StatCardProps) {
   const iconColors = {
     default: 'text-primary bg-primary/10',
     warning: 'text-warning bg-warning/10',
@@ -26,6 +28,9 @@ export function StatCard({ title, value, icon: Icon, trend, variant = 'default' 
         <div>
           <p className="text-sm text-muted-foreground">{title}</p>
           <p className="mt-2 text-3xl font-bold text-foreground">{value}</p>
+          {subtitle && (
+            <p className="mt-1 text-xs text-muted-foreground leading-snug">{subtitle}</p>
+          )}
           {trend && (
             <p className={cn(
               "mt-1 text-sm",
