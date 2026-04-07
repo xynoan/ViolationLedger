@@ -9,30 +9,30 @@ interface UseCameraStreamOptions {
   isOnline: boolean;
 }
 
-const DEFAULT_GO2RTC_WS_URL = (() => {
-  // Default to same-origin via reverse proxy path to avoid mixed-content/CORS issues.
+const DEFAULT_GO2RTC_WS_BASE_URLS = (() => {
+  // Prefer same-origin proxy first, then fall back to direct go2rtc port.
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-  return `${proto}://${window.location.host}/go2rtc`;
+  return [`${proto}://${window.location.host}/go2rtc`, `${proto}://${window.location.hostname}:1984`];
 })();
 
-const normalizeGo2rtcWsUrl = (rawUrl?: string): string => {
-  const fallback = DEFAULT_GO2RTC_WS_URL;
+const normalizeGo2rtcWsUrls = (rawUrl?: string): string[] => {
+  const fallback = DEFAULT_GO2RTC_WS_BASE_URLS;
   const trimmed = rawUrl?.trim();
   if (!trimmed) return fallback;
 
   // Keep explicit WebSocket scheme as-is. Some go2rtc installs expose ws:// only.
   if (trimmed.startsWith('ws://') || trimmed.startsWith('wss://')) {
-    return trimmed;
+    return [trimmed];
   }
 
   // Support http(s) inputs by converting to ws(s).
-  if (trimmed.startsWith('http://')) return `ws://${trimmed.slice('http://'.length)}`;
-  if (trimmed.startsWith('https://')) return `wss://${trimmed.slice('https://'.length)}`;
+  if (trimmed.startsWith('http://')) return [`ws://${trimmed.slice('http://'.length)}`];
+  if (trimmed.startsWith('https://')) return [`wss://${trimmed.slice('https://'.length)}`];
 
-  return trimmed;
+  return [trimmed];
 };
 
-const GO2RTC_WS_URL = normalizeGo2rtcWsUrl((import.meta.env as any).VITE_GO2RTC_WS_URL);
+const GO2RTC_WS_BASE_URLS = normalizeGo2rtcWsUrls((import.meta.env as any).VITE_GO2RTC_WS_URL);
 // Streams should be on by default; disable only when explicitly set to "true".
 const WS_DISABLED = (import.meta.env as any).VITE_DISABLE_WS === 'true';
 
@@ -45,6 +45,7 @@ export function useCameraStream({ deviceId, isOnline }: UseCameraStreamOptions) 
   const reconnectTimeoutRef = useRef<number | null>(null);
   const currentSrcRef = useRef<string | undefined>(undefined);
   const isConnectingRef = useRef(false);
+  const wsBaseIndexRef = useRef(0);
 
   const cleanupConnection = useCallback(() => {
     if (reconnectTimeoutRef.current !== null) {
@@ -98,7 +99,8 @@ export function useCameraStream({ deviceId, isOnline }: UseCameraStreamOptions) 
       currentSrcRef.current = src;
 
       try {
-        const wsUrl = `${GO2RTC_WS_URL.replace(/\/+$/, '')}/api/ws?src=${encodeURIComponent(
+        const wsBase = GO2RTC_WS_BASE_URLS[wsBaseIndexRef.current] || GO2RTC_WS_BASE_URLS[0];
+        const wsUrl = `${wsBase.replace(/\/+$/, '')}/api/ws?src=${encodeURIComponent(
           src,
         )}`;
         const ws = new WebSocket(wsUrl);
@@ -114,11 +116,21 @@ export function useCameraStream({ deviceId, isOnline }: UseCameraStreamOptions) 
           // Helps distinguish server-not-listening vs policy/reverse-proxy closes.
           console.warn('go2rtc WebSocket closed', {
             wsUrl,
+            wsBase,
             code: event.code,
             reason: event.reason,
             wasClean: event.wasClean,
           });
           isConnectingRef.current = false;
+
+          // If using defaults and current target failed, try next target.
+          if ((import.meta.env as any).VITE_GO2RTC_WS_URL?.trim() !== '' &&
+              (import.meta.env as any).VITE_GO2RTC_WS_URL != null) {
+            // Explicit URL configured - don't rotate automatically.
+          } else if (GO2RTC_WS_BASE_URLS.length > 1) {
+            wsBaseIndexRef.current = (wsBaseIndexRef.current + 1) % GO2RTC_WS_BASE_URLS.length;
+          }
+
           // Attempt simple reconnect if camera is still marked online
           if (isOnline && currentSrcRef.current) {
             reconnectTimeoutRef.current = window.setTimeout(() => {
@@ -246,6 +258,7 @@ export function useCameraStream({ deviceId, isOnline }: UseCameraStreamOptions) 
     if (!src || !isOnline) return;
 
     cleanupConnection();
+    wsBaseIndexRef.current = 0;
     connect(src);
   }, [cleanupConnection, connect, deviceId, isOnline]);
 

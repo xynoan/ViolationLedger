@@ -15,6 +15,7 @@ if (envResult.error) {
 
 import express from 'express';
 import cors from 'cors';
+import { WebSocket, WebSocketServer } from 'ws';
 import camerasRouter from './routes/cameras.js';
 import vehiclesRouter from './routes/vehicles.js';
 import violationsRouter from './routes/violations.js';
@@ -37,6 +38,8 @@ import cleanupService from './cleanup_service.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+const GO2RTC_PROXY_TARGET = process.env.GO2RTC_PROXY_TARGET || 'http://127.0.0.1:1984';
+const GO2RTC_PROXY_WS_TARGET = GO2RTC_PROXY_TARGET.replace(/^http/i, 'ws').replace(/\/+$/, '');
 if (!process.env.GEMINI_API_KEY) {
   console.warn('⚠️  GEMINI_API_KEY not set - using fallback');
 }
@@ -103,6 +106,61 @@ if (fs.existsSync(distPath)) {
 }
 
 let detectionServiceHandle = null;
+const go2rtcProxyWss = new WebSocketServer({ noServer: true });
+
+go2rtcProxyWss.on('connection', (clientWs, req) => {
+  const requestPath = req.url?.replace(/^\/go2rtc/, '') || '/';
+  const upstreamUrl = `${GO2RTC_PROXY_WS_TARGET}${requestPath}`;
+  const upstreamWs = new WebSocket(upstreamUrl);
+  let isClosing = false;
+
+  const closeBoth = () => {
+    if (isClosing) return;
+    isClosing = true;
+    try {
+      if (clientWs.readyState === WebSocket.OPEN || clientWs.readyState === WebSocket.CONNECTING) {
+        clientWs.close();
+      }
+    } catch {}
+    try {
+      if (upstreamWs.readyState === WebSocket.OPEN || upstreamWs.readyState === WebSocket.CONNECTING) {
+        upstreamWs.close();
+      }
+    } catch {}
+  };
+
+  clientWs.on('message', (data, isBinary) => {
+    if (upstreamWs.readyState === WebSocket.OPEN) {
+      upstreamWs.send(data, { binary: isBinary });
+    }
+  });
+
+  upstreamWs.on('message', (data, isBinary) => {
+    if (clientWs.readyState === WebSocket.OPEN) {
+      clientWs.send(data, { binary: isBinary });
+    }
+  });
+
+  upstreamWs.on('error', (err) => {
+    const message = err?.message || String(err);
+    if (!isClosing && !/closed before the connection was established/i.test(message)) {
+      console.warn('[go2rtc-proxy] Upstream WS error:', message);
+    }
+    closeBoth();
+  });
+
+  clientWs.on('error', () => {
+    closeBoth();
+  });
+
+  clientWs.on('close', () => {
+    closeBoth();
+  });
+
+  upstreamWs.on('close', () => {
+    closeBoth();
+  });
+});
 
 function startServer(port, isRetry = false) {
   const server = app.listen(port, async () => {
@@ -134,6 +192,14 @@ function startServer(port, isRetry = false) {
       console.error('❌ Server error:', err);
       process.exit(1);
     }
+  });
+
+  server.on('upgrade', (req, socket, head) => {
+    if (!req.url?.startsWith('/go2rtc')) return;
+
+    go2rtcProxyWss.handleUpgrade(req, socket, head, (ws) => {
+      go2rtcProxyWss.emit('connection', ws, req);
+    });
   });
 }
 
