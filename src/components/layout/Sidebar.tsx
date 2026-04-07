@@ -34,8 +34,8 @@ const navItems = [
   { path: '/violations', icon: History, label: 'Violations History', adminOnly: false },
   { path: '/analytics', icon: BarChart3, label: 'Analytics', adminOnly: false },
   { path: '/users', icon: Users, label: 'User Management', adminOnly: true },
-  { path: '/audit-logs', icon: ClipboardList, label: 'Audit Logs', adminOnly: true },
-  { path: '/health', icon: Settings, label: 'System Health & Configuration', adminOnly: false },
+  { path: '/audit-logs', icon: ClipboardList, label: 'Activity Logs', adminOnly: true },
+  { path: '/settings', icon: Settings, label: 'Settings', adminOnly: false },
 ];
 
 function NavContent({ collapsed, onNavigate }: { collapsed?: boolean; onNavigate?: () => void }) {
@@ -45,13 +45,13 @@ function NavContent({ collapsed, onNavigate }: { collapsed?: boolean; onNavigate
   const isEncoder = user?.role === 'encoder';
   const isBarangayUser = user?.role === 'barangay_user';
 
-  // Encoders can only see Vehicles page
+  // Encoders can only see Vehicles and Hosts pages
   const filteredItems = navItems.filter(item => {
     if (isEncoder) {
-      return item.path === '/vehicles';
+      return item.path === '/vehicles' || item.path === '/hosts';
     }
     // Barangay users should not see Settings page
-    if (isBarangayUser && item.path === '/health') {
+    if (isBarangayUser && item.path === '/settings') {
       return false;
     }
     return !item.adminOnly || isAdmin;

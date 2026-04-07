@@ -1,8 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 
-/** Opt-out: set `VITE_DISABLE_WS=true` to turn off detection WebSocket. Default is enabled. */
-const WS_DISABLED =
-  String((import.meta.env as any).VITE_DISABLE_WS ?? '').toLowerCase() === 'true';
+const WS_DISABLED = (import.meta.env as any).VITE_DISABLE_WS !== 'false';
 
 export interface Detection {
   bbox: number[];

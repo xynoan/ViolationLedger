@@ -7,6 +7,7 @@ import { AuthProvider } from "@/hooks/useAuth";
 import { MainLayout } from "@/components/layout/MainLayout";
 import Index from "./pages/Index";
 import Login from "./pages/Login";
+import ActivateAccount from "./pages/ActivateAccount";
 import ResetPassword from "./pages/ResetPassword";
 import Vehicles from "./pages/Vehicles";
 import Hosts from "./pages/Hosts";
@@ -15,7 +16,7 @@ import Warnings from "./pages/Warnings";
 import Tickets from "./pages/Tickets";
 import ViolationsHistory from "./pages/ViolationsHistory";
 import UploadImage from "./pages/UploadImage";
-import Health from "./pages/Health";
+import Settings from "./pages/Settings";
 import Analytics from "./pages/Analytics";
 import UserManagement from "./pages/UserManagement";
 import AuditLogs from "./pages/AuditLogs";
@@ -38,6 +39,7 @@ const App = () => (
         >
           <Routes>
             <Route path="/login" element={<Login />} />
+            <Route path="/activate" element={<ActivateAccount />} />
             <Route
               path="/reset-password"
               element={
@@ -60,7 +62,7 @@ const App = () => (
                       <Route path="/tickets" element={<Tickets />} />
                       <Route path="/violations" element={<ViolationsHistory />} />
                       <Route path="/upload" element={<UploadImage />} />
-                      <Route path="/health" element={<Health />} />
+                      <Route path="/settings" element={<Settings />} />
                       <Route path="/analytics" element={<Analytics />} />
                       <Route path="/users" element={<UserManagement />} />
                       <Route path="/audit-logs" element={<AuditLogs />} />

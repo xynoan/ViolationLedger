@@ -19,6 +19,18 @@ import {
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
 
+function isReadablePlate(pn: unknown): boolean {
+  if (pn == null || typeof pn !== 'string') return false;
+  const u = pn.trim().toUpperCase();
+  return u !== '' && u !== 'NONE' && u !== 'BLUR';
+}
+
+function normalizeConfidence(c: unknown): number {
+  const n = Number(c);
+  if (!Number.isFinite(n)) return 0;
+  return n > 1 ? n / 100 : n;
+}
+
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 const SERVER_BASE_URL = API_BASE_URL.replace('/api', '');
 
@@ -33,6 +45,7 @@ interface CaptureResult {
     class_name: string;
     confidence: number;
     bbox: number[];
+    plateNumber?: string;
   }>;
 }
 
@@ -109,7 +122,8 @@ export function CaptureResults() {
                 detections: validDetections.map((d: any) => ({
                   class_name: d.class_name || 'vehicle',
                   confidence: d.confidence || 0,
-                  bbox: d.bbox || []
+                  bbox: d.bbox || [],
+                  plateNumber: d.plateNumber,
                 }))
               });
             }
@@ -131,6 +145,13 @@ export function CaptureResults() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const getReadablePlateAvgConfidence = (detections: CaptureResult['detections']) => {
+    const readable = detections.filter((d) => isReadablePlate(d.plateNumber));
+    if (readable.length === 0) return null;
+    const sum = readable.reduce((s, d) => s + normalizeConfidence(d.confidence), 0);
+    return sum / readable.length;
   };
 
   const getVehicleCounts = (detections: CaptureResult['detections']) => {
@@ -211,6 +232,8 @@ export function CaptureResults() {
 
   const renderCaptureResult = (result: CaptureResult) => {
     const counts = getVehicleCounts(result.detections);
+    const plateAvgConf = getReadablePlateAvgConfidence(result.detections);
+    const readablePlates = result.detections.filter((d) => isReadablePlate(d.plateNumber));
     const captureDate = new Date(result.timestamp);
     
     const imageSrc = getImageSrc(result);
@@ -239,7 +262,12 @@ export function CaptureResults() {
                     </div>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  {plateAvgConf !== null && (
+                    <Badge variant="outline" className="text-xs font-normal border-primary/40 text-primary">
+                      Plate conf. ~{Math.round(plateAvgConf * 100)}%
+                    </Badge>
+                  )}
                   <Badge variant={counts.total > 0 ? "destructive" : "success"} className="ml-2">
                     {counts.total} {counts.total === 1 ? 'vehicle' : 'vehicles'}
                   </Badge>
@@ -297,6 +325,19 @@ export function CaptureResults() {
               {counts.total > 0 ? (
                 <div className="space-y-2">
                   <p className="text-sm font-medium text-foreground mb-2">Detected Vehicles:</p>
+                  {readablePlates.length > 0 && (
+                    <div className="mb-3 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs">
+                      <p className="font-medium text-foreground mb-1.5">Plate reads (recognizer confidence)</p>
+                      <ul className="space-y-1 text-muted-foreground">
+                        {readablePlates.map((d, idx) => (
+                          <li key={idx} className="flex justify-between gap-2 font-mono">
+                            <span>{String(d.plateNumber).trim().toUpperCase()}</span>
+                            <span>{Math.round(normalizeConfidence(d.confidence) * 100)}%</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                     {counts.car > 0 && (
                       <div className="flex items-center gap-2 p-2 rounded-lg bg-blue-500/10 border border-blue-500/20">
