@@ -20,10 +20,14 @@ const normalizeGo2rtcWsUrl = (rawUrl?: string): string => {
   const trimmed = rawUrl?.trim();
   if (!trimmed) return fallback;
 
-  // Force secure WebSocket URLs.
-  if (trimmed.startsWith('ws://')) {
-    return `wss://${trimmed.slice('ws://'.length)}`;
+  // Keep explicit WebSocket scheme as-is. Some go2rtc installs expose ws:// only.
+  if (trimmed.startsWith('ws://') || trimmed.startsWith('wss://')) {
+    return trimmed;
   }
+
+  // Support http(s) inputs by converting to ws(s).
+  if (trimmed.startsWith('http://')) return `ws://${trimmed.slice('http://'.length)}`;
+  if (trimmed.startsWith('https://')) return `wss://${trimmed.slice('https://'.length)}`;
 
   return trimmed;
 };
