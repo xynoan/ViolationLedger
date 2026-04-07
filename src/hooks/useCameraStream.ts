@@ -29,7 +29,8 @@ const normalizeGo2rtcWsUrl = (rawUrl?: string): string => {
 };
 
 const GO2RTC_WS_URL = normalizeGo2rtcWsUrl((import.meta.env as any).VITE_GO2RTC_WS_URL);
-const WS_DISABLED = (import.meta.env as any).VITE_DISABLE_WS !== 'false';
+// Streams should be on by default; disable only when explicitly set to "true".
+const WS_DISABLED = (import.meta.env as any).VITE_DISABLE_WS === 'true';
 
 export function useCameraStream({ deviceId, isOnline }: UseCameraStreamOptions) {
   const [stream, setStream] = useState<MediaStream | null>(null);

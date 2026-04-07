@@ -9,7 +9,7 @@
     "dev:all": "concurrently \"npm run dev:server\" \"npm run dev\"",
     "build": "vite build",
     "build:dev": "vite build --mode development",
-    "build:prod": "cross-env VITE_API_URL=/api vite build",
+    "build:prod": "cross-env VITE_API_URL=/api VITE_DISABLE_WS=false vite build",
     "lint": "eslint .",
     "preview": "vite preview",
     "server:install": "cd server && npm install",

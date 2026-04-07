@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 
-const WS_DISABLED = (import.meta.env as any).VITE_DISABLE_WS !== 'false';
+// Streams should be on by default; disable only when explicitly set to "true".
+const WS_DISABLED = (import.meta.env as any).VITE_DISABLE_WS === 'true';
 
 export interface Detection {
   bbox: number[];
