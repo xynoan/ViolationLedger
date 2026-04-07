@@ -225,7 +225,7 @@ export default function Hosts() {
         <div className="flex items-start gap-2 rounded-lg border border-border bg-card/70 px-3 py-2 text-sm text-muted-foreground">
           <Info className="mt-0.5 h-4 w-4 text-primary" />
           <p className="leading-relaxed">
-          Here's where we add resident details whom will take the role of "Host". They will be the ones who will be receiving viber message if their visitor (non-resident) parked illegally. 
+          Here's where we add resident details whom will take the role of "Host". They will be the ones who will be receiving a text message if their visitor (non-resident) parked illegally. 
           </p>
         </div>
         {/* Actions Bar */}

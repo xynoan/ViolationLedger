@@ -32,6 +32,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { trackAction } from '@/lib/auditTracking';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
+import { isValidEmail, sanitizeEmail } from '@/lib/emailValidation';
 
 interface User {
   id: string;
@@ -130,11 +131,25 @@ export default function UserManagement() {
     });
   };
 
+  const emailTrimmed = formData.email.trim();
+  const emailInvalid =
+    emailTrimmed.length > 0 && !isValidEmail(emailTrimmed);
+  const emailOk = emailTrimmed.length > 0 && isValidEmail(emailTrimmed);
+
   const handleSubmit = async () => {
-    if (!formData.email.trim()) {
+    if (!emailTrimmed) {
       toast({
         title: "Validation Error",
         description: "Email is required",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!isValidEmail(emailTrimmed)) {
+      toast({
+        title: "Validation Error",
+        description: "Please enter a valid email address.",
         variant: "destructive",
       });
       return;
@@ -200,10 +215,11 @@ export default function UserManagement() {
 
     try {
       setIsSubmitting(true);
+      const emailForApi = sanitizeEmail(formData.email);
       if (selectedUser) {
         // Update existing user
         const updateData: any = {
-          email: formData.email,
+          email: emailForApi,
           name: formData.name.trim(),
           role: formData.role,
           contactNumber: formData.contactNumber.trim() || null,
@@ -221,7 +237,7 @@ export default function UserManagement() {
         // Create new user - store to database via API
         const role = formData.role === 'admin' ? 'encoder' : formData.role;
         await usersAPI.create({
-          email: formData.email,
+          email: emailForApi,
           password: formData.password,
           name: formData.name.trim(),
           role,
@@ -448,15 +464,30 @@ export default function UserManagement() {
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
+              <Label htmlFor="email">
+                Email <span className="text-destructive">*</span>
+              </Label>
               <Input
                 id="email"
                 type="email"
+                autoComplete="email"
+                inputMode="email"
                 value={formData.email}
                 onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                 placeholder="user@example.com"
                 disabled={isSubmitting}
+                aria-invalid={emailInvalid}
+                aria-describedby={emailInvalid ? 'email-error' : undefined}
+                className={cn(
+                  emailInvalid &&
+                    'border-destructive focus-visible:ring-destructive/40 focus-visible:border-destructive'
+                )}
               />
+              {emailInvalid && (
+                <p id="email-error" className="text-xs text-destructive" role="alert">
+                  Please enter a valid email address.
+                </p>
+              )}
             </div>
             <div className="space-y-2">
               <Label htmlFor="password">
@@ -630,7 +661,7 @@ export default function UserManagement() {
             <Button variant="outline" onClick={handleCloseDialog} disabled={isSubmitting}>
               Cancel
             </Button>
-            <Button onClick={handleSubmit} disabled={isSubmitting}>
+            <Button onClick={handleSubmit} disabled={isSubmitting || !emailOk}>
               {isSubmitting ? 'Saving...' : selectedUser ? 'Update' : 'Create'}
             </Button>
           </DialogFooter>
