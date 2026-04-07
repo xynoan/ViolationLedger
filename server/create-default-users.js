@@ -55,7 +55,10 @@ function upsertUser({
           role = ?,
           status = ?,
           contactNumber = ?,
-          mustResetPassword = ?
+          mustResetPassword = ?,
+          isActivated = 1,
+          activationToken = NULL,
+          activationExpires = NULL
       WHERE email = ?
     `
     ).run(
@@ -72,8 +75,8 @@ function upsertUser({
 
   db.prepare(
     `
-    INSERT INTO users (id, email, password, name, role, createdAt, status, contactNumber, mustResetPassword)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO users (id, email, password, name, role, createdAt, status, contactNumber, mustResetPassword, isActivated, activationToken, activationExpires)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, NULL)
   `
   ).run(
     id,

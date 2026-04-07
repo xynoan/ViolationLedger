@@ -236,7 +236,7 @@ export default function UserManagement() {
       } else {
         // Create new user - store to database via API
         const role = formData.role === 'admin' ? 'encoder' : formData.role;
-        await usersAPI.create({
+        const created = await usersAPI.create({
           email: emailForApi,
           password: formData.password,
           name: formData.name.trim(),
@@ -246,7 +246,9 @@ export default function UserManagement() {
         });
         toast({
           title: "Success",
-          description: "User created. Activation email sent. They must reset their password on first login.",
+          description:
+            (created && typeof created === 'object' && 'message' in created && (created as { message?: string }).message) ||
+            'Account created. Please check your email to activate your account.',
         });
       }
       handleCloseDialog();

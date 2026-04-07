@@ -7,6 +7,7 @@ import { AuthProvider } from "@/hooks/useAuth";
 import { MainLayout } from "@/components/layout/MainLayout";
 import Index from "./pages/Index";
 import Login from "./pages/Login";
+import ActivateAccount from "./pages/ActivateAccount";
 import ResetPassword from "./pages/ResetPassword";
 import Vehicles from "./pages/Vehicles";
 import Hosts from "./pages/Hosts";
@@ -38,6 +39,7 @@ const App = () => (
         >
           <Routes>
             <Route path="/login" element={<Login />} />
+            <Route path="/activate" element={<ActivateAccount />} />
             <Route
               path="/reset-password"
               element={

@@ -38,7 +38,7 @@ try {
     console.log('User already exists. Updating...');
     db.prepare(`
       UPDATE users 
-      SET password = ?, name = ?, role = ?
+      SET password = ?, name = ?, role = ?, isActivated = 1, activationToken = NULL, activationExpires = NULL
       WHERE email = ?
     `).run(
       passwordHash,
@@ -53,8 +53,8 @@ try {
     const now = new Date().toISOString();
 
     db.prepare(`
-      INSERT INTO users (id, email, password, name, role, createdAt)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO users (id, email, password, name, role, createdAt, status, mustResetPassword, isActivated, activationToken, activationExpires)
+      VALUES (?, ?, ?, ?, ?, ?, 'active', 0, 1, NULL, NULL)
     `).run(
       userId,
       emailNormalized,

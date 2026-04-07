@@ -434,6 +434,38 @@ async function initDatabase() {
   } catch (error) {
     // Ignore errors
   }
+
+  // Email activation: new users must activate before login; existing rows stay activated
+  try {
+    db.run('ALTER TABLE users ADD COLUMN isActivated INTEGER NOT NULL DEFAULT 0');
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: isActivated column migration:', errorMsg);
+    }
+  }
+  try {
+    db.run('ALTER TABLE users ADD COLUMN activationToken TEXT');
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: activationToken column migration:', errorMsg);
+    }
+  }
+  try {
+    db.run('ALTER TABLE users ADD COLUMN activationExpires TEXT');
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: activationExpires column migration:', errorMsg);
+    }
+  }
+  // Legacy accounts (no pending token): treat as already activated
+  try {
+    db.run(`UPDATE users SET isActivated = 1 WHERE activationToken IS NULL`);
+  } catch (error) {
+    // Ignore
+  }
   
   // Seed Barangay user if it doesn't exist (will be done after crypto import)
   // This is handled in a separate function after database initialization

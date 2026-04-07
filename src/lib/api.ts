@@ -397,6 +397,18 @@ export const auditLogsAPI = {
 
 // Auth API
 export const authAPI = {
+  /** Public — activate account via email link (no auth header). */
+  activateAccount: async (token: string) => {
+    const response = await fetch(
+      `${API_BASE_URL}/auth/activate?token=${encodeURIComponent(token)}`,
+      { method: 'GET', headers: { Accept: 'application/json' } }
+    );
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error((data as { error?: string }).error || 'Activation failed');
+    }
+    return data as { success?: boolean; message?: string; alreadyActivated?: boolean };
+  },
   login: async (email: string, password: string) => {
     const token = localStorage.getItem('auth_token');
     const expiresAtKey = getTrustedDeviceExpiresAtStorageKey(email);
