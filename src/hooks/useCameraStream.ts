@@ -20,18 +20,8 @@ const normalizeGo2rtcWsUrl = (rawUrl?: string): string => {
   const trimmed = rawUrl?.trim();
   if (!trimmed) return fallback;
 
-  // On HTTPS pages, a configured ws:// URL to another host/port causes mixed-content
-  // or TLS mismatch issues. Prefer same-origin reverse proxy path instead.
-  if (window.location.protocol === 'https:' && trimmed.startsWith('ws://')) {
-    try {
-      const configured = new URL(trimmed);
-      if (configured.host !== window.location.host) {
-        return fallback;
-      }
-    } catch {
-      return fallback;
-    }
-
+  // Force secure WebSocket URLs.
+  if (trimmed.startsWith('ws://')) {
     return `wss://${trimmed.slice('ws://'.length)}`;
   }
 
