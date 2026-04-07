@@ -110,19 +110,19 @@ router.post('/', requireRole('admin'), async (req, res) => {
       WHERE id = ?
     `).get(userId);
 
-    try {
-      await sendAccountActivationEmail({
-        email: newUser.email,
-        name: newUser.name,
-        activationToken,
-      });
-    } catch (emailError) {
-      console.error('Error sending activation email:', emailError);
-    }
-
     res.status(201).json({
       message: 'Account created. Please check your email to activate your account.',
       user: newUser,
+    });
+
+    // Don't block API response on SMTP/network latency.
+    // This prevents frontend request timeout while still attempting email delivery.
+    sendAccountActivationEmail({
+      email: newUser.email,
+      name: newUser.name,
+      activationToken,
+    }).catch((emailError) => {
+      console.error('Error sending activation email:', emailError);
     });
   } catch (error) {
     console.error('Error creating user:', error);
