@@ -1,4 +1,5 @@
 import db from '../database.js';
+import { pathToFileURL } from 'url';
 
 const MIN_ROWS = 50;
 const ROWS_PER_TABLE = Math.max(
@@ -303,4 +304,9 @@ function run() {
   db.close();
 }
 
-run();
+const entryFile = process.argv[1] ? pathToFileURL(process.argv[1]).href : '';
+const isDirectExecution = import.meta.url === entryFile;
+
+if (isDirectExecution) {
+  run();
+}

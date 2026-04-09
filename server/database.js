@@ -1,12 +1,15 @@
 import initSqlJs from 'sql.js';
 import fs from 'fs-extra';
 import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
+import { dirname, isAbsolute, join, resolve } from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const dbPath = join(__dirname, 'parking.db');
+const rawDbPath = String(process.env.DB_PATH || '').trim();
+const dbPath = rawDbPath
+  ? (isAbsolute(rawDbPath) ? rawDbPath : resolve(__dirname, rawDbPath))
+  : join(__dirname, 'parking.db');
 
 let db = null;
 let SQL = null;
