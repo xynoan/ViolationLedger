@@ -36,6 +36,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from '@/hooks/use-toast';
 import { vehiclesAPI, residentsAPI } from '@/lib/api';
 import { useAuth } from '@/hooks/useAuth';
+import { SearchNoMatchesEmpty } from '@/components/search/SearchNoMatchesEmpty';
 
 const RENTED_OPTIONS = ['Court', 'Community Center', 'Barangay Hall'] as const;
 const RENTED_NONE = '__rented_none__';
@@ -56,6 +57,7 @@ export default function Vehicles() {
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [registryHasVehicles, setRegistryHasVehicles] = useState(false);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
   const [editingVehicle, setEditingVehicle] = useState<Vehicle | null>(null);
@@ -122,6 +124,12 @@ export default function Vehicles() {
   useEffect(() => {
     loadResidents();
   }, [loadResidents]);
+
+  useEffect(() => {
+    if (searchTerm.trim() === '') {
+      setRegistryHasVehicles(vehicles.length > 0);
+    }
+  }, [vehicles, searchTerm]);
 
   const filteredVehicles = vehicles.filter(
     (v) =>
@@ -602,7 +610,7 @@ export default function Vehicles() {
           <p className="text-xs text-muted-foreground">Refreshing results...</p>
         )}
 
-        {vehicles.length > 0 ? (
+        {filteredVehicles.length > 0 ? (
           <>
             {/* Mobile Cards */}
             <div className="block sm:hidden space-y-3">
@@ -792,6 +800,12 @@ export default function Vehicles() {
               </AlertDialogContent>
             </AlertDialog>
           </>
+        ) : registryHasVehicles && searchTerm.trim() ? (
+          <SearchNoMatchesEmpty
+            searchTerm={searchTerm}
+            onClear={() => setSearchTerm('')}
+            hint="Check your spelling or try searching for a different plate number or owner name."
+          />
         ) : (
           <div className="glass-card rounded-xl p-8 sm:p-12 text-center">
             <Car className="h-12 w-12 sm:h-16 sm:w-16 text-muted-foreground mx-auto mb-4" />

@@ -10,12 +10,15 @@ export interface Vehicle {
   purposeOfVisit?: string;
 }
 
+export type ResidentStatus = 'verified' | 'guest';
+
 export interface Resident {
   id: string;
   name: string;
   contactNumber: string;
   address?: string;
   createdAt: Date;
+  residentStatus?: ResidentStatus;
 }
 
 export interface Camera {

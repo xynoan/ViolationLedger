@@ -3,6 +3,14 @@ import db from '../database.js';
 
 const router = express.Router();
 
+const ALLOWED_RESIDENT_STATUS = new Set(['verified', 'guest']);
+
+function normalizeResidentStatus(value) {
+  const v = typeof value === 'string' ? value.toLowerCase().trim() : '';
+  if (ALLOWED_RESIDENT_STATUS.has(v)) return v;
+  return 'verified';
+}
+
 router.get('/', (req, res) => {
   try {
     const { search } = req.query;
@@ -44,13 +52,14 @@ router.get('/:id', (req, res) => {
 
 router.post('/', (req, res) => {
   try {
-    const { id, name, contactNumber, address } = req.body;
+    const { id, name, contactNumber, address, residentStatus } = req.body;
 
     if (!id || !name || !contactNumber) {
       return res.status(400).json({ error: 'Missing required fields: id, name, contactNumber' });
     }
 
     const createdAt = new Date().toISOString();
+    const status = normalizeResidentStatus(residentStatus);
 
     // Store contact number exactly as input - NO CONVERSION
     // Only remove spaces, dashes, and parentheses for clean storage
@@ -63,9 +72,9 @@ router.post('/', (req, res) => {
     }
 
     db.prepare(`
-      INSERT INTO residents (id, name, contactNumber, address, createdAt)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(id, name, cleanedContact, address || null, createdAt);
+      INSERT INTO residents (id, name, contactNumber, address, createdAt, residentStatus)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(id, name, cleanedContact, address || null, createdAt, status);
 
     const created = db.prepare('SELECT * FROM residents WHERE id = ?').get(id);
     res.status(201).json({
@@ -83,7 +92,7 @@ router.post('/', (req, res) => {
 
 router.put('/:id', (req, res) => {
   try {
-    const { name, contactNumber, address } = req.body;
+    const { name, contactNumber, address, residentStatus } = req.body;
     const resident = db.prepare('SELECT * FROM residents WHERE id = ?').get(req.params.id);
 
     if (!resident) {
@@ -102,14 +111,20 @@ router.put('/:id', (req, res) => {
       }
     }
 
+    const nextStatus =
+      residentStatus !== undefined
+        ? normalizeResidentStatus(residentStatus)
+        : normalizeResidentStatus(resident.residentStatus);
+
     db.prepare(`
       UPDATE residents 
-      SET name = ?, contactNumber = ?, address = ?
+      SET name = ?, contactNumber = ?, address = ?, residentStatus = ?
       WHERE id = ?
     `).run(
       name || resident.name,
       cleanedContact,
       address !== undefined ? address : resident.address,
+      nextStatus,
       req.params.id
     );
 

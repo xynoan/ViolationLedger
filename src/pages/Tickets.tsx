@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Camera, Car, Bike, Truck, Bus, Image as ImageIcon, Calendar, Clock, ZoomIn, ChevronDown, Search } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
+import { SearchNoMatchesEmpty } from '@/components/search/SearchNoMatchesEmpty';
 import {
   getDwellMinutes,
   getDwellStatus,
@@ -169,6 +170,19 @@ export default function Tickets() {
     
     return counts;
   };
+
+  const filteredCaptureResults = useMemo(
+    () =>
+      captureResults
+        .filter((result) =>
+          result.locationId.toLowerCase().includes(searchTerm.trim().toLowerCase()),
+        )
+        .filter((result) => {
+          if (!violationsOnly) return true;
+          return getDwellMinutes(result.firstDetected, result.lastSeen) > 30;
+        }),
+    [captureResults, searchTerm, violationsOnly],
+  );
 
   const getImageSrc = (result: CaptureResult): string | null => {
     if (result.imageBase64) {
@@ -411,30 +425,29 @@ export default function Tickets() {
       </div>
 
       <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
-        {captureResults
-          .filter((result) =>
-            result.locationId.toLowerCase().includes(searchTerm.trim().toLowerCase())
-          )
-          .filter((result) => {
-            if (!violationsOnly) return true;
-            return getDwellMinutes(result.firstDetected, result.lastSeen) > 30;
-          }).length > 0 ? (
+        {filteredCaptureResults.length > 0 ? (
           <div className="space-y-4">
-            {captureResults
-              .filter((result) =>
-                result.locationId.toLowerCase().includes(searchTerm.trim().toLowerCase())
-              )
-              .filter((result) => {
-                if (!violationsOnly) return true;
-                return getDwellMinutes(result.firstDetected, result.lastSeen) > 30;
-              })
-              .map(renderCaptureResult)}
+            {filteredCaptureResults.map(renderCaptureResult)}
           </div>
-        ) : (
+        ) : captureResults.length === 0 ? (
           <div className="glass-card rounded-xl p-6 sm:p-8 text-center">
             <Camera className="h-10 w-10 sm:h-12 sm:w-12 text-muted-foreground mx-auto mb-3" />
             <p className="text-muted-foreground text-sm sm:text-base">No capture results yet</p>
             <p className="text-xs text-muted-foreground mt-2">Captures will appear here after the first analysis</p>
+          </div>
+        ) : searchTerm.trim() ? (
+          <SearchNoMatchesEmpty
+            searchTerm={searchTerm}
+            onClear={() => setSearchTerm('')}
+            hint="Check your spelling or try searching for a different location ID."
+          />
+        ) : (
+          <div className="glass-card rounded-xl p-6 sm:p-8 text-center">
+            <Camera className="h-10 w-10 sm:h-12 sm:w-12 text-muted-foreground mx-auto mb-3" />
+            <p className="text-muted-foreground text-sm sm:text-base">No captures match the current filters</p>
+            <p className="text-xs text-muted-foreground mt-2">
+              Turn off &quot;Violations Only&quot; or adjust your search to see more results.
+            </p>
           </div>
         )}
       </div>

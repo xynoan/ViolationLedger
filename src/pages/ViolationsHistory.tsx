@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { SearchNoMatchesEmpty } from '@/components/search/SearchNoMatchesEmpty';
 import { FileText, Search, Filter, Download, Calendar, MapPin, BarChart3, TrendingUp, CheckCircle } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
@@ -59,6 +60,7 @@ export default function ViolationsHistory() {
   const [endDate, setEndDate] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState<string>('');
+  const [registryHasViolations, setRegistryHasViolations] = useState(false);
   const [clearingId, setClearingId] = useState<string | null>(null);
 
   const loadCameras = async () => {
@@ -157,6 +159,18 @@ export default function ViolationsHistory() {
     }, 250);
     return () => clearTimeout(timeout);
   }, [searchTerm]);
+
+  useEffect(() => {
+    const broadest =
+      statusFilter === 'all' &&
+      locationFilter === 'all' &&
+      !startDate &&
+      !endDate &&
+      debouncedSearchTerm.trim() === '';
+    if (broadest) {
+      setRegistryHasViolations(violations.length > 0);
+    }
+  }, [violations, statusFilter, locationFilter, startDate, endDate, debouncedSearchTerm]);
 
   useEffect(() => {
     if (isInitialLoading) return;
@@ -461,6 +475,12 @@ export default function ViolationsHistory() {
               </Table>
             </div>
           </div>
+        ) : registryHasViolations && debouncedSearchTerm.trim() ? (
+          <SearchNoMatchesEmpty
+            searchTerm={debouncedSearchTerm}
+            onClear={() => setSearchTerm('')}
+            hint="Check your spelling or try searching for a different plate number."
+          />
         ) : (
           <div className="glass-card rounded-xl p-8 sm:p-12 text-center">
             <FileText className="h-12 w-12 sm:h-16 sm:w-16 text-muted-foreground mx-auto mb-4" />

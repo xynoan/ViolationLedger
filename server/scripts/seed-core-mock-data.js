@@ -60,8 +60,8 @@ function clearCoreTables() {
 
 function seedResidents() {
   const stmt = db.prepare(
-    `INSERT OR REPLACE INTO residents (id, name, contactNumber, address, createdAt)
-     VALUES (?, ?, ?, ?, ?)`
+    `INSERT OR REPLACE INTO residents (id, name, contactNumber, address, createdAt, residentStatus)
+     VALUES (?, ?, ?, ?, ?, ?)`
   );
   for (let i = 1; i <= ROWS_PER_TABLE; i += 1) {
     const residentId = id('RESIDENT', i);
@@ -70,7 +70,8 @@ function seedResidents() {
       `Resident ${i}`,
       `0917${String(1000000 + i).slice(-7)}`,
       `Lot ${i}, Main Street, Barangay ${((i - 1) % 10) + 1}`,
-      isoHoursAgo(24 * (ROWS_PER_TABLE - i + 1))
+      isoHoursAgo(24 * (ROWS_PER_TABLE - i + 1)),
+      i % 7 === 0 ? 'guest' : 'verified'
     );
   }
 }

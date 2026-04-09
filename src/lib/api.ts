@@ -190,15 +190,23 @@ export const residentsAPI = {
 
 // Violations API
 export const violationsAPI = {
-  getAll: (filters?: { status?: string; locationId?: string; startDate?: string; endDate?: string; plateNumber?: string }) => {
+  getAll: (filters?: {
+    status?: string;
+    locationId?: string;
+    startDate?: string;
+    endDate?: string;
+    plateNumber?: string;
+    limit?: number;
+  }) => {
     const params = new URLSearchParams();
     if (filters?.status) params.append('status', filters.status);
     if (filters?.locationId) params.append('locationId', filters.locationId);
     if (filters?.startDate) params.append('startDate', filters.startDate);
     if (filters?.endDate) params.append('endDate', filters.endDate);
     if (filters?.plateNumber) params.append('plateNumber', filters.plateNumber);
+    if (filters?.limit != null) params.append('limit', String(filters.limit));
     const query = params.toString();
-    return fetchAPI(`/violations${query ? `?${query}` : ''}`);
+    return fetchAPI(`/violations${query ? `?${query}` : ''}`, { cache: false });
   },
   getStats: (filters?: { startDate?: string; endDate?: string; locationId?: string }) => {
     const params = new URLSearchParams();

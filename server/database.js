@@ -99,9 +99,24 @@ async function initDatabase() {
       name TEXT NOT NULL,
       contactNumber TEXT NOT NULL,
       address TEXT,
-      createdAt TEXT NOT NULL
+      createdAt TEXT NOT NULL,
+      residentStatus TEXT NOT NULL DEFAULT 'verified'
     )
   `);
+
+  try {
+    db.run(`ALTER TABLE residents ADD COLUMN residentStatus TEXT NOT NULL DEFAULT 'verified'`);
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: residentStatus column migration:', errorMsg);
+    }
+  }
+  try {
+    db.run(`UPDATE residents SET residentStatus = 'verified' WHERE residentStatus IS NULL OR residentStatus = ''`);
+  } catch {
+    /* ignore */
+  }
 
   // Create tables
   db.run(`

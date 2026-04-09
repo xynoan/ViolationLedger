@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useLocation } from 'react-router-dom';
 import { FileText, Filter, RefreshCw, Calendar, User, Search, Trash2, Info } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
@@ -23,6 +24,7 @@ import { toast } from '@/hooks/use-toast';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
+import { SearchNoMatchesEmpty } from '@/components/search/SearchNoMatchesEmpty';
 import {
   humanizeAction,
   humanizeResource,
@@ -89,6 +91,7 @@ const actionTypes = [
 
 export default function AuditLogs() {
   usePageTracking();
+  const location = useLocation();
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -107,6 +110,11 @@ export default function AuditLogs() {
   const [stats, setStats] = useState<AuditLogStats | null>(null);
   const [showClearDialog, setShowClearDialog] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+
+  useEffect(() => {
+    const preset = (location.state as { presetSearch?: string } | null)?.presetSearch;
+    if (preset?.trim()) setSearchQuery(preset.trim());
+  }, [location.state]);
 
   const filteredLogs = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -443,12 +451,12 @@ export default function AuditLogs() {
                 <p className="text-muted-foreground">No audit logs found</p>
               </div>
             ) : filteredLogs.length === 0 ? (
-              <div className="text-center py-10">
-                <p className="text-muted-foreground">No entries match your search.</p>
-                <Button variant="link" className="mt-2" onClick={() => setSearchQuery('')}>
-                  Clear search
-                </Button>
-              </div>
+              <SearchNoMatchesEmpty
+                searchTerm={searchQuery}
+                onClear={() => setSearchQuery('')}
+                hint="Check your spelling or try different keywords from the user, action, area, or summary columns on this page."
+                className="py-10"
+              />
             ) : (
               <>
                 <div className="rounded-md border overflow-x-auto">
