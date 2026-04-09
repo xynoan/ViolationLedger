@@ -46,19 +46,19 @@ router.get('/', async (req, res) => {
   try {
     const { startDate, endDate, locationId } = req.query;
     
-    // Build date filter
+    // Build violation date filter (violations table uses timeDetected, not timestamp)
     let dateFilter = '';
     const params = [];
     
     if (startDate) {
-      dateFilter += ' AND timestamp >= ?';
+      dateFilter += ' AND timeDetected >= ?';
       params.push(startDate);
     }
     
     if (endDate) {
       const endDateObj = new Date(endDate);
       endDateObj.setDate(endDateObj.getDate() + 1);
-      dateFilter += ' AND timestamp < ?';
+      dateFilter += ' AND timeDetected < ?';
       params.push(endDateObj.toISOString());
     }
     
