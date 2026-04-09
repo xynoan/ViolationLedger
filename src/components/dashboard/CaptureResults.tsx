@@ -7,6 +7,13 @@ import { Camera as CameraType } from '@/types/parking';
 import { camerasAPI, detectionsAPI } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import {
+  getDwellMinutes,
+  getDwellStatus,
+  getDwellBadgeClasses,
+  getDwellToneLabel,
+  formatDuration,
+} from '@/lib/captureInsights';
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -39,6 +46,8 @@ interface CaptureResult {
   cameraName: string;
   locationId: string;
   timestamp: string;
+  firstDetected: string;
+  lastSeen: string;
   imageUrl: string | null;
   imageBase64: string | null;
   detections: Array<{
@@ -122,6 +131,8 @@ export function CaptureResults({ autoRefresh = true }: CaptureResultsProps) {
                 cameraName: camera.name,
                 locationId: camera.locationId,
                 timestamp: timestamp,
+                firstDetected: timestamp,
+                lastSeen: timestamp,
                 imageUrl: detectionWithImage?.imageUrl || null,
                 imageBase64: detectionWithImage?.imageBase64 || null,
                 detections: validDetections.map((d: any) => ({
@@ -240,6 +251,7 @@ export function CaptureResults({ autoRefresh = true }: CaptureResultsProps) {
     const plateAvgConf = getReadablePlateAvgConfidence(result.detections);
     const readablePlates = result.detections.filter((d) => isReadablePlate(d.plateNumber));
     const captureDate = new Date(result.timestamp);
+    const dwellStatus = getDwellStatus(getDwellMinutes(result.firstDetected, result.lastSeen));
     
     const imageSrc = getImageSrc(result);
     const hasImage = imageSrc !== null;
@@ -249,8 +261,23 @@ export function CaptureResults({ autoRefresh = true }: CaptureResultsProps) {
         <Collapsible className="group">
           <CollapsibleTrigger className="w-full">
             <div className="w-full p-4 border-b border-border cursor-pointer hover:bg-muted/50 transition-colors">
-              <div className="flex items-start justify-between">
-                <div className="flex-1">
+              <div className="flex items-start justify-between gap-3">
+                <div
+                  className="h-[50px] w-[50px] shrink-0 rounded-lg overflow-hidden border bg-muted cursor-pointer"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleImageClick(result);
+                  }}
+                >
+                  {hasImage ? (
+                    <img src={imageSrc} alt={`Capture from ${result.cameraName}`} className="h-full w-full object-cover" />
+                  ) : (
+                    <div className="h-full w-full flex items-center justify-center">
+                      <ImageIcon className="h-4 w-4 text-muted-foreground/70" />
+                    </div>
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
                     <Camera className="h-4 w-4 text-muted-foreground" />
                     <span className="font-medium text-foreground">{result.cameraName}</span>
@@ -273,8 +300,8 @@ export function CaptureResults({ autoRefresh = true }: CaptureResultsProps) {
                       Plate conf. ~{Math.round(plateAvgConf * 100)}%
                     </Badge>
                   )}
-                  <Badge variant={counts.total > 0 ? "destructive" : "success"} className="ml-2">
-                    {counts.total} {counts.total === 1 ? 'vehicle' : 'vehicles'}
+                  <Badge variant="outline" className={cn('ml-2 border', getDwellBadgeClasses(dwellStatus.tone))}>
+                    {dwellStatus.label}
                   </Badge>
                   <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform duration-200 group-data-[state=open]:rotate-180" />
                 </div>
@@ -284,6 +311,44 @@ export function CaptureResults({ autoRefresh = true }: CaptureResultsProps) {
           
           <CollapsibleContent>
             <div className="p-4">
+              <div className="mb-4 rounded-lg border bg-muted/30 p-3">
+                <p className="text-xs font-semibold text-foreground mb-2">Vehicle Timeline</p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+                  <div>
+                    <p className="text-muted-foreground">First Detected</p>
+                    <p className="font-medium">{new Date(result.firstDetected).toLocaleString()}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Last Seen</p>
+                    <p className="font-medium">{new Date(result.lastSeen).toLocaleString()}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Dwell Duration</p>
+                    <p className="font-medium">{formatDuration(dwellStatus.minutes)} ({getDwellToneLabel(dwellStatus.tone)})</p>
+                  </div>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      navigate(`/warnings?cameraId=${encodeURIComponent(result.cameraId)}&locationId=${encodeURIComponent(result.locationId)}`);
+                    }}
+                  >
+                    Issue Warning
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      navigate(`/violations?cameraId=${encodeURIComponent(result.cameraId)}&locationId=${encodeURIComponent(result.locationId)}`);
+                    }}
+                  >
+                    File Violation
+                  </Button>
+                </div>
+              </div>
               {hasImage ? (
                 <div 
                   className="relative rounded-lg overflow-hidden bg-muted aspect-video mb-4 cursor-pointer group transition-all hover:opacity-90 hover:ring-2 hover:ring-primary/50"

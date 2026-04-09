@@ -1,10 +1,23 @@
 import { useState, useEffect } from 'react';
-import { Camera, Car, Bike, Truck, Bus, Image as ImageIcon, Calendar, Clock, ZoomIn, ChevronDown } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Camera, Car, Bike, Truck, Bus, Image as ImageIcon, Calendar, Clock, ZoomIn, ChevronDown, Search } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
 import { Badge } from '@/components/ui/badge';
 import { Camera as CameraType } from '@/types/parking';
 import { camerasAPI, detectionsAPI } from '@/lib/api';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
+import { cn } from '@/lib/utils';
+import {
+  getDwellMinutes,
+  getDwellStatus,
+  getDwellBadgeClasses,
+  getDwellToneLabel,
+  formatDuration,
+} from '@/lib/captureInsights';
 import {
   Dialog,
   DialogContent,
@@ -26,6 +39,8 @@ interface CaptureResult {
   cameraName: string;
   locationId: string;
   timestamp: string;
+  firstDetected: string;
+  lastSeen: string;
   imageUrl: string | null;
   imageBase64: string | null;
   detections: Array<{
@@ -37,10 +52,13 @@ interface CaptureResult {
 
 export default function Tickets() {
   usePageTracking();
+  const navigate = useNavigate();
   const [captureResults, setCaptureResults] = useState<CaptureResult[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [cameras, setCameras] = useState<CameraType[]>([]);
   const [selectedImage, setSelectedImage] = useState<{ src: string; alt: string } | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [violationsOnly, setViolationsOnly] = useState(false);
 
   useEffect(() => {
     loadCaptureResults();
@@ -103,6 +121,8 @@ export default function Tickets() {
                 cameraName: camera.name,
                 locationId: camera.locationId,
                 timestamp: timestamp,
+                firstDetected: timestamp,
+                lastSeen: timestamp,
                 imageUrl: detectionWithImage?.imageUrl || null,
                 imageBase64: detectionWithImage?.imageBase64 || null,
                 detections: validDetections.map((d: any) => ({
@@ -178,6 +198,7 @@ export default function Tickets() {
   const renderCaptureResult = (result: CaptureResult) => {
     const counts = getVehicleCounts(result.detections);
     const captureDate = new Date(result.timestamp);
+    const dwellStatus = getDwellStatus(getDwellMinutes(result.firstDetected, result.lastSeen));
     
     const imageSrc = getImageSrc(result);
     const hasImage = imageSrc !== null;
@@ -187,8 +208,23 @@ export default function Tickets() {
         <Collapsible className="group">
           <CollapsibleTrigger className="w-full">
             <div className="w-full p-4 border-b border-border cursor-pointer hover:bg-muted/50 transition-colors">
-              <div className="flex items-start justify-between">
-                <div className="flex-1">
+              <div className="flex items-start justify-between gap-3">
+                <div
+                  className="h-[50px] w-[50px] shrink-0 rounded-lg overflow-hidden border bg-muted cursor-pointer"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleImageClick(result);
+                  }}
+                >
+                  {hasImage ? (
+                    <img src={imageSrc} alt={`Capture from ${result.cameraName}`} className="h-full w-full object-cover" />
+                  ) : (
+                    <div className="h-full w-full flex items-center justify-center">
+                      <ImageIcon className="h-4 w-4 text-muted-foreground/70" />
+                    </div>
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
                     <Camera className="h-4 w-4 text-muted-foreground" />
                     <span className="font-medium text-foreground">{result.cameraName}</span>
@@ -206,8 +242,8 @@ export default function Tickets() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Badge variant={counts.total > 0 ? "destructive" : "success"} className="ml-2">
-                    {counts.total} {counts.total === 1 ? 'vehicle' : 'vehicles'}
+                  <Badge variant="outline" className={cn('ml-2 border', getDwellBadgeClasses(dwellStatus.tone))}>
+                    {dwellStatus.label}
                   </Badge>
                   <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform duration-200 group-data-[state=open]:rotate-180" />
                 </div>
@@ -217,6 +253,44 @@ export default function Tickets() {
           
           <CollapsibleContent>
             <div className="p-4">
+              <div className="mb-4 rounded-lg border bg-muted/30 p-3">
+                <p className="text-xs font-semibold text-foreground mb-2">Vehicle Timeline</p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+                  <div>
+                    <p className="text-muted-foreground">First Detected</p>
+                    <p className="font-medium">{new Date(result.firstDetected).toLocaleString()}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Last Seen</p>
+                    <p className="font-medium">{new Date(result.lastSeen).toLocaleString()}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Dwell Duration</p>
+                    <p className="font-medium">{formatDuration(dwellStatus.minutes)} ({getDwellToneLabel(dwellStatus.tone)})</p>
+                  </div>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      navigate(`/warnings?cameraId=${encodeURIComponent(result.cameraId)}&locationId=${encodeURIComponent(result.locationId)}`);
+                    }}
+                  >
+                    Issue Warning
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      navigate(`/violations?cameraId=${encodeURIComponent(result.cameraId)}&locationId=${encodeURIComponent(result.locationId)}`);
+                    }}
+                  >
+                    File Violation
+                  </Button>
+                </div>
+              </div>
               {hasImage ? (
                 <div 
                   className="relative rounded-lg overflow-hidden bg-muted aspect-video mb-4 cursor-pointer group transition-all hover:opacity-90 hover:ring-2 hover:ring-primary/50"
@@ -320,10 +394,43 @@ export default function Tickets() {
         subtitle="All vehicle capture records"
       />
 
+      <div className="sticky top-16 z-20 border-b bg-background/95 backdrop-blur">
+        <div className="p-4 sm:px-6 flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
+          <div className="relative w-full sm:max-w-sm">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Search Location ID (e.g., LOC-001)"
+              className="pl-9"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <Switch id="violations-only" checked={violationsOnly} onCheckedChange={setViolationsOnly} />
+            <Label htmlFor="violations-only">Violations Only</Label>
+          </div>
+        </div>
+      </div>
+
       <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
-        {captureResults.length > 0 ? (
+        {captureResults
+          .filter((result) =>
+            result.locationId.toLowerCase().includes(searchTerm.trim().toLowerCase())
+          )
+          .filter((result) => {
+            if (!violationsOnly) return true;
+            return getDwellMinutes(result.firstDetected, result.lastSeen) > 30;
+          }).length > 0 ? (
           <div className="space-y-4">
-            {captureResults.map(renderCaptureResult)}
+            {captureResults
+              .filter((result) =>
+                result.locationId.toLowerCase().includes(searchTerm.trim().toLowerCase())
+              )
+              .filter((result) => {
+                if (!violationsOnly) return true;
+                return getDwellMinutes(result.firstDetected, result.lastSeen) > 30;
+              })
+              .map(renderCaptureResult)}
           </div>
         ) : (
           <div className="glass-card rounded-xl p-6 sm:p-8 text-center">
