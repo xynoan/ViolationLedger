@@ -106,14 +106,14 @@ export default function Dashboard() {
           0
         );
         const avg = sum / withReadablePlate.length;
-        console.log('[Dashboard] Plate accuracy summary', {
+        console.log('[Dashboard] Plate read confidence summary', {
           averageConfidence: avg,
           readablePlateCount: withReadablePlate.length,
         });
         setPlateConfidenceAvg(avg);
         setPlateReadCount(withReadablePlate.length);
       } else {
-        console.log('[Dashboard] Plate accuracy summary', {
+        console.log('[Dashboard] Plate read confidence summary', {
           averageConfidence: null,
           readablePlateCount: 0,
         });
@@ -246,7 +246,7 @@ export default function Dashboard() {
             variant="success"
           />
           <StatCard
-            title="Plate Accuracy"
+            title="Plate Read Confidence"
             value={plateConfidenceAvg !== null ? `${Math.round(plateConfidenceAvg * 100)}%` : 'N/A'}
             icon={ScanSearch}
             subtitle={plateReadCount > 0 ? `${plateReadCount} readable plate${plateReadCount === 1 ? '' : 's'} in the latest fetch` : 'No readable plates detected'}

@@ -45,7 +45,7 @@ class MonitoringService {
   async startVideoAnalysis() {
     console.log('📹 Starting video analysis for all active cameras...');
     try {
-      const cameras = db.prepare('SELECT * FROM cameras WHERE status = ?').all('active');
+      const cameras = db.prepare('SELECT * FROM cameras WHERE status = ?').all('online');
       for (const camera of cameras) {
         if (camera.streamUrl) {
           console.log(`[${camera.id}] Starting analysis for stream: ${camera.streamUrl}`);
@@ -75,18 +75,18 @@ class MonitoringService {
         INSERT INTO detections (id, cameraId, plateNumber, timestamp, confidence, imageUrl, bbox, class_name, imageBase64, plateVisible)
         VALUES (@id, @cameraId, @plateNumber, @timestamp, @confidence, @imageUrl, @bbox, @class_name, @imageBase64, @plateVisible)
       `);
-      
-      db.transaction((detections) => {
-        for (const detection of detections) {
-          try {
-            insert.run(detection);
-          } catch (error) {
-            console.error(`Error inserting detection ${detection.id}:`, error);
-          }
+
+      let savedCount = 0;
+      for (const detection of detections) {
+        try {
+          insert.run(detection);
+          savedCount += 1;
+        } catch (error) {
+          console.error(`Error inserting detection ${detection.id}:`, error);
         }
-      })(detections);
-      
-      console.log(`[${cameraId}] Saved ${detections.length} new detections to the database.`);
+      }
+
+      console.log(`[${cameraId}] Saved ${savedCount}/${detections.length} detections to the database.`);
     }
   }
 
@@ -157,6 +157,7 @@ class MonitoringService {
       }
 
       let notifiedCount = 0;
+      let warningsTransitionedToPending = 0;
 
       for (const warning of activeWarnings) {
         const key = `${warning.plateNumber}-${warning.cameraLocationId}`;
@@ -328,6 +329,7 @@ class MonitoringService {
                 SET status = 'pending'
                 WHERE id = ?
               `).run(warning.id);
+              warningsTransitionedToPending += 1;
             } catch (statusError) {
               console.error(
                 `❌ Error updating violation ${warning.id} status to 'pending' after grace period:`,
@@ -339,9 +341,9 @@ class MonitoringService {
       }
 
       if (notifiedCount > 0) {
-        console.log(`✅ Monitoring check complete: 0 resolved, ${notifiedCount} notified`);
+        console.log(`✅ Monitoring check complete: 0 resolved, ${notifiedCount} notified, ${warningsTransitionedToPending} moved to pending`);
       } else {
-        console.log('✅ Monitoring check complete: No updates needed');
+        console.log(`✅ Monitoring check complete: No updates needed, ${warningsTransitionedToPending} moved to pending`);
       }
     } catch (error) {
       console.error('❌ Error in monitoring check:', error);

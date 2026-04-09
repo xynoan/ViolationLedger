@@ -12,9 +12,7 @@ import sys
 import json
 import base64
 import argparse
-import re
-from typing import Dict, List, Optional, Tuple
-from pathlib import Path
+from typing import Dict, List
 from datetime import datetime, timezone
 
 try:
@@ -31,6 +29,7 @@ GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', 'AIzaSyD8nAPVUIUnNABP7mjHU9HDTnSk0r
 # Use gemini-2.5-flash as requested
 GEMINI_MODEL = 'gemini-2.5-flash'
 CONFIDENCE_THRESHOLD = 0.7  # 70% minimum confidence (lowered for better consistency with stationary vehicles)
+PARSE_FAILURE_COUNT = 0
 
 
 def get_gemini_model():
@@ -74,14 +73,13 @@ def load_image_from_file(filepath: str) -> Image.Image:
         raise ValueError(f"Failed to load image from file: {str(e)}")
 
 
-PLATE_EXTRACTION_PROMPT = """Look at this image. What license plate numbers can you see on any vehicles?
-Respond with ONLY a JSON object in this exact format: {"plates": ["ABC-1234", "XYZ-5678"]}
-If no plates are visible or readable, respond: {"plates": []}
-Use only alphanumeric characters, spaces, and hyphens in plate numbers. No other text or explanation."""
+PLATE_EXTRACTION_PROMPT = """Return ONLY valid JSON in this exact format: {"plates":["ABC-1234","XYZ-5678"]}.
+If no readable plates are visible, return {"plates":[]}.
+Do not include markdown, code fences, or extra keys."""
 
 
 def _parse_plates_from_response(response_text: str) -> List[str]:
-    """Parse plates from Gemini response, with fallbacks for malformed JSON."""
+    """Parse plates from Gemini response using strict JSON parsing."""
     if not response_text or not isinstance(response_text, str):
         return []
     response_text = response_text.strip()
@@ -114,37 +112,8 @@ def _parse_plates_from_response(response_text: str) -> List[str]:
                     return [str(p).strip() for p in plates if p]
                 return []
             except json.JSONDecodeError:
-                pass
-            # Fix common JSON issues
-            fixed = re.sub(r',\s*}', '}', json_candidate)
-            fixed = re.sub(r',\s*]', ']', fixed)
-            try:
-                result = json.loads(fixed)
-                plates = result.get("plates", [])
-                if isinstance(plates, list):
-                    return [str(p).strip() for p in plates if p]
                 return []
-            except json.JSONDecodeError:
-                pass
-
-    # Regex fallback: extract quoted strings after "plates":
-    # Match "plates": ["X", "Y"] or "plates": ["X"] (handles truncated response)
-    match = re.search(r'"plates"\s*:\s*\[(.*)', response_text, re.DOTALL)
-    if match:
-        inner = match.group(1)
-        # Extract complete quoted strings first
-        plate_matches = re.findall(r'"([^"]*)"', inner)
-        if plate_matches:
-            valid = [p.strip() for p in plate_matches if p.strip() and len(p.strip()) >= 2]
-            if valid:
-                return valid
-        # Handle truncated: "ABC-123 with no closing quote
-        partial = re.findall(r'"([A-Za-z0-9\s\-]{2,15})(?:"|$)', inner)
-        if partial:
-            return [p.strip() for p in partial if p.strip()]
-    # Last resort: find plate-like patterns (alphanumeric, spaces, hyphens)
-    plate_pattern = re.findall(r'"([A-Za-z0-9\s\-]{2,15})"', response_text)
-    return [p.strip() for p in plate_pattern if p.strip() and len(p.strip()) >= 2]
+    return []
 
 
 def _safe_parse_plates(response_text: str) -> List[str]:
@@ -205,138 +174,21 @@ def analyze_image_with_gemini(image: Image.Image) -> Dict:
     Note: All vehicles in the result are illegally parked violations on the street/roadway.
     """
     
-    # Create a detailed, accurate prompt for illegal parking detection on roadways
-    prompt = """You are a highly accurate AI vision system specialized in ILLEGAL PARKING VIOLATION detection on STREETS and ROADWAYS.
+    prompt = """You are an illegal parking detector for roadway cameras.
+Return ONLY valid JSON with this exact schema:
+{"vehicles":[{"plateNumber":"ABC-1234","confidence":0.95,"bbox":[0.1,0.2,0.3,0.4],"class_name":"car","plateVisible":true}]}
 
-CONTEXT:
-- This camera monitors streets and roadways for illegal parking violations
-- Your task is to detect ALL illegally parked vehicles and extract their license plates
-- The system will automatically send SMS warnings to registered vehicle owners via Semaphore or notify Barangay officials
-
-ILLEGAL PARKING SCENARIOS TO DETECT:
-
-1. VEHICLES ON STREET/ROADWAY:
-   - Any vehicle PARKED on the street/roadway (not in designated parking areas)
-   - Vehicles parked on asphalt/concrete road surfaces
-   - This is the PRIMARY violation type - ALL vehicles on roadways are violations
-
-2. VEHICLES ON RED-PAINTED CURBS (6-METER NO PARKING ZONES):
-   - Vehicles parked on or near RED-PAINTED curbs
-   - Red curbs indicate "NO PARKING" zones (typically 6-meter zones)
-   - Even partial parking on red curbs is a violation
-
-3. VEHICLES ON SIDEWALKS/CURBS:
-   - Vehicles with wheels partially or fully on sidewalks
-   - Vehicles parked on raised concrete curbs or walkways
-   - Vehicles blocking pedestrian pathways
-
-4. VEHICLES NEAR "NO PARKING" SIGNS:
-   - Vehicles parked in areas with visible "NO PARKING" signs
-   - Vehicles near "ONE WAY" signs where parking is restricted
-   - Vehicles in clearly marked no-parking zones
-
-5. VEHICLES BLOCKING DRIVEWAYS/EXITS:
-   - Vehicles partially or fully blocking driveways
-   - Vehicles parked in front of gates or property entrances
-   - Vehicles obstructing exit routes
-
-6. VEHICLES IN RESTRICTED AREAS:
-   - Vehicles parked in areas with yellow speed bumps indicating restricted zones
-   - Vehicles in areas marked with parking restriction signs
-
-STRICT REQUIREMENTS FOR ACCURACY:
-
-1. ILLEGAL PARKING DETECTION:
-   - Identify ALL vehicles that match ANY of the above violation scenarios
-   - Focus on vehicles that are PARKED (not moving) in violation zones
-   - Include: cars, motorcycles, trucks, buses
-   - CRITICAL: Motorcycles are smaller vehicles - carefully scan the entire image for motorcycles parked on streets, sidewalks, or curbs
-   - Motorcycles may be partially obscured or in corners - check ALL areas of the image
-   - CRITICAL FOR CONSISTENCY: If a vehicle appears in the same location across multiple captures, it is definitely parked and MUST be detected with high confidence (≥0.7)
-   - Stationary vehicles that remain in the same position are ALWAYS violations - detect them consistently
-   - Only report vehicles that are clearly visible and identifiable as parked violations
-   - Do NOT include:
-     * Moving vehicles (in motion)
-     * Vehicles in designated parking lots or legal parking spaces
-     * Vehicles that are clearly legally parked
-   - Priority: Detect ALL violations - it's better to catch all violations than miss any
-   - If you see ANY vehicle (including motorcycles) parked illegally, it MUST be included in the results
-   - CONSISTENCY IS CRITICAL: The same parked vehicle should be detected with similar confidence scores across multiple captures
-
-2. LICENSE PLATE RECOGNITION (CRITICAL):
-   - For EACH detected illegally parked vehicle, carefully examine the license plate area
-   - Check BOTH front and rear plates - use whichever is more visible
-   - If plate is CLEARLY visible and FULLY readable: Extract the EXACT plate number
-   - Plate format examples: "NHJ 9720", "NEI 1951", "ZTN 972", "ABR 9485", "PPU1472", "237816"
-   - Philippine plates may be: XXX ####, XXX-####, XXX####, or ####### format
-   - PRESERVE EXACT FORMAT including spaces, dashes, and letter case
-   - IMPORTANT DISTINCTION:
-     * If plate area is VISIBLE but BLURRY, UNCLEAR, or PARTIALLY READABLE: Use "BLUR" (plate is visible but unreadable)
-     * If plate area is COMPLETELY NOT VISIBLE, HIDDEN, or ABSENT: Use "NONE" (plate not visible at all)
-   - Use "BLUR" when you can see the plate area exists but cannot read the numbers/letters clearly
-   - Use "NONE" when the plate area is completely obscured, hidden, or not present
-   - Be conservative but thorough - extract plates you are CERTAIN about
-   - Plate visibility is CRITICAL - system needs plate to send SMS to owner
-   - If plate cannot be read, system will notify Barangay officials instead
-
-3. CONFIDENCE SCORING:
-   - Confidence must be between 0.0 and 1.0
-   - High confidence (0.9-1.0): Clear violation with fully readable plate
-   - Medium confidence (0.7-0.89): Clear violation but plate uncertain or partially visible
-   - Low confidence (<0.7): Exclude from results (threshold filter)
-   - IMPORTANT: For motorcycles and smaller vehicles, use confidence 0.7+ if the vehicle is clearly visible and illegally parked, even if the plate is not readable
-   - CRITICAL: For stationary/parked vehicles that are clearly visible, use confidence ≥0.7 even if partially obscured
-   - Confidence should reflect your certainty about BOTH:
-     * Vehicle is illegally parked (violation detection)
-     * License plate recognition accuracy
-   - If a vehicle is clearly illegally parked but plate is blurry/unclear, use confidence 0.7-0.85 with plateNumber "BLUR"
-   - If a vehicle is clearly illegally parked but plate is completely not visible, use confidence 0.7-0.85 with plateNumber "NONE"
-   - CONSISTENCY: If you detect a vehicle in one capture, similar vehicles in similar positions should have similar confidence scores
-
-4. BOUNDING BOX:
-   - Provide [x, y, width, height] coordinates relative to image size (normalized 0-1)
-   - x, y = top-left corner of the vehicle
-   - width, height = dimensions of the vehicle
-   - Box should tightly fit the entire illegally parked vehicle
-
-5. VEHICLE CLASSIFICATION:
-   - Use exactly: "car", "motorcycle", "truck", or "bus"
-   - Be accurate - don't confuse truck with bus, etc.
-   - All detected vehicles are violations (illegally parked)
-
-6. PLATE VISIBILITY FLAG:
-   - Set "plateVisible": true if plate number was successfully extracted (plateNumber is a valid plate)
-   - Set "plateVisible": false if plate is not visible at all (plateNumber = "NONE")
-   - Set "plateVisible": true if plate area is visible but blurry/unclear (plateNumber = "BLUR")
-   - "BLUR" means the plate area is visible but the text is unreadable
-   - "NONE" means the plate area is completely not visible or absent
-
-7. OUTPUT FORMAT:
-   - Return ONLY valid JSON, no markdown, no code blocks, no explanations
-   - JSON structure must be exact:
-{
-  "vehicles": [
-    {
-      "plateNumber": "ABC-1234" or "BLUR" or "NONE",
-      "confidence": 0.95,
-      "bbox": [x, y, width, height],
-      "class_name": "car",
-      "plateVisible": true
-    }
-  ]
-}
-
-CRITICAL ACCURACY RULES:
-- DETECT ALL ILLEGAL PARKING VIOLATIONS - don't miss any
-- Focus on: street parking, red curbs, sidewalks, NO PARKING signs, blocked driveways
-- Only include vehicles with confidence ≥ 0.7 (lowered threshold for better consistency)
-- CONSISTENCY IS PARAMOUNT: If a vehicle is parked in the same location, detect it consistently with confidence ≥0.7
-- For stationary vehicles that never move, always detect them - they are clear violations
-- For plate numbers: If not 100% certain, use "NONE" - accuracy is critical
-- Double-check plate numbers - wrong plates cause wrong SMS recipients
-- Return empty vehicles array ONLY if you are certain there are no vehicles (not just low confidence)
-- Remember: System automatically handles SMS to owners via Semaphore (if registered) or notifies Barangay (if plate not visible/not registered)
-- Output ONLY the JSON object, nothing else"""
+Rules:
+- Detect illegally parked vehicles visible in the scene (car, motorcycle, truck, bus).
+- Use confidence 0.0-1.0; include only detections with confidence >= 0.7.
+- plateNumber:
+  - readable plate text when clearly readable
+  - "BLUR" when plate area is visible but unreadable
+  - "NONE" when plate area is not visible
+- plateVisible should be true for readable or BLUR, false for NONE.
+- bbox must be normalized [x, y, width, height] in 0-1.
+- If no qualifying vehicles exist, return {"vehicles":[]}.
+- Do not add extra keys, markdown, explanations, or prose."""
 
     try:
         # Get model instance (lazy initialization)
@@ -349,7 +201,7 @@ CRITICAL ACCURACY RULES:
                 "temperature": 0.0,  # Zero temperature for maximum accuracy and consistency
                 "top_p": 0.9,  # Lower top_p for more focused responses
                 "top_k": 20,  # Lower top_k for more deterministic output
-                "max_output_tokens": 2048,
+                "max_output_tokens": 768,
             }
         )
         
@@ -382,68 +234,16 @@ CRITICAL ACCURACY RULES:
             if start_idx < end_idx:
                 response_text = response_text[start_idx:end_idx]
         
-        # Parse JSON with better error handling for malformed responses
+        # Parse JSON with strict error handling for malformed responses
         try:
             result = json.loads(response_text)
         except json.JSONDecodeError as parse_error:
-            # Try to fix common JSON issues
-            # Remove trailing commas before closing brackets/braces
-            # Fix trailing commas in arrays/objects
-            fixed_text = re.sub(r',\s*}', '}', response_text)
-            fixed_text = re.sub(r',\s*]', ']', fixed_text)
-            
-            # Try to extract valid JSON by finding the last complete structure
-            try:
-                # Find the last complete closing brace
-                last_brace = fixed_text.rfind('}')
-                if last_brace > 0:
-                    # Try to find matching opening brace
-                    brace_count = 0
-                    start_idx = last_brace
-                    for i in range(last_brace, -1, -1):
-                        if fixed_text[i] == '}':
-                            brace_count += 1
-                        elif fixed_text[i] == '{':
-                            brace_count -= 1
-                            if brace_count == 0:
-                                start_idx = i
-                                break
-                    
-                    # Extract the JSON object
-                    json_candidate = fixed_text[start_idx:last_brace + 1]
-                    result = json.loads(json_candidate)
-                else:
-                    raise parse_error
-            except (json.JSONDecodeError, ValueError) as e:
-                # If still can't parse, try to extract partial vehicle data using regex
-                vehicles = []
-                
-                # Try to extract vehicle objects using regex as last resort
-                vehicle_pattern = r'\{\s*"plateNumber"\s*:\s*"([^"]+)"\s*,\s*"confidence"\s*:\s*([0-9.]+)'
-                matches = re.finditer(vehicle_pattern, response_text)
-                for match in matches:
-                    plate = match.group(1)
-                    try:
-                        confidence = float(match.group(2))
-                        if confidence >= CONFIDENCE_THRESHOLD:
-                            vehicles.append({
-                                "plateNumber": plate,
-                                "confidence": confidence,
-                                "bbox": [0, 0, 0, 0],  # Default bbox
-                                "class_name": "car",  # Default class
-                                "plateVisible": plate.upper() not in ["NONE", "BLUR"]
-                            })
-                    except (ValueError, IndexError):
-                        continue
-                
-                if vehicles:
-                    print(f"Warning: Extracted {len(vehicles)} vehicles from malformed JSON response", file=sys.stderr)
-                    return {"vehicles": vehicles, "error": f"Partial parse: {str(parse_error)}"}
-                
-                # If still can't parse, return error with partial response
-                print(f"Error: Failed to parse Gemini response as JSON: {parse_error}", file=sys.stderr)
-                print(f"Response was: {response_text[:500]}", file=sys.stderr)
-                return {"vehicles": [], "error": f"Failed to parse AI response: {str(parse_error)}"}
+            global PARSE_FAILURE_COUNT
+            PARSE_FAILURE_COUNT += 1
+            print(f"[Gemini] Parse failure count={PARSE_FAILURE_COUNT}", file=sys.stderr)
+            print(f"Error: Failed to parse Gemini response as JSON: {parse_error}", file=sys.stderr)
+            print(f"Response was: {response_text[:500]}", file=sys.stderr)
+            return {"vehicles": [], "error": f"Failed to parse AI response: {str(parse_error)}"}
         
         # Validate and filter by confidence threshold
         if 'vehicles' not in result:
