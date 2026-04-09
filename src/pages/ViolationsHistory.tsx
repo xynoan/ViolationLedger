@@ -2,7 +2,19 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useSearchParams, useLocation } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { SearchNoMatchesEmpty } from '@/components/search/SearchNoMatchesEmpty';
-import { FileText, Search, Filter, Download, Calendar, MapPin, BarChart3, TrendingUp, CheckCircle, Info } from 'lucide-react';
+import {
+  FileText,
+  Search,
+  Filter,
+  Download,
+  Calendar,
+  MapPin,
+  BarChart3,
+  TrendingUp,
+  CheckCircle,
+  Info,
+  Home,
+} from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
 import { trackAction } from '@/lib/auditTracking';
@@ -10,7 +22,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Violation, ViolationStatus } from '@/types/parking';
-import { violationsAPI, camerasAPI } from '@/lib/api';
+import { violationsAPI, camerasAPI, residentsAPI } from '@/lib/api';
 import { toast } from '@/hooks/use-toast';
 import {
   Table,
@@ -52,6 +64,7 @@ type ViolationListFilters = {
   startDate?: string;
   endDate?: string;
   plateNumber?: string;
+  residentId?: string;
 };
 
 function errMessage(error: unknown, fallback: string) {
@@ -87,6 +100,27 @@ export default function ViolationsHistory() {
   }, [location.state]);
 
   const highlightViolationId = searchParams.get('violationId')?.trim() ?? '';
+  const residentFilterId = searchParams.get('residentId')?.trim() ?? '';
+  const [residentFilterLabel, setResidentFilterLabel] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!residentFilterId) {
+      setResidentFilterLabel(null);
+      return;
+    }
+    let cancelled = false;
+    residentsAPI
+      .getById(residentFilterId)
+      .then((r: { name: string }) => {
+        if (!cancelled) setResidentFilterLabel(r.name);
+      })
+      .catch(() => {
+        if (!cancelled) setResidentFilterLabel(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [residentFilterId]);
 
   useEffect(() => {
     if (appliedPlatePresetRef.current) return;
@@ -143,6 +177,9 @@ export default function ViolationsHistory() {
       if (debouncedSearchTerm) {
         filters.plateNumber = debouncedSearchTerm;
       }
+      if (residentFilterId) {
+        filters.residentId = residentFilterId;
+      }
 
       const data = (await violationsAPI.getAll(filters)) as Violation[];
       const processedViolations = data.map((v) => ({
@@ -166,7 +203,7 @@ export default function ViolationsHistory() {
         setIsRefreshing(false);
       }
     }
-  }, [statusFilter, locationFilter, startDate, endDate, debouncedSearchTerm]);
+  }, [statusFilter, locationFilter, startDate, endDate, debouncedSearchTerm, residentFilterId]);
 
   const loadStats = useCallback(async () => {
     try {
@@ -213,17 +250,28 @@ export default function ViolationsHistory() {
       locationFilter === 'all' &&
       !startDate &&
       !endDate &&
-      debouncedSearchTerm.trim() === '';
+      debouncedSearchTerm.trim() === '' &&
+      !residentFilterId;
     if (broadest) {
       setRegistryHasViolations(violations.length > 0);
     }
-  }, [violations, statusFilter, locationFilter, startDate, endDate, debouncedSearchTerm]);
+  }, [violations, statusFilter, locationFilter, startDate, endDate, debouncedSearchTerm, residentFilterId]);
 
   useEffect(() => {
     if (isInitialLoading) return;
     loadViolations(false);
     loadStats();
-  }, [isInitialLoading, loadStats, loadViolations, statusFilter, locationFilter, startDate, endDate, debouncedSearchTerm]);
+  }, [
+    isInitialLoading,
+    loadStats,
+    loadViolations,
+    statusFilter,
+    locationFilter,
+    startDate,
+    endDate,
+    debouncedSearchTerm,
+    residentFilterId,
+  ]);
 
   const handleClearViolation = async (id: string) => {
     try {
@@ -307,11 +355,23 @@ export default function ViolationsHistory() {
         const next = new URLSearchParams(prev);
         next.delete('plate');
         next.delete('violationId');
+        next.delete('residentId');
         return next;
       },
       { replace: true },
     );
   };
+
+  const clearResidentFilter = useCallback(() => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete('residentId');
+        return next;
+      },
+      { replace: true },
+    );
+  }, [setSearchParams]);
 
   const uniqueLocations = Array.from(new Set(cameras.map(c => c.locationId))).sort();
 
@@ -334,7 +394,24 @@ export default function ViolationsHistory() {
       />
 
       <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
-        {multiPlateContext && (
+        {residentFilterId && (
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between rounded-lg border border-primary/25 bg-primary/5 px-3 py-2.5 text-sm">
+            <div className="flex items-start gap-2 text-muted-foreground">
+              <Home className="h-4 w-4 text-primary shrink-0 mt-0.5" />
+              <p>
+                Showing violations linked to{' '}
+                <span className="font-medium text-foreground">
+                  {residentFilterLabel ?? 'resident'}
+                </span>
+                {residentFilterLabel ? null : ' (loading name…)'}
+              </p>
+            </div>
+            <Button type="button" variant="outline" size="sm" className="shrink-0" onClick={clearResidentFilter}>
+              Show all violations
+            </Button>
+          </div>
+        )}
+        {multiPlateContext && !residentFilterId && (
           <div
             className="flex gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2.5 text-sm text-muted-foreground"
             role="status"
@@ -351,7 +428,7 @@ export default function ViolationsHistory() {
           </div>
         )}
         {/* Statistics Cards */}
-        {stats && !isLoadingStats && (
+        {stats && !isLoadingStats && !residentFilterId && (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="glass-card rounded-xl p-4">
               <div className="flex items-center justify-between">
@@ -565,9 +642,11 @@ export default function ViolationsHistory() {
             <FileText className="h-12 w-12 sm:h-16 sm:w-16 text-muted-foreground mx-auto mb-4" />
             <h3 className="text-lg font-semibold text-foreground mb-2">No Violations Found</h3>
             <p className="text-muted-foreground">
-              {searchTerm || statusFilter !== 'all' || locationFilter !== 'all' || startDate || endDate
-                ? 'Try adjusting your filters'
-                : 'No violations recorded yet'}
+              {residentFilterId
+                ? `No violations on file for vehicles linked to ${residentFilterLabel ?? 'this resident'}.`
+                : searchTerm || statusFilter !== 'all' || locationFilter !== 'all' || startDate || endDate
+                  ? 'Try adjusting your filters'
+                  : 'No violations recorded yet'}
             </p>
           </div>
         )}

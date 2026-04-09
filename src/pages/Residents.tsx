@@ -13,12 +13,12 @@ import {
   Shield,
   AlertTriangle,
   AlertCircle,
-  ScrollText,
   SlidersHorizontal,
   Copy,
   Calendar,
   FileText,
   Activity,
+  ChevronRight,
   type LucideIcon,
 } from 'lucide-react';
 import { Link, useSearchParams, createSearchParams } from 'react-router-dom';
@@ -263,17 +263,6 @@ function telHrefForNumber(contact: string): string | null {
   return `tel:${digits}`;
 }
 
-function formatVehicleDataSourceLabel(source?: string): string | null {
-  if (!source?.trim()) return null;
-  const key = source.trim().toLowerCase();
-  const labels: Record<string, string> = {
-    barangay: 'Barangay',
-    hosted: 'Hosted',
-    manual: 'Manual',
-  };
-  return labels[key] ?? source.trim();
-}
-
 function formatShortDate(d: Date) {
   return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
@@ -322,6 +311,10 @@ export default function Residents() {
   const [residentToDelete, setResidentToDelete] = useState<Resident | null>(null);
   const [isDeletingResident, setIsDeletingResident] = useState(false);
   const [profileResident, setProfileResident] = useState<Resident | null>(null);
+  /** Set when opening from the grid so URL sync effect does not clear profile before `residentId` is in searchParams. */
+  const pendingUrlResidentIdRef = useRef<string | null>(null);
+  /** True while we dismissed the sheet but `residentId` may still be in the URL for one commit — skip URL→profile open. */
+  const dismissingProfileRef = useRef(false);
   const [formData, setFormData] = useState({
     name: '',
     contactNumber: '',
@@ -491,11 +484,27 @@ export default function Residents() {
   useEffect(() => {
     const rawId = searchParams.get('residentId')?.trim();
     if (!rawId) {
+      dismissingProfileRef.current = false;
+      const waitingForUrlSync =
+        pendingUrlResidentIdRef.current != null &&
+        profileResident != null &&
+        profileResident.id === pendingUrlResidentIdRef.current;
+      if (waitingForUrlSync) {
+        return;
+      }
+      pendingUrlResidentIdRef.current = null;
       setProfileResident((prev) => (prev ? null : prev));
       return;
     }
     if (isInitialLoading) return;
+    if (pendingUrlResidentIdRef.current === rawId) {
+      pendingUrlResidentIdRef.current = null;
+    }
     if (profileResident?.id === rawId) return;
+
+    if (dismissingProfileRef.current) {
+      return;
+    }
 
     const fromList = residents.find((r) => r.id === rawId);
     if (fromList) {
@@ -763,7 +772,10 @@ export default function Residents() {
       });
       setResidentToDelete(null);
       setProfileResident((p) => (p?.id === id ? null : p));
-      if (clearProfileUrl) syncResidentIdToUrl(null);
+      if (clearProfileUrl) {
+        dismissingProfileRef.current = true;
+        syncResidentIdToUrl(null);
+      }
       queryClient.invalidateQueries({ queryKey: ['violations', 'byResident', id] });
       loadResidents();
     } catch (error: unknown) {
@@ -854,6 +866,8 @@ export default function Residents() {
   const ProfileSheetStandingIcon = profileStandingPresentation?.Icon;
 
   const closeProfileAndUrl = useCallback(() => {
+    dismissingProfileRef.current = true;
+    pendingUrlResidentIdRef.current = null;
     setProfileResident(null);
     syncResidentIdToUrl(null);
   }, [syncResidentIdToUrl]);
@@ -1104,6 +1118,8 @@ export default function Residents() {
                     type="button"
                     role="listitem"
                     onClick={() => {
+                      dismissingProfileRef.current = false;
+                      pendingUrlResidentIdRef.current = resident.id;
                       setProfileResident(resident);
                       syncResidentIdToUrl(resident.id);
                     }}
@@ -1198,10 +1214,11 @@ export default function Residents() {
             </div>
 
             <Sheet
-              modal={false}
               open={!!profileResident}
               onOpenChange={(open) => {
                 if (!open) {
+                  dismissingProfileRef.current = true;
+                  pendingUrlResidentIdRef.current = null;
                   setProfileResident(null);
                   syncResidentIdToUrl(null);
                 }
@@ -1214,8 +1231,27 @@ export default function Residents() {
                 {profileResident && profileResidentType && profileStandingPresentation && (
                   <>
                     <SheetHeader className="text-left space-y-1 pr-8">
-                      <SheetTitle className="text-xl">{profileResident.name}</SheetTitle>
-                      <SheetDescription>Resident profile and registry context</SheetDescription>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 space-y-1">
+                          <SheetTitle className="text-xl">{profileResident.name}</SheetTitle>
+                          <SheetDescription>Resident profile and registry context</SheetDescription>
+                        </div>
+                        {!isBarangayUser ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            className="shrink-0"
+                            aria-label="Edit resident"
+                            onClick={() => {
+                              handleOpenDialog(profileResident);
+                              closeProfileAndUrl();
+                            }}
+                          >
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                        ) : null}
+                      </div>
                     </SheetHeader>
                     <div className="mt-6 space-y-6 pb-8">
                       <div className="flex flex-wrap items-center gap-2">
@@ -1323,6 +1359,14 @@ export default function Residents() {
                                   </a>
                                 </Button>
                               ) : null}
+                              {profileSms ? (
+                                <Button variant="outline" size="sm" className="h-8 gap-1.5" asChild>
+                                  <a href={profileSms} onPointerDown={(e) => e.stopPropagation()}>
+                                    <MessageSquare className="h-3.5 w-3.5" />
+                                    SMS
+                                  </a>
+                                </Button>
+                              ) : null}
                               <Button
                                 type="button"
                                 variant="outline"
@@ -1376,41 +1420,35 @@ export default function Residents() {
                             {profileVehicles.map((v) => {
                               const regAt =
                                 v.registeredAt instanceof Date ? v.registeredAt : new Date(v.registeredAt);
-                              const sourceLabel = formatVehicleDataSourceLabel(v.dataSource);
-                              const rentedLabel = v.rented?.trim();
                               return (
                                 <div
                                   key={v.id}
-                                  className="rounded-lg border border-border bg-secondary/40 px-3 py-2.5 space-y-1.5"
+                                  className="rounded-lg border border-border bg-secondary/40 px-3 py-2.5 space-y-1"
                                 >
-                                  <div className="flex items-start justify-between gap-2">
-                                    <p className="font-mono text-sm font-semibold tracking-tight">{v.plateNumber}</p>
-                                    {sourceLabel ? (
-                                      <Badge variant="outline" className="shrink-0 text-[10px] font-normal px-1.5 py-0">
-                                        {sourceLabel}
-                                      </Badge>
-                                    ) : null}
-                                  </div>
-                                  <p className="text-xs text-muted-foreground truncate" title={v.ownerName}>
-                                    {v.ownerName}
+                                  <p className="font-mono text-sm font-semibold tracking-tight">{v.plateNumber}</p>
+                                  <p className="text-[11px] text-muted-foreground">
+                                    Registered {formatShortDate(regAt)}
                                   </p>
-                                  <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
-                                    <span>Registered {formatShortDate(regAt)}</span>
-                                    {rentedLabel ? (
-                                      <span className="capitalize">Rented: {rentedLabel}</span>
-                                    ) : null}
-                                  </div>
-                                  {v.purposeOfVisit?.trim() ? (
-                                    <p className="text-[11px] text-muted-foreground leading-snug">
-                                      <span className="font-medium text-foreground/85">Purpose: </span>
-                                      {v.purposeOfVisit.trim()}
-                                    </p>
-                                  ) : null}
                                 </div>
                               );
                             })}
                           </div>
                         )}
+                        <Link
+                          to={{
+                            pathname: '/vehicles',
+                            search: createSearchParams({ residentId: profileResident.id }).toString(),
+                          }}
+                          onClick={closeProfileAndUrl}
+                          className={cn(
+                            'mt-2 flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-secondary/20 px-3 py-2.5 text-sm font-medium text-foreground transition-colors',
+                            'hover:bg-secondary/70 hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                          )}
+                        >
+                          <Car className="h-4 w-4 shrink-0" aria-hidden />
+                          <span>View vehicles</span>
+                          <ChevronRight className="h-4 w-4 shrink-0 opacity-60" aria-hidden />
+                        </Link>
                       </div>
 
                       <div>
@@ -1472,95 +1510,43 @@ export default function Residents() {
                             </ul>
                           </>
                         )}
-                      </div>
-
-                      <div className="flex flex-col gap-2 pt-2 border-t border-border">
-                        <p className="text-xs uppercase text-muted-foreground">Quick actions</p>
-                        <div className="flex flex-col sm:flex-row flex-wrap gap-2">
-                          {profileSms ? (
-                            <Button variant="default" className="gap-2" asChild>
-                              <a href={profileSms} onPointerDown={(e) => e.stopPropagation()}>
-                                <MessageSquare className="h-4 w-4" />
-                                SMS resident
-                              </a>
-                            </Button>
-                          ) : (
-                            <Button variant="outline" disabled className="gap-2">
-                              <MessageSquare className="h-4 w-4" />
-                              SMS unavailable
-                            </Button>
-                          )}
-                          {!isBarangayUser && (
-                            <Button
-                              variant="secondary"
-                              className="gap-2"
-                              onClick={() => {
-                                handleOpenDialog(profileResident);
-                                setProfileResident(null);
-                                syncResidentIdToUrl(null);
-                              }}
-                            >
-                              <Edit className="h-4 w-4" />
-                              Edit profile
-                            </Button>
-                          )}
-                          <Button variant="outline" className="gap-2" asChild>
-                            <Link
-                              to="/audit-logs"
-                              state={{ presetSearch: profileResident.name }}
-                              onClick={closeProfileAndUrl}
-                            >
-                              <ScrollText className="h-4 w-4" />
-                              View activity logs
-                            </Link>
-                          </Button>
-                          <Button variant="outline" className="gap-2" asChild>
-                            <Link
-                              to={{
-                                pathname: '/vehicles',
-                                search: createSearchParams({ residentId: profileResident.id }).toString(),
-                              }}
-                              onClick={closeProfileAndUrl}
-                            >
-                              <Car className="h-4 w-4" />
-                              View vehicles
-                            </Link>
-                          </Button>
-                          {platesForProfile.length > 0 ? (
-                            <Button variant="outline" className="gap-2" asChild>
-                              <Link
-                                to={{
-                                  pathname: '/violations',
-                                  search: createSearchParams({ plate: platesForProfile[0] }).toString(),
-                                }}
-                                state={
-                                  platesForProfile.length > 1 ? { relatedPlates: platesForProfile } : undefined
-                                }
-                                onClick={closeProfileAndUrl}
-                              >
-                                <FileText className="h-4 w-4" />
-                                View violations
-                              </Link>
-                            </Button>
-                          ) : (
-                            <Button
-                              variant="outline"
-                              className="gap-2"
-                              type="button"
-                              onClick={() => {
-                                toast({
-                                  title: 'No linked plates',
-                                  description:
-                                    'Link vehicles to this resident to search violations by plate.',
-                                  variant: 'destructive',
-                                });
-                              }}
-                            >
-                              <FileText className="h-4 w-4" />
-                              View violations
-                            </Button>
-                          )}
-                        </div>
+                        {platesForProfile.length > 0 ? (
+                          <Link
+                            to={{
+                              pathname: '/violations',
+                              search: createSearchParams({ residentId: profileResident.id }).toString(),
+                            }}
+                            onClick={closeProfileAndUrl}
+                            className={cn(
+                              'mt-2 flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-secondary/20 px-3 py-2.5 text-sm font-medium text-foreground transition-colors',
+                              'hover:bg-secondary/70 hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                            )}
+                          >
+                            <FileText className="h-4 w-4 shrink-0" aria-hidden />
+                            <span>View violations</span>
+                            <ChevronRight className="h-4 w-4 shrink-0 opacity-60" aria-hidden />
+                          </Link>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              toast({
+                                title: 'No linked plates',
+                                description:
+                                  'Link vehicles to this resident to search violations by plate.',
+                                variant: 'destructive',
+                              });
+                            }}
+                            className={cn(
+                              'mt-2 flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-secondary/20 px-3 py-2.5 text-sm font-medium text-foreground transition-colors',
+                              'hover:bg-secondary/70 hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring cursor-pointer',
+                            )}
+                          >
+                            <FileText className="h-4 w-4 shrink-0" aria-hidden />
+                            <span>View violations</span>
+                            <ChevronRight className="h-4 w-4 shrink-0 opacity-60" aria-hidden />
+                          </button>
+                        )}
                       </div>
                     </div>
                   </>
