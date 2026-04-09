@@ -8,6 +8,8 @@ export interface Vehicle {
   residentId?: string;
   rented?: string;
   purposeOfVisit?: string;
+  /** Normalized slug: car, motorcycle, truck, etc. */
+  vehicleType?: string;
 }
 
 export type ResidentStatus = 'verified' | 'guest';

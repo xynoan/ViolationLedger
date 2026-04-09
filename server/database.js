@@ -216,6 +216,15 @@ async function initDatabase() {
       console.log('Note: purposeOfVisit column migration:', errorMsg);
     }
   }
+
+  try {
+    db.run(`ALTER TABLE vehicles ADD COLUMN vehicleType TEXT NOT NULL DEFAULT 'car'`);
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: vehicleType column migration:', errorMsg);
+    }
+  }
   
   db.run(`
     CREATE TABLE IF NOT EXISTS cameras (

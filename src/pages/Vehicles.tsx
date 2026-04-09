@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Plus, Search, Edit, Trash2, Phone, Car, Info, Home } from 'lucide-react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { Plus, Search, Edit, Trash2, Phone, Car, Info, Home, ChevronDown } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
 import { Button } from '@/components/ui/button';
@@ -39,10 +39,17 @@ import { useAuth } from '@/hooks/useAuth';
 import { useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { SearchNoMatchesEmpty } from '@/components/search/SearchNoMatchesEmpty';
+import { cn } from '@/lib/utils';
 
-const RENTED_OPTIONS = ['Court', 'Community Center', 'Barangay Hall'] as const;
-const RENTED_NONE = '__rented_none__';
-const PURPOSE_OPTIONS = ['Visit resident', 'Barangay hall', 'Reservation'] as const;
+const VEHICLE_TYPE_OPTIONS = [
+  { value: 'car', label: 'Car' },
+  { value: 'motorcycle', label: 'Motorcycle' },
+  { value: 'truck', label: 'Truck' },
+  { value: 'van', label: 'Van' },
+  { value: 'suv', label: 'SUV' },
+  { value: 'tricycle', label: 'Tricycle' },
+  { value: 'other', label: 'Other' },
+] as const;
 
 function errMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
@@ -51,6 +58,13 @@ function errMessage(error: unknown, fallback: string) {
 const digitsOnly = (value: string) => value.replace(/\D/g, '');
 const lettersAndSpacesOnly = (value: string) => value.replace(/[^a-zA-Z\s]/g, '');
 const ownerNameValid = (value: string) => /^[a-zA-Z\s]+$/.test(value.trim());
+
+function formatVehicleTypeLabel(value?: string): string {
+  if (!value?.trim()) return '—';
+  const v = value.trim().toLowerCase();
+  const found = VEHICLE_TYPE_OPTIONS.find((o) => o.value === v);
+  return found?.label ?? value;
+}
 
 export default function Vehicles() {
   usePageTracking();
@@ -75,11 +89,11 @@ export default function Vehicles() {
   const [formData, setFormData] = useState({
     plateNumber: '',
     ownerName: '',
-    contactNumber: '',
     residentId: '',
-    rented: '',
-    purposeOfVisit: '',
+    vehicleType: 'car' as string,
   });
+  const [ownerSuggestOpen, setOwnerSuggestOpen] = useState(false);
+  const ownerComboRef = useRef<HTMLDivElement>(null);
 
   // Load vehicles from API
   const loadResidents = useCallback(async () => {
@@ -177,6 +191,31 @@ export default function Vehicles() {
     return filteredVehicles.filter((v) => v.residentId === residentFilterId);
   }, [filteredVehicles, residentFilterId]);
 
+  const ownerQuery = formData.ownerName.trim().toLowerCase();
+  const suggestedResidents = useMemo(() => {
+    if (!residents.length) return [];
+    const q = ownerQuery;
+    const filtered = residents.filter((r) => {
+      if (!q) return true;
+      const name = r.name.toLowerCase();
+      const phone = r.contactNumber.replace(/\D/g, '');
+      const qDigits = q.replace(/\D/g, '');
+      return name.includes(q) || (qDigits.length > 0 && phone.includes(qDigits));
+    });
+    return filtered.slice(0, 12);
+  }, [residents, ownerQuery]);
+
+  useEffect(() => {
+    if (!ownerSuggestOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (ownerComboRef.current && !ownerComboRef.current.contains(e.target as Node)) {
+        setOwnerSuggestOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [ownerSuggestOpen]);
+
   const clearResidentFilter = useCallback(() => {
     setSearchParams(
       (prev) => {
@@ -189,15 +228,14 @@ export default function Vehicles() {
   }, [setSearchParams]);
 
   const resetForm = () => {
-    setFormData({ 
-      plateNumber: '', 
-      ownerName: '', 
-      contactNumber: '',
+    setFormData({
+      plateNumber: '',
+      ownerName: '',
       residentId: '',
-      rented: '',
-      purposeOfVisit: '',
+      vehicleType: 'car',
     });
     setEditingVehicle(null);
+    setOwnerSuggestOpen(false);
   };
 
   const handleOpenDialog = (vehicle?: Vehicle) => {
@@ -225,10 +263,8 @@ export default function Vehicles() {
       setFormData({
         plateNumber: vehicle.plateNumber.toUpperCase(),
         ownerName: vehicle.ownerName,
-        contactNumber: digitsOnly(vehicle.contactNumber),
         residentId: vehicle.residentId || '',
-        rented: vehicle.rented || '',
-        purposeOfVisit: vehicle.purposeOfVisit || '',
+        vehicleType: vehicle.vehicleType || 'car',
       });
     } else {
       resetForm();
@@ -252,13 +288,24 @@ export default function Vehicles() {
     }
     const plateTrimmed = formData.plateNumber.trim();
     const ownerTrimmed = formData.ownerName.trim();
-    const contactClean = digitsOnly(formData.contactNumber);
-    const contactFromResident = !!formData.residentId && !formData.rented;
+    const linkedResident = formData.residentId
+      ? residents.find((r) => r.id === formData.residentId)
+      : undefined;
+    const contactForPayload = linkedResident ? digitsOnly(linkedResident.contactNumber) : '';
 
-    if (!plateTrimmed || !ownerTrimmed || !formData.purposeOfVisit) {
+    if (!plateTrimmed || !ownerTrimmed) {
       toast({
         title: "Validation Error",
-        description: "Please fill in plate number, owner name, and purpose of visit",
+        description: "Please fill in plate number and owner name",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!formData.vehicleType) {
+      toast({
+        title: "Validation Error",
+        description: "Please select a vehicle type",
         variant: "destructive",
       });
       return;
@@ -273,43 +320,13 @@ export default function Vehicles() {
       return;
     }
 
-    const purposeIsAllowed =
-      PURPOSE_OPTIONS.includes(formData.purposeOfVisit as (typeof PURPOSE_OPTIONS)[number]) ||
-      (!!editingVehicle && formData.purposeOfVisit === editingVehicle.purposeOfVisit);
-    if (!purposeIsAllowed) {
-      toast({
-        title: "Validation Error",
-        description: "Please select a valid purpose of visit",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    if (formData.rented && !contactClean) {
-      toast({
-        title: "Validation Error",
-        description: "Contact number is required when vehicle is rented",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    if (!contactFromResident && !contactClean) {
-      toast({
-        title: "Validation Error",
-        description: "Contact number is required",
-        variant: "destructive",
-      });
-      return;
-    }
-
     const payloadBase = {
       plateNumber: plateTrimmed.toUpperCase(),
       ownerName: ownerTrimmed,
-      contactNumber: contactClean,
+      contactNumber: contactForPayload,
       residentId: formData.residentId || null,
-      rented: formData.rented || null,
-      purposeOfVisit: formData.purposeOfVisit,
+      rented: null as string | null,
+      vehicleType: formData.vehicleType,
     };
 
     try {
@@ -326,6 +343,7 @@ export default function Vehicles() {
         await vehiclesAPI.create({
           id: vehicleId,
           ...payloadBase,
+          purposeOfVisit: null,
           dataSource: 'barangay', // All vehicles are provided by Barangay
         });
         toast({
@@ -350,30 +368,13 @@ export default function Vehicles() {
     }
   };
 
-  const handleResidentChange = (residentId: string) => {
-    if (!residentId) {
-      // Clear resident selection - keep contact number as is
-      setFormData({
-        ...formData,
-        residentId: '',
-      });
-      return;
-    }
-    // Find the selected resident and auto-fill contact number
-    const selectedResident = residents.find((r) => r.id === residentId);
-    if (selectedResident) {
-      setFormData({
-        ...formData,
-        residentId: residentId,
-        contactNumber: digitsOnly(selectedResident.contactNumber),
-        rented: '',
-      });
-    } else {
-      setFormData({
-        ...formData,
-        residentId: residentId,
-      });
-    }
+  const selectOwnerResident = (r: Resident) => {
+    setFormData((prev) => ({
+      ...prev,
+      residentId: r.id,
+      ownerName: r.name,
+    }));
+    setOwnerSuggestOpen(false);
   };
 
   const getResidentNameForVehicle = (vehicle: Vehicle) => {
@@ -523,144 +524,94 @@ export default function Vehicles() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="ownerName">Owner Name *</Label>
-                    <Input
-                      id="ownerName"
-                      placeholder="Juan dela Cruz"
-                      value={formData.ownerName}
-                      onChange={(e) =>
-                        setFormData({
-                          ...formData,
-                          ownerName: lettersAndSpacesOnly(e.target.value),
-                        })
-                      }
-                      className="bg-secondary"
-                      inputMode="text"
-                      autoComplete="name"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="residentId">Resident (Optional)</Label>
-                    <Select 
-                      value={formData.residentId || undefined} 
-                      onValueChange={handleResidentChange}
-                    >
-                      <SelectTrigger id="residentId" className="bg-secondary">
-                        <SelectValue placeholder="Select a resident" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {residents.map((resident) => (
-                          <SelectItem key={resident.id} value={resident.id}>
-                            {resident.name} - {resident.contactNumber}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    {formData.residentId && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-6 text-xs"
-                        onClick={() => handleResidentChange('')}
-                      >
-                        Clear selection
-                      </Button>
-                    )}
-                    <p className="text-xs text-muted-foreground">
-                      If selected, contact number will be automatically filled from resident
-                    </p>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="rented">Rented (Optional)</Label>
+                    <Label htmlFor="vehicleType">Vehicle Type *</Label>
                     <Select
-                      value={
-                        formData.rented &&
-                        !RENTED_OPTIONS.includes(formData.rented as (typeof RENTED_OPTIONS)[number])
-                          ? formData.rented
-                          : formData.rented || RENTED_NONE
-                      }
-                      onValueChange={(v) =>
-                        setFormData((prev) => ({
-                          ...prev,
-                          rented: v === RENTED_NONE ? '' : v,
-                        }))
-                      }
+                      value={formData.vehicleType}
+                      onValueChange={(v) => setFormData({ ...formData, vehicleType: v })}
                     >
-                      <SelectTrigger id="rented" className="bg-secondary">
-                        <SelectValue placeholder="None" />
+                      <SelectTrigger id="vehicleType" className="bg-secondary">
+                        <SelectValue placeholder="Select type" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value={RENTED_NONE}>None</SelectItem>
-                        {RENTED_OPTIONS.map((opt) => (
-                          <SelectItem key={opt} value={opt}>
-                            {opt}
+                        {VEHICLE_TYPE_OPTIONS.map((opt) => (
+                          <SelectItem key={opt.value} value={opt.value}>
+                            {opt.label}
                           </SelectItem>
                         ))}
-                        {formData.rented &&
-                          !RENTED_OPTIONS.includes(formData.rented as (typeof RENTED_OPTIONS)[number]) &&
-                          formData.rented !== '' && (
-                            <SelectItem value={formData.rented}>{formData.rented}</SelectItem>
-                          )}
                       </SelectContent>
                     </Select>
-                    <p className="text-xs text-muted-foreground">
-                      If vehicle is rented, choose the location. Contact number will be the renter&apos;s.
-                    </p>
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="contactNumber">Contact Number *</Label>
-                    <Input
-                      id="contactNumber"
-                      placeholder="09171234567"
-                      value={formData.contactNumber}
-                      onChange={(e) =>
-                        setFormData({ ...formData, contactNumber: digitsOnly(e.target.value) })
-                      }
-                      className="bg-secondary"
-                      inputMode="numeric"
-                      autoComplete="tel"
-                      disabled={!!formData.residentId && !formData.rented}
-                    />
-                    {formData.residentId && !formData.rented && (
+                    <Label htmlFor="ownerName">Owner Name *</Label>
+                    <div ref={ownerComboRef} className="relative">
+                      <div className="relative">
+                        <Input
+                          id="ownerName"
+                          placeholder="Search or type owner name…"
+                          value={formData.ownerName}
+                          onChange={(e) => {
+                            const next = lettersAndSpacesOnly(e.target.value);
+                            setFormData((prev) => {
+                              const linked = prev.residentId
+                                ? residents.find((x) => x.id === prev.residentId)
+                                : undefined;
+                              const keepLink = linked && linked.name === next;
+                              return {
+                                ...prev,
+                                ownerName: next,
+                                residentId: keepLink ? prev.residentId : '',
+                              };
+                            });
+                            setOwnerSuggestOpen(true);
+                          }}
+                          onFocus={() => setOwnerSuggestOpen(true)}
+                          className="bg-secondary pr-9"
+                          inputMode="text"
+                          autoComplete="off"
+                          aria-autocomplete="list"
+                          aria-expanded={ownerSuggestOpen}
+                          aria-controls="resident-owner-suggestions"
+                        />
+                        <ChevronDown className="absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+                      </div>
+                      {ownerSuggestOpen && suggestedResidents.length > 0 ? (
+                        <ul
+                          id="resident-owner-suggestions"
+                          role="listbox"
+                          className={cn(
+                            'absolute z-[100] mt-1 max-h-48 w-full overflow-auto rounded-md border border-border bg-popover py-1 shadow-md',
+                          )}
+                        >
+                          {suggestedResidents.map((r) => (
+                            <li key={r.id} role="option" aria-selected={formData.residentId === r.id}>
+                              <button
+                                type="button"
+                                className={cn(
+                                  'flex w-full flex-col gap-0.5 px-3 py-2 text-left text-sm hover:bg-accent hover:text-accent-foreground',
+                                  formData.residentId === r.id && 'bg-accent/60',
+                                )}
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  selectOwnerResident(r);
+                                }}
+                              >
+                                <span className="font-medium text-foreground">{r.name}</span>
+                                <span className="text-xs text-muted-foreground">{r.contactNumber}</span>
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
+                    </div>
+                    {formData.residentId ? (
                       <p className="text-xs text-muted-foreground">
-                        Contact number is automatically set from selected resident
+                        Linked to resident — vehicle will be saved with this resident&apos;s ID.
+                      </p>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">
+                        Type to search residents by name or number, or enter a standalone owner name.
                       </p>
                     )}
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="purposeOfVisit">Purpose of Visit *</Label>
-                    <Select
-                      value={
-                        formData.purposeOfVisit &&
-                        !PURPOSE_OPTIONS.includes(formData.purposeOfVisit as (typeof PURPOSE_OPTIONS)[number])
-                          ? formData.purposeOfVisit
-                          : formData.purposeOfVisit || undefined
-                      }
-                      onValueChange={(v) => setFormData({ ...formData, purposeOfVisit: v })}
-                    >
-                      <SelectTrigger id="purposeOfVisit" className="bg-secondary">
-                        <SelectValue placeholder="Select purpose of visit" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {PURPOSE_OPTIONS.map((opt) => (
-                          <SelectItem key={opt} value={opt}>
-                            {opt}
-                          </SelectItem>
-                        ))}
-                        {formData.purposeOfVisit &&
-                          !PURPOSE_OPTIONS.includes(
-                            formData.purposeOfVisit as (typeof PURPOSE_OPTIONS)[number],
-                          ) && (
-                            <SelectItem value={formData.purposeOfVisit}>
-                              {formData.purposeOfVisit}
-                            </SelectItem>
-                          )}
-                      </SelectContent>
-                    </Select>
-                    <p className="text-xs text-muted-foreground">
-                      Required for all vehicles entering the barangay
-                    </p>
                   </div>
                   <DialogFooter className="!flex-row gap-2 pt-2 sm:justify-stretch">
                     <Button
@@ -815,8 +766,12 @@ export default function Vehicles() {
                       <p className="font-medium">{selectedVehicle.ownerName}</p>
                     </div>
                     <div>
+                      <p className="text-xs uppercase text-muted-foreground">Vehicle Type</p>
+                      <p>{formatVehicleTypeLabel(selectedVehicle.vehicleType)}</p>
+                    </div>
+                    <div>
                       <p className="text-xs uppercase text-muted-foreground">Contact Number</p>
-                      <p>{selectedVehicle.contactNumber}</p>
+                      <p>{selectedVehicle.contactNumber || '—'}</p>
                     </div>
                     <div>
                       <p className="text-xs uppercase text-muted-foreground">Purpose of Visit</p>

@@ -4,6 +4,22 @@ import { authenticateToken, requireRole } from '../middleware/auth.js';
 
 const router = express.Router();
 
+const ALLOWED_VEHICLE_TYPES = new Set([
+  'car',
+  'motorcycle',
+  'truck',
+  'van',
+  'suv',
+  'tricycle',
+  'other',
+]);
+
+function normalizeVehicleType(value) {
+  const v = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  if (ALLOWED_VEHICLE_TYPES.has(v)) return v;
+  return 'car';
+}
+
 router.use(authenticateToken);
 router.get('/', (req, res) => {
   try {
@@ -47,43 +63,63 @@ router.get('/:id', (req, res) => {
 
 router.post('/', (req, res) => {
   try {
-    const { id, plateNumber, ownerName, contactNumber, dataSource, residentId, rented, purposeOfVisit } = req.body;
-    
-    if (!id || !plateNumber || !ownerName || !contactNumber) {
-      return res.status(400).json({ error: 'Missing required fields' });
-    }
+    const {
+      id,
+      plateNumber,
+      ownerName,
+      contactNumber,
+      dataSource,
+      residentId,
+      rented,
+      purposeOfVisit,
+      vehicleType,
+    } = req.body;
 
-    if (!purposeOfVisit) {
-      return res.status(400).json({ error: 'Purpose of visit is required' });
+    if (!id || !plateNumber || !ownerName) {
+      return res.status(400).json({ error: 'Missing required fields' });
     }
 
     const registeredAt = new Date().toISOString();
     // Default to 'barangay' if dataSource not provided
     const vehicleDataSource = dataSource || 'barangay';
-    
-    // If residentId is provided, fetch the resident's contact number
-    let finalContactNumber = contactNumber;
+    const vt = normalizeVehicleType(vehicleType);
+    const purpose = purposeOfVisit != null && purposeOfVisit !== '' ? String(purposeOfVisit) : null;
+
+    let finalContactNumber =
+      contactNumber !== undefined && contactNumber !== null ? String(contactNumber) : '';
     if (residentId && !rented) {
       const resident = db.prepare('SELECT * FROM residents WHERE id = ?').get(residentId);
-      if (resident) {
-        finalContactNumber = resident.contactNumber;
+      if (!resident) {
+        return res.status(400).json({ error: 'Invalid resident' });
       }
+      finalContactNumber = resident.contactNumber;
     }
-    
+
     // Store contact number exactly as input - NO CONVERSION
     // Only remove spaces, dashes, and parentheses for clean storage
     const cleanedContact = finalContactNumber.trim().replace(/[\s\-\(\)]/g, '');
-    
-    if (!cleanedContact || cleanedContact.length === 0) {
-      return res.status(400).json({ 
-        error: 'Contact number is required'
+
+    if (residentId && !rented && (!cleanedContact || cleanedContact.length === 0)) {
+      return res.status(400).json({
+        error: 'Could not resolve contact for linked resident',
       });
     }
-    
+
     db.prepare(`
-      INSERT INTO vehicles (id, plateNumber, ownerName, contactNumber, registeredAt, dataSource, residentId, rented, purposeOfVisit)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, plateNumber, ownerName, cleanedContact, registeredAt, vehicleDataSource, residentId || null, rented || null, purposeOfVisit);
+      INSERT INTO vehicles (id, plateNumber, ownerName, contactNumber, registeredAt, dataSource, residentId, rented, purposeOfVisit, vehicleType)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      plateNumber,
+      ownerName,
+      cleanedContact,
+      registeredAt,
+      vehicleDataSource,
+      residentId || null,
+      rented || null,
+      purpose,
+      vt,
+    );
 
     const vehicle = db.prepare('SELECT * FROM vehicles WHERE id = ?').get(id);
     res.status(201).json({
@@ -101,35 +137,45 @@ router.post('/', (req, res) => {
 
 router.put('/:id', requireRole('admin', 'barangay_user'), (req, res) => {
   try {
-    const { plateNumber, ownerName, contactNumber, residentId, rented, purposeOfVisit } = req.body;
+    const { plateNumber, ownerName, contactNumber, residentId, rented, purposeOfVisit, vehicleType } = req.body;
     const vehicle = db.prepare('SELECT * FROM vehicles WHERE id = ?').get(req.params.id);
     
     if (!vehicle) {
       return res.status(404).json({ error: 'Vehicle not found' });
     }
 
+    const nextResidentId =
+      residentId !== undefined ? residentId || null : vehicle.residentId;
+    const nextRented = rented !== undefined ? rented || null : vehicle.rented;
+
     // If residentId is provided and not rented, fetch the resident's contact number
     let finalContactNumber = contactNumber !== undefined ? contactNumber : vehicle.contactNumber;
-    if (residentId && !rented) {
-      const resident = db.prepare('SELECT * FROM residents WHERE id = ?').get(residentId);
-      if (resident) {
-        finalContactNumber = resident.contactNumber;
+    if (nextResidentId && !nextRented) {
+      const resident = db.prepare('SELECT * FROM residents WHERE id = ?').get(nextResidentId);
+      if (!resident) {
+        return res.status(400).json({ error: 'Invalid resident' });
       }
+      finalContactNumber = resident.contactNumber;
     }
 
     // Store contact number exactly as input - NO CONVERSION
     // Only remove spaces, dashes, and parentheses for clean storage
-    const cleanedContact = finalContactNumber.trim().replace(/[\s\-\(\)]/g, '');
-    
-    if (!cleanedContact || cleanedContact.length === 0) {
-      return res.status(400).json({ 
-        error: 'Contact number is required'
+    const cleanedContact = String(finalContactNumber ?? '')
+      .trim()
+      .replace(/[\s\-\(\)]/g, '');
+
+    if (nextResidentId && !nextRented && (!cleanedContact || cleanedContact.length === 0)) {
+      return res.status(400).json({
+        error: 'Could not resolve contact for linked resident',
       });
     }
 
+    const nextVt =
+      vehicleType !== undefined ? normalizeVehicleType(vehicleType) : vehicle.vehicleType || 'car';
+
     db.prepare(`
       UPDATE vehicles 
-      SET plateNumber = ?, ownerName = ?, contactNumber = ?, residentId = ?, rented = ?, purposeOfVisit = ?
+      SET plateNumber = ?, ownerName = ?, contactNumber = ?, residentId = ?, rented = ?, purposeOfVisit = ?, vehicleType = ?
       WHERE id = ?
     `).run(
       plateNumber !== undefined ? plateNumber : vehicle.plateNumber,
@@ -138,6 +184,7 @@ router.put('/:id', requireRole('admin', 'barangay_user'), (req, res) => {
       residentId !== undefined ? (residentId || null) : vehicle.residentId,
       rented !== undefined ? (rented || null) : vehicle.rented,
       purposeOfVisit !== undefined ? purposeOfVisit : vehicle.purposeOfVisit,
+      nextVt,
       req.params.id
     );
 
