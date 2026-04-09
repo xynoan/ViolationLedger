@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { FileText, Search, Filter, Download, Calendar, MapPin, BarChart3, TrendingUp, CheckCircle } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
@@ -48,7 +48,8 @@ export default function ViolationsHistory() {
   const [violations, setViolations] = useState<Violation[]>([]);
   const [cameras, setCameras] = useState<Camera[]>([]);
   const [stats, setStats] = useState<ViolationStats | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [isLoadingStats, setIsLoadingStats] = useState(true);
   
   // Filters
@@ -57,18 +58,8 @@ export default function ViolationsHistory() {
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState<string>('');
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState<string>('');
   const [clearingId, setClearingId] = useState<string | null>(null);
-
-  useEffect(() => {
-    loadCameras();
-    loadViolations();
-    loadStats();
-  }, []);
-
-  useEffect(() => {
-    loadViolations();
-    loadStats();
-  }, [statusFilter, locationFilter, startDate, endDate, searchTerm]);
 
   const loadCameras = async () => {
     try {
@@ -79,9 +70,13 @@ export default function ViolationsHistory() {
     }
   };
 
-  const loadViolations = async () => {
+  const loadViolations = useCallback(async (initial = false) => {
     try {
-      setIsLoading(true);
+      if (initial) {
+        setIsInitialLoading(true);
+      } else {
+        setIsRefreshing(true);
+      }
       const filters: any = {};
       
       if (statusFilter !== 'all') {
@@ -96,8 +91,8 @@ export default function ViolationsHistory() {
       if (endDate) {
         filters.endDate = new Date(endDate).toISOString();
       }
-      if (searchTerm) {
-        filters.plateNumber = searchTerm;
+      if (debouncedSearchTerm) {
+        filters.plateNumber = debouncedSearchTerm;
       }
 
       const data = await violationsAPI.getAll(filters);
@@ -116,11 +111,15 @@ export default function ViolationsHistory() {
         variant: "destructive",
       });
     } finally {
-      setIsLoading(false);
+      if (initial) {
+        setIsInitialLoading(false);
+      } else {
+        setIsRefreshing(false);
+      }
     }
-  };
+  }, [statusFilter, locationFilter, startDate, endDate, debouncedSearchTerm]);
 
-  const loadStats = async () => {
+  const loadStats = useCallback(async () => {
     try {
       setIsLoadingStats(true);
       const filters: any = {};
@@ -142,7 +141,28 @@ export default function ViolationsHistory() {
     } finally {
       setIsLoadingStats(false);
     }
-  };
+  }, [startDate, endDate, locationFilter]);
+
+  useEffect(() => {
+    loadCameras();
+    loadViolations(true);
+    loadStats();
+    // Initial page bootstrap should run once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      setDebouncedSearchTerm(searchTerm);
+    }, 250);
+    return () => clearTimeout(timeout);
+  }, [searchTerm]);
+
+  useEffect(() => {
+    if (isInitialLoading) return;
+    loadViolations(false);
+    loadStats();
+  }, [isInitialLoading, loadStats, loadViolations, statusFilter, locationFilter, startDate, endDate, debouncedSearchTerm]);
 
   const handleClearViolation = async (id: string) => {
     try {
@@ -225,7 +245,7 @@ export default function ViolationsHistory() {
 
   const uniqueLocations = Array.from(new Set(cameras.map(c => c.locationId))).sort();
 
-  if (isLoading) {
+  if (isInitialLoading) {
     return (
       <div className="min-h-screen">
         <Header title="Violations History" subtitle="View and manage all parking violations" />
@@ -367,9 +387,9 @@ export default function ViolationsHistory() {
         </div>
 
         {/* Violations Table */}
-        {isLoading ? (
+        {isRefreshing ? (
           <div className="glass-card rounded-xl p-8 sm:p-12 text-center">
-            <p className="text-muted-foreground">Loading violations...</p>
+            <p className="text-muted-foreground">Refreshing violations...</p>
           </div>
         ) : violations.length > 0 ? (
           <div className="glass-card rounded-xl overflow-hidden">

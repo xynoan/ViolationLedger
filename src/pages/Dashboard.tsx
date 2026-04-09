@@ -39,6 +39,7 @@ export default function Dashboard() {
   const [isLoading, setIsLoading] = useState(true);
   const [detectionEnabled, setDetectionEnabled] = useState(true);
   const [detectionToggleLoading, setDetectionToggleLoading] = useState(false);
+  const [nowMs, setNowMs] = useState(Date.now());
 
   // Load detection enabled state on mount
   useEffect(() => {
@@ -138,6 +139,26 @@ export default function Dashboard() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setNowMs(Date.now());
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const formatCountdown = (seconds: number) => {
+    const safeSeconds = Math.max(0, seconds);
+    const hours = Math.floor(safeSeconds / 3600);
+    const mins = Math.floor((safeSeconds % 3600) / 60);
+    const secs = safeSeconds % 60;
+    if (hours > 0) {
+      return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs
+        .toString()
+        .padStart(2, '0')}`;
+    }
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
 
   const handleMarkTicketed = useCallback(
     async (violationId: string) => {
@@ -302,12 +323,11 @@ export default function Dashboard() {
                           : warning.warningExpiresAt
                           ? new Date(warning.warningExpiresAt)
                           : null;
-                      const now = new Date();
-                      const msLeft = expiresAt ? expiresAt.getTime() - now.getTime() : 0;
+                      const msLeft = expiresAt ? expiresAt.getTime() - nowMs : 0;
                       const secondsLeft = Math.max(0, Math.floor(msLeft / 1000));
                       const label =
                         secondsLeft > 0
-                          ? `${secondsLeft}s remaining`
+                          ? `${formatCountdown(secondsLeft)} remaining`
                           : 'Grace period ended';
 
                       return (

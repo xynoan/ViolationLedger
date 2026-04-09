@@ -23,7 +23,7 @@ export function RecentTickets({ violations }: RecentTicketsProps) {
       case 'cancelled':
         return { label: 'Cancelled', variant: 'outline' as const, indicator: '' };
       case 'cleared':
-        return { label: 'Cleared', variant: 'success' as const, indicator: 'status-cleared' };
+        return { label: 'Cleared', variant: 'secondary' as const, indicator: 'status-cleared' };
       default:
         return { label: status, variant: 'secondary' as const, indicator: '' };
     }

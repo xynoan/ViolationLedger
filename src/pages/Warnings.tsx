@@ -125,7 +125,7 @@ export default function Warnings() {
           </>
         ) : (
           <div className="glass-card rounded-xl p-8 sm:p-12 text-center">
-            <CheckCircle className="h-12 w-12 sm:h-16 sm:w-16 text-success mx-auto mb-4" />
+            <CheckCircle className="h-12 w-12 sm:h-16 sm:w-16 text-muted-foreground mx-auto mb-4" />
             <h3 className="text-lg sm:text-xl font-semibold text-foreground mb-2">All Clear</h3>
             <p className="text-muted-foreground text-sm sm:text-base">No active parking warnings at this time</p>
           </div>

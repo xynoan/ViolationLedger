@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Plus, Search, Edit, Trash2, Phone, Home, MapPin, Info } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
@@ -41,7 +41,8 @@ export default function Hosts() {
   const { user } = useAuth();
   const isBarangayUser = user?.role === 'barangay_user';
   const [hosts, setHosts] = useState<Host[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingHost, setEditingHost] = useState<Host | null>(null);
@@ -53,15 +54,14 @@ export default function Hosts() {
     address: '',
   });
 
-  // Load hosts from API
-  useEffect(() => {
-    loadHosts();
-  }, [searchTerm]);
-
-  const loadHosts = async () => {
+  const loadHosts = useCallback(async (initial = false, term = '') => {
     try {
-      setIsLoading(true);
-      const data = await hostsAPI.getAll(searchTerm || undefined);
+      if (initial) {
+        setIsInitialLoading(true);
+      } else {
+        setIsRefreshing(true);
+      }
+      const data = await hostsAPI.getAll(term || undefined);
       setHosts(data);
     } catch (error) {
       console.error('Error loading hosts:', error);
@@ -71,9 +71,26 @@ export default function Hosts() {
         variant: "destructive",
       });
     } finally {
-      setIsLoading(false);
+      if (initial) {
+        setIsInitialLoading(false);
+      } else {
+        setIsRefreshing(false);
+      }
     }
-  };
+  }, []);
+
+  // Load hosts from API
+  useEffect(() => {
+    loadHosts(true);
+  }, [loadHosts]);
+
+  useEffect(() => {
+    if (isInitialLoading) return;
+    const timeout = setTimeout(() => {
+      loadHosts(false, searchTerm);
+    }, 250);
+    return () => clearTimeout(timeout);
+  }, [isInitialLoading, loadHosts, searchTerm]);
 
   const filteredHosts = hosts.filter(
     (h) =>
@@ -203,7 +220,7 @@ export default function Hosts() {
   const deleteButtonClassName =
     'h-8 w-8 border-red-600 text-red-600 hover:bg-red-600/15 hover:text-red-700 dark:hover:bg-red-600/20';
 
-  if (isLoading) {
+  if (isInitialLoading) {
     return (
       <div className="min-h-screen">
         <Header title="Hosts Registry" subtitle="Manage registered hosts" />
@@ -297,6 +314,9 @@ export default function Hosts() {
             </Dialog>
           )}
         </div>
+        {isRefreshing && (
+          <p className="text-xs text-muted-foreground">Refreshing results...</p>
+        )}
 
         {hosts.length > 0 ? (
           <>

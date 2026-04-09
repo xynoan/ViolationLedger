@@ -103,8 +103,8 @@
   }
 
   .status-cleared {
-    @apply bg-success;
-    box-shadow: var(--glow-success);
+    @apply bg-muted-foreground/55;
+    box-shadow: none;
   }
 
   .status-active {

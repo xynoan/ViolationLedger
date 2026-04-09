@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Plus, Search, Edit, Trash2, Phone, Car, Info } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
@@ -53,7 +53,8 @@ export default function Vehicles() {
    const isAdmin = user?.role === 'admin';
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [hosts, setHosts] = useState<Host[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
@@ -71,28 +72,23 @@ export default function Vehicles() {
   });
 
   // Load vehicles from API
-  useEffect(() => {
-    loadVehicles();
-  }, [searchTerm]);
-
-  // Load hosts on mount so view dialog can resolve host names
-  useEffect(() => {
-    loadHosts();
-  }, []);
-
-  const loadHosts = async () => {
+  const loadHosts = useCallback(async () => {
     try {
       const data = await hostsAPI.getAll();
       setHosts(data);
     } catch (error) {
       console.error('Error loading hosts:', error);
     }
-  };
+  }, []);
 
-  const loadVehicles = async () => {
+  const loadVehicles = useCallback(async (initial = false, term = '') => {
     try {
-      setIsLoading(true);
-      const data = await vehiclesAPI.getAll(searchTerm || undefined);
+      if (initial) {
+        setIsInitialLoading(true);
+      } else {
+        setIsRefreshing(true);
+      }
+      const data = await vehiclesAPI.getAll(term || undefined);
       setVehicles(data);
     } catch (error) {
       console.error('Error loading vehicles:', error);
@@ -102,9 +98,30 @@ export default function Vehicles() {
         variant: "destructive",
       });
     } finally {
-      setIsLoading(false);
+      if (initial) {
+        setIsInitialLoading(false);
+      } else {
+        setIsRefreshing(false);
+      }
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    loadVehicles(true);
+  }, [loadVehicles]);
+
+  useEffect(() => {
+    if (isInitialLoading) return;
+    const timeout = setTimeout(() => {
+      loadVehicles(false, searchTerm);
+    }, 250);
+    return () => clearTimeout(timeout);
+  }, [isInitialLoading, loadVehicles, searchTerm]);
+
+  // Load hosts on mount so view dialog can resolve host names
+  useEffect(() => {
+    loadHosts();
+  }, [loadHosts]);
 
   const filteredVehicles = vehicles.filter(
     (v) =>
@@ -347,6 +364,20 @@ export default function Vehicles() {
     setIsViewDialogOpen(true);
   };
 
+  if (isInitialLoading) {
+    return (
+      <div className="min-h-screen">
+        <Header 
+          title="Vehicle Registry" 
+          subtitle="Manage registered vehicles"
+        />
+        <div className="p-4 sm:p-6 flex items-center justify-center min-h-[50vh]">
+          <div className="h-8 w-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen">
       <Header 
@@ -354,11 +385,6 @@ export default function Vehicles() {
         subtitle="Manage registered vehicles"
       />
 
-      {isLoading ? (
-        <div className="p-4 sm:p-6 flex items-center justify-center min-h-[50vh]">
-          <div className="h-8 w-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
-        </div>
-      ) : (
       <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
         <div className="flex items-start gap-2 rounded-lg border border-border bg-card/70 px-3 py-2 text-sm text-muted-foreground">
           <Info className="mt-0.5 h-4 w-4 text-primary" />
@@ -572,6 +598,9 @@ export default function Vehicles() {
             </Dialog>
           )}
         </div>
+        {isRefreshing && (
+          <p className="text-xs text-muted-foreground">Refreshing results...</p>
+        )}
 
         {vehicles.length > 0 ? (
           <>
@@ -779,7 +808,6 @@ export default function Vehicles() {
           </div>
         )}
       </div>
-      )}
     </div>
   );
 }
