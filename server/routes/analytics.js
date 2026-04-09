@@ -2,6 +2,26 @@ import express from 'express';
 import db from '../database.js';
 
 const router = express.Router();
+const REPEAT_OFFENDER_THRESHOLD = 3;
+
+function buildPreviousMonthWindow(currentStart, currentEndExclusive) {
+  const prevStart = new Date(currentStart);
+  prevStart.setMonth(prevStart.getMonth() - 1);
+
+  const prevEndExclusive = new Date(currentEndExclusive);
+  prevEndExclusive.setMonth(prevEndExclusive.getMonth() - 1);
+
+  // Keep comparison range length identical even around month boundaries.
+  const durationMs = currentEndExclusive.getTime() - currentStart.getTime();
+  if (prevEndExclusive.getTime() - prevStart.getTime() !== durationMs) {
+    prevEndExclusive.setTime(prevStart.getTime() + durationMs);
+  }
+
+  return {
+    startIso: prevStart.toISOString(),
+    endIso: prevEndExclusive.toISOString()
+  };
+}
 
 router.get('/', async (req, res) => {
   try {
@@ -95,6 +115,78 @@ router.get('/', async (req, res) => {
       GROUP BY hour
       ORDER BY hour
     `).all(...violationParams);
+
+    const hourCountMap = violationsByHour.reduce((acc, item) => {
+      acc[item.hour] = item.count;
+      return acc;
+    }, {});
+    const hourHeatmap = Array.from({ length: 24 }, (_, hour) => ({
+      hour,
+      count: hourCountMap[hour] || 0
+    }));
+
+    const avgInfractionDuration = db.prepare(`
+      SELECT AVG((julianday(warningExpiresAt) - julianday(timeDetected)) * 24 * 60) as avgMinutes
+      FROM violations
+      ${violationWhere}
+      AND warningExpiresAt IS NOT NULL
+      AND timeDetected IS NOT NULL
+      AND warningExpiresAt > timeDetected
+    `).get(...violationParams);
+    const avgInfractionDurationMinutes = avgInfractionDuration?.avgMinutes != null
+      ? Number(avgInfractionDuration.avgMinutes.toFixed(2))
+      : null;
+
+    const vehicleTotals = db.prepare(`
+      SELECT
+        COUNT(DISTINCT plateNumber) as uniqueVehicles,
+        SUM(CASE WHEN violationCount >= ? THEN 1 ELSE 0 END) as recurringVehicles
+      FROM (
+        SELECT plateNumber, COUNT(*) as violationCount
+        FROM violations
+        ${violationWhere}
+        AND plateNumber IS NOT NULL
+        AND TRIM(plateNumber) != ''
+        GROUP BY plateNumber
+      )
+    `).get(REPEAT_OFFENDER_THRESHOLD, ...violationParams);
+    const uniqueVehicles = Number(vehicleTotals?.uniqueVehicles || 0);
+    const recurringVehicles = Number(vehicleTotals?.recurringVehicles || 0);
+    const recurringPct = uniqueVehicles > 0
+      ? Number(((recurringVehicles / uniqueVehicles) * 100).toFixed(2))
+      : 0;
+
+    const now = new Date();
+    const currentEndExclusive = endDate
+      ? (() => {
+          const endDateObj = new Date(endDate);
+          endDateObj.setDate(endDateObj.getDate() + 1);
+          return endDateObj;
+        })()
+      : now;
+    const currentStart = startDate
+      ? new Date(startDate)
+      : new Date(currentEndExclusive.getTime() - (30 * 24 * 60 * 60 * 1000));
+
+    const previousWindow = buildPreviousMonthWindow(currentStart, currentEndExclusive);
+    const previousParams = [previousWindow.startIso, previousWindow.endIso];
+    if (locationId) {
+      previousParams.push(locationId);
+    }
+    const previousLocationFilter = locationId ? ' AND cameraLocationId = ?' : '';
+    const previousTotalViolations = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM violations
+      WHERE timeDetected >= ?
+      AND timeDetected < ?
+      ${previousLocationFilter}
+    `).get(...previousParams);
+    const previousTotal = Number(previousTotalViolations?.count || 0);
+    const currentTotal = Number(totalViolations.count || 0);
+    const delta = currentTotal - previousTotal;
+    const deltaPct = previousTotal > 0
+      ? Number(((delta / previousTotal) * 100).toFixed(2))
+      : (currentTotal > 0 ? 100 : 0);
     
     // 4. WARNING ANALYTICS
     const totalWarnings = db.prepare(`
@@ -251,7 +343,24 @@ router.get('/', async (req, res) => {
         }, {}),
         byLocation: violationsByLocation,
         overTime: violationsOverTime,
-        byHour: violationsByHour
+        byHour: violationsByHour,
+        descriptive: {
+          hourHeatmap,
+          avgInfractionDurationMinutes,
+          repeatOffenders: {
+            uniqueVehicles,
+            recurringVehicles,
+            recurringPct,
+            threshold: REPEAT_OFFENDER_THRESHOLD
+          },
+          periodComparison: {
+            currentTotal,
+            previousTotal,
+            delta,
+            deltaPct,
+            basis: 'previous_month_same_span'
+          }
+        }
       },
       warnings: {
         total: totalWarnings.count,

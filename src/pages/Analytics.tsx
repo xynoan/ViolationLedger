@@ -7,7 +7,12 @@ import {
   MessageSquare, 
   FileText,
   Calendar,
-  RefreshCw
+  RefreshCw,
+  Clock3,
+  Repeat,
+  ArrowUpRight,
+  ArrowDownRight,
+  Minus
 } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
@@ -17,7 +22,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { analyticsAPI, camerasAPI } from '@/lib/api';
+import { analyticsAPI, camerasAPI, type AnalyticsResponse } from '@/lib/api';
 import { toast } from '@/hooks/use-toast';
 import {
   ChartContainer,
@@ -27,58 +32,11 @@ import {
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid } from 'recharts';
 import { Camera as CameraType } from '@/types/parking';
 
-interface AnalyticsData {
-  users: {
-    total: number;
-    byRole: Record<string, number>;
-  };
-  vehicles: {
-    total: number;
-    bySource: Record<string, number>;
-    registrationTrends: Array<{ date: string; count: number }>;
-  };
-  violations: {
-    total: number;
-    byStatus: Record<string, number>;
-    byLocation: Array<{ cameraLocationId: string; count: number }>;
-    overTime: Array<{ date: string; count: number }>;
-    byHour: Array<{ hour: number; count: number }>;
-  };
-  warnings: {
-    total: number;
-    overTime: Array<{ date: string; count: number }>;
-    converted: number;
-    conversionRate: string;
-  };
-  detections: {
-    total: number;
-    byClass: Record<string, number>;
-    overTime: Array<{ date: string; count: number }>;
-  };
-  sms: {
-    total: number;
-    byStatus: Record<string, number>;
-  };
-  incidents: {
-    total: number;
-    byStatus: Record<string, number>;
-  };
-  cameras: {
-    total: number;
-    byStatus: Record<string, number>;
-  };
-  recent: {
-    violations: number;
-    vehicles: number;
-    detections: number;
-  };
-}
-
 const COLORS = ['#3b82f6', '#ef4444', '#f59e0b', '#10b981', '#8b5cf6', '#ec4899'];
 
 export default function Analytics() {
   usePageTracking();
-  const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
+  const [analytics, setAnalytics] = useState<AnalyticsResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [cameras, setCameras] = useState<CameraType[]>([]);
   const [startDate, setStartDate] = useState('');
@@ -147,6 +105,28 @@ export default function Analytics() {
     name: status.charAt(0).toUpperCase() + status.slice(1),
     value: count
   }));
+  const descriptive = analytics?.violations.descriptive;
+  const heatmapData = descriptive?.hourHeatmap || [];
+  const maxHeatCount = Math.max(...heatmapData.map(item => item.count), 0);
+
+  const trend = descriptive?.periodComparison;
+  const trendIcon = trend
+    ? trend.delta > 0
+      ? ArrowUpRight
+      : trend.delta < 0
+        ? ArrowDownRight
+        : Minus
+    : Minus;
+  const trendTone = trend
+    ? trend.delta > 0
+      ? 'text-destructive'
+      : trend.delta < 0
+        ? 'text-green-600'
+        : 'text-muted-foreground'
+    : 'text-muted-foreground';
+  const trendLabel = trend
+    ? `${trend.delta >= 0 ? '+' : ''}${trend.deltaPct}% from previous month`
+    : 'No comparison available';
 
   if (isLoading) {
     return (
@@ -256,6 +236,13 @@ export default function Analytics() {
                 <div>
                   <p className="text-sm text-muted-foreground">Violations</p>
                   <p className="text-2xl font-bold">{analytics.violations.total}</p>
+                  <div className={`mt-1 flex items-center gap-1 text-xs ${trendTone}`}>
+                    {(() => {
+                      const TrendIcon = trendIcon;
+                      return <TrendIcon className="h-3 w-3" />;
+                    })()}
+                    <span>{trendLabel}</span>
+                  </div>
                 </div>
                 <FileText className="h-8 w-8 text-destructive" />
               </div>
@@ -267,6 +254,7 @@ export default function Analytics() {
                 <div>
                   <p className="text-sm text-muted-foreground">Warnings</p>
                   <p className="text-2xl font-bold">{analytics.warnings.total}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{trendLabel}</p>
                 </div>
                 <AlertTriangle className="h-8 w-8 text-yellow-500" />
               </div>
@@ -278,6 +266,7 @@ export default function Analytics() {
                 <div>
                   <p className="text-sm text-muted-foreground">Vehicles</p>
                   <p className="text-2xl font-bold">{analytics.vehicles.total}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{trendLabel}</p>
                 </div>
                 <Car className="h-8 w-8 text-primary" />
               </div>
@@ -289,6 +278,7 @@ export default function Analytics() {
                 <div>
                   <p className="text-sm text-muted-foreground">Detections</p>
                   <p className="text-2xl font-bold">{analytics.detections.total}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{trendLabel}</p>
                 </div>
                 <Camera className="h-8 w-8 text-primary" />
               </div>
@@ -300,6 +290,7 @@ export default function Analytics() {
                 <div>
                   <p className="text-sm text-muted-foreground">SMS Sent</p>
                   <p className="text-2xl font-bold">{analytics.sms.total}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{trendLabel}</p>
                 </div>
                 <MessageSquare className="h-8 w-8 text-primary" />
               </div>
@@ -311,12 +302,109 @@ export default function Analytics() {
                 <div>
                   <p className="text-sm text-muted-foreground">Cameras</p>
                   <p className="text-2xl font-bold">{analytics.cameras.total}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{trendLabel}</p>
                 </div>
                 <Camera className="h-8 w-8 text-primary" />
               </div>
             </CardContent>
           </Card>
         </div>
+
+        {/* Descriptive Insights */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Clock3 className="h-5 w-5" />
+                Avg. Overstay
+              </CardTitle>
+              <CardDescription>Average warning window duration in minutes</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="text-3xl font-bold">
+                {descriptive?.avgInfractionDurationMinutes != null
+                  ? `${Math.round(descriptive.avgInfractionDurationMinutes)} min`
+                  : 'No data'}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Repeat className="h-5 w-5" />
+                Repeat Offenders
+              </CardTitle>
+              <CardDescription>
+                Vehicles with {descriptive?.repeatOffenders.threshold || 3}+ violations in selected period
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">Unique Vehicles</span>
+                <Badge variant="secondary">{descriptive?.repeatOffenders.uniqueVehicles || 0}</Badge>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">Recurring Vehicles</span>
+                <Badge variant="destructive">{descriptive?.repeatOffenders.recurringVehicles || 0}</Badge>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">Recurring Share</span>
+                <span className="font-semibold">{descriptive?.repeatOffenders.recurringPct?.toFixed(2) || '0.00'}%</span>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Period Comparison</CardTitle>
+              <CardDescription>Compared to same span in previous month</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <div className="text-sm flex items-center justify-between">
+                <span className="text-muted-foreground">Current Period</span>
+                <span className="font-medium">{trend?.currentTotal ?? 0}</span>
+              </div>
+              <div className="text-sm flex items-center justify-between">
+                <span className="text-muted-foreground">Previous Period</span>
+                <span className="font-medium">{trend?.previousTotal ?? 0}</span>
+              </div>
+              <div className={`text-sm flex items-center justify-between ${trendTone}`}>
+                <span>Delta</span>
+                <span className="font-semibold">{trend?.delta ?? 0}</span>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Peak Violation Hours */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Peak Violation Hours</CardTitle>
+            <CardDescription>Hourly density heatmap for selected filters</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-6 sm:grid-cols-8 md:grid-cols-12 gap-2">
+              {heatmapData.map((item) => {
+                const intensity = maxHeatCount > 0 ? item.count / maxHeatCount : 0;
+                const background = item.count > 0
+                  ? `rgba(239, 68, 68, ${0.2 + (intensity * 0.8)})`
+                  : 'rgba(148, 163, 184, 0.15)';
+                return (
+                  <div
+                    key={item.hour}
+                    className="rounded-md p-2 text-center border"
+                    style={{ backgroundColor: background }}
+                    title={`${item.hour.toString().padStart(2, '0')}:00 - ${item.count} violations`}
+                  >
+                    <div className="text-xs text-muted-foreground">{item.hour.toString().padStart(2, '0')}</div>
+                    <div className="text-sm font-semibold">{item.count}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
 
         {/* Key Charts */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

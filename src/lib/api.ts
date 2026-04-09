@@ -306,6 +306,70 @@ export const healthAPI = {
 };
 
 // Analytics API
+export interface AnalyticsResponse {
+  users: {
+    total: number;
+    byRole: Record<string, number>;
+  };
+  vehicles: {
+    total: number;
+    bySource: Record<string, number>;
+    registrationTrends: Array<{ date: string; count: number }>;
+  };
+  violations: {
+    total: number;
+    byStatus: Record<string, number>;
+    byLocation: Array<{ cameraLocationId: string; count: number }>;
+    overTime: Array<{ date: string; count: number }>;
+    byHour: Array<{ hour: number; count: number }>;
+    descriptive: {
+      hourHeatmap: Array<{ hour: number; count: number }>;
+      avgInfractionDurationMinutes: number | null;
+      repeatOffenders: {
+        uniqueVehicles: number;
+        recurringVehicles: number;
+        recurringPct: number;
+        threshold: number;
+      };
+      periodComparison: {
+        currentTotal: number;
+        previousTotal: number;
+        delta: number;
+        deltaPct: number;
+        basis: 'previous_month_same_span';
+      };
+    };
+  };
+  warnings: {
+    total: number;
+    overTime: Array<{ date: string; count: number }>;
+    converted: number;
+    conversionRate: string;
+  };
+  detections: {
+    total: number;
+    byClass: Record<string, number>;
+    overTime: Array<{ date: string; count: number }>;
+  };
+  sms: {
+    total: number;
+    byStatus: Record<string, number>;
+  };
+  incidents: {
+    total: number;
+    byStatus: Record<string, number>;
+  };
+  cameras: {
+    total: number;
+    byStatus: Record<string, number>;
+  };
+  recent: {
+    violations: number;
+    vehicles: number;
+    detections: number;
+  };
+}
+
 export const analyticsAPI = {
   getAll: (filters?: { startDate?: string; endDate?: string; locationId?: string }) => {
     const params = new URLSearchParams();
@@ -313,7 +377,7 @@ export const analyticsAPI = {
     if (filters?.endDate) params.append('endDate', filters.endDate);
     if (filters?.locationId) params.append('locationId', filters.locationId);
     const query = params.toString();
-    return fetchAPI(`/analytics${query ? `?${query}` : ''}`, { cache: false });
+    return fetchAPI(`/analytics${query ? `?${query}` : ''}`, { cache: false }) as Promise<AnalyticsResponse>;
   },
 };
 
