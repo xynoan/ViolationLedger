@@ -88,6 +88,33 @@ export default function Dashboard() {
         ? detectionsData.filter((d: any) => d.class_name && d.class_name.toLowerCase() !== 'none')
         : [];
       setAllCaptures(validDetections.length);
+<<<<<<< HEAD
+=======
+
+      const withReadablePlate = Array.isArray(detectionsData)
+        ? detectionsData.filter((d: any) => isReadablePlate(d.plateNumber))
+        : [];
+      if (withReadablePlate.length > 0) {
+        const sum = withReadablePlate.reduce(
+          (s, d: any) => s + normalizeConfidence(d.confidence),
+          0
+        );
+        const avg = sum / withReadablePlate.length;
+        console.log('[Dashboard] Plate read confidence summary', {
+          averageConfidence: avg,
+          readablePlateCount: withReadablePlate.length,
+        });
+        setPlateConfidenceAvg(avg);
+        setPlateReadCount(withReadablePlate.length);
+      } else {
+        console.log('[Dashboard] Plate read confidence summary', {
+          averageConfidence: null,
+          readablePlateCount: 0,
+        });
+        setPlateConfidenceAvg(null);
+        setPlateReadCount(0);
+      }
+>>>>>>> 173e28324758e792a76af943c1f4808448b9f151
     } catch (error) {
       console.error('Error loading dashboard data:', error);
       const errorMessage = error instanceof Error ? error.message : 'Failed to load dashboard data';
@@ -217,6 +244,17 @@ export default function Dashboard() {
             icon={CheckCircle}
             variant="success"
           />
+<<<<<<< HEAD
+=======
+          <StatCard
+            title="Plate Read Confidence"
+            value={plateConfidenceAvg !== null ? `${Math.round(plateConfidenceAvg * 100)}%` : 'N/A'}
+            icon={ScanSearch}
+            subtitle={plateReadCount > 0 ? `${plateReadCount} readable plate${plateReadCount === 1 ? '' : 's'} in the latest fetch` : 'No readable plates detected'}
+            variant="default"
+          />
+     
+>>>>>>> 173e28324758e792a76af943c1f4808448b9f151
         </div>
 
         {!hasData ? (

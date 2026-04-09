@@ -134,13 +134,13 @@ function saveVehicleDetectionsFromWorker(cameraId, msg) {
     const timestamp = typeof msg?.timestamp === 'string'
       ? msg.timestamp
       : new Date().toISOString();
-    const timestampId = timestamp.replace(/[-:]/g, '').split('.')[0];
     const imageUrl = typeof msg?.imageUrl === 'string' ? msg.imageUrl : null;
+    let savedCount = 0;
 
     vehicles.forEach((v, index) => {
       if (!v || typeof v.class_name !== 'string') return;
 
-      const detectionId = `DET-${cameraId}-${timestampId}-${index}`;
+      const detectionId = `DET-${cameraId}-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`;
       const plateNumber = 'NONE'; // We don't have a stable plate association here
       const confidence = typeof v.confidence === 'number' ? v.confidence : 0.0;
       const bbox = v.bbox ? JSON.stringify(v.bbox) : null;
@@ -157,7 +157,9 @@ function saveVehicleDetectionsFromWorker(cameraId, msg) {
         className,
         null // imageBase64
       );
+      savedCount += 1;
     });
+    console.log(`[Detection] Camera ${cameraId}: saved ${savedCount} detections from worker cycle`);
   } catch (e) {
     console.error('[Detection] Failed to persist vehicle detections from worker:', e);
   }
@@ -275,6 +277,7 @@ function stopWorker(cameraId) {
   if (proc) {
     proc.kill('SIGTERM');
     workers.delete(cameraId);
+    workerStatuses.delete(cameraId);
     console.log(`[Detection] Stopped worker for ${cameraId}`);
   }
 }
