@@ -4,7 +4,7 @@ import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Vehicle, Host } from '@/types/parking';
+import { Vehicle, Resident } from '@/types/parking';
 import {
   Table,
   TableBody,
@@ -34,7 +34,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from '@/hooks/use-toast';
-import { vehiclesAPI, hostsAPI } from '@/lib/api';
+import { vehiclesAPI, residentsAPI } from '@/lib/api';
 import { useAuth } from '@/hooks/useAuth';
 
 const RENTED_OPTIONS = ['Court', 'Community Center', 'Barangay Hall'] as const;
@@ -52,7 +52,7 @@ export default function Vehicles() {
    const isBarangayUser = user?.role === 'barangay_user';
    const isAdmin = user?.role === 'admin';
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
-  const [hosts, setHosts] = useState<Host[]>([]);
+  const [residents, setResidents] = useState<Resident[]>([]);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -66,18 +66,18 @@ export default function Vehicles() {
     plateNumber: '',
     ownerName: '',
     contactNumber: '',
-    hostId: '',
+    residentId: '',
     rented: '',
     purposeOfVisit: '',
   });
 
   // Load vehicles from API
-  const loadHosts = useCallback(async () => {
+  const loadResidents = useCallback(async () => {
     try {
-      const data = await hostsAPI.getAll();
-      setHosts(data);
+      const data = await residentsAPI.getAll();
+      setResidents(data);
     } catch (error) {
-      console.error('Error loading hosts:', error);
+      console.error('Error loading residents:', error);
     }
   }, []);
 
@@ -118,10 +118,10 @@ export default function Vehicles() {
     return () => clearTimeout(timeout);
   }, [isInitialLoading, loadVehicles, searchTerm]);
 
-  // Load hosts on mount so view dialog can resolve host names
+  // Load residents on mount so view dialog can resolve resident names
   useEffect(() => {
-    loadHosts();
-  }, [loadHosts]);
+    loadResidents();
+  }, [loadResidents]);
 
   const filteredVehicles = vehicles.filter(
     (v) =>
@@ -134,7 +134,7 @@ export default function Vehicles() {
       plateNumber: '', 
       ownerName: '', 
       contactNumber: '',
-      hostId: '',
+      residentId: '',
       rented: '',
       purposeOfVisit: '',
     });
@@ -167,7 +167,7 @@ export default function Vehicles() {
         plateNumber: vehicle.plateNumber.toUpperCase(),
         ownerName: vehicle.ownerName,
         contactNumber: digitsOnly(vehicle.contactNumber),
-        hostId: vehicle.hostId || '',
+        residentId: vehicle.residentId || '',
         rented: vehicle.rented || '',
         purposeOfVisit: vehicle.purposeOfVisit || '',
       });
@@ -194,7 +194,7 @@ export default function Vehicles() {
     const plateTrimmed = formData.plateNumber.trim();
     const ownerTrimmed = formData.ownerName.trim();
     const contactClean = digitsOnly(formData.contactNumber);
-    const contactFromHost = !!formData.hostId && !formData.rented;
+    const contactFromResident = !!formData.residentId && !formData.rented;
 
     if (!plateTrimmed || !ownerTrimmed || !formData.purposeOfVisit) {
       toast({
@@ -235,7 +235,7 @@ export default function Vehicles() {
       return;
     }
 
-    if (!contactFromHost && !contactClean) {
+    if (!contactFromResident && !contactClean) {
       toast({
         title: "Validation Error",
         description: "Contact number is required",
@@ -248,7 +248,7 @@ export default function Vehicles() {
       plateNumber: plateTrimmed.toUpperCase(),
       ownerName: ownerTrimmed,
       contactNumber: contactClean,
-      hostId: formData.hostId || null,
+      residentId: formData.residentId || null,
       rented: formData.rented || null,
       purposeOfVisit: formData.purposeOfVisit,
     };
@@ -285,36 +285,36 @@ export default function Vehicles() {
     }
   };
 
-  const handleHostChange = (hostId: string) => {
-    if (!hostId) {
-      // Clear host selection - keep contact number as is
+  const handleResidentChange = (residentId: string) => {
+    if (!residentId) {
+      // Clear resident selection - keep contact number as is
       setFormData({
         ...formData,
-        hostId: '',
+        residentId: '',
       });
       return;
     }
-    // Find the selected host and auto-fill contact number
-    const selectedHost = hosts.find(h => h.id === hostId);
-    if (selectedHost) {
+    // Find the selected resident and auto-fill contact number
+    const selectedResident = residents.find((r) => r.id === residentId);
+    if (selectedResident) {
       setFormData({
         ...formData,
-        hostId: hostId,
-        contactNumber: digitsOnly(selectedHost.contactNumber),
+        residentId: residentId,
+        contactNumber: digitsOnly(selectedResident.contactNumber),
         rented: '',
       });
     } else {
       setFormData({
         ...formData,
-        hostId: hostId,
+        residentId: residentId,
       });
     }
   };
 
-  const getHostNameForVehicle = (vehicle: Vehicle) => {
-    if (!vehicle.hostId) return null;
-    const host = hosts.find((h) => h.id === vehicle.hostId);
-    return host?.name || null;
+  const getResidentNameForVehicle = (vehicle: Vehicle) => {
+    if (!vehicle.residentId) return null;
+    const resident = residents.find((r) => r.id === vehicle.residentId);
+    return resident?.name || null;
   };
 
   const requestDeleteVehicle = (vehicle: Vehicle) => {
@@ -454,35 +454,35 @@ export default function Vehicles() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="hostId">Host (Optional)</Label>
+                    <Label htmlFor="residentId">Resident (Optional)</Label>
                     <Select 
-                      value={formData.hostId || undefined} 
-                      onValueChange={handleHostChange}
+                      value={formData.residentId || undefined} 
+                      onValueChange={handleResidentChange}
                     >
-                      <SelectTrigger id="hostId" className="bg-secondary">
-                        <SelectValue placeholder="Select a host" />
+                      <SelectTrigger id="residentId" className="bg-secondary">
+                        <SelectValue placeholder="Select a resident" />
                       </SelectTrigger>
                       <SelectContent>
-                        {hosts.map((host) => (
-                          <SelectItem key={host.id} value={host.id}>
-                            {host.name} - {host.contactNumber}
+                        {residents.map((resident) => (
+                          <SelectItem key={resident.id} value={resident.id}>
+                            {resident.name} - {resident.contactNumber}
                           </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
-                    {formData.hostId && (
+                    {formData.residentId && (
                       <Button
                         type="button"
                         variant="ghost"
                         size="sm"
                         className="h-6 text-xs"
-                        onClick={() => handleHostChange('')}
+                        onClick={() => handleResidentChange('')}
                       >
                         Clear selection
                       </Button>
                     )}
                     <p className="text-xs text-muted-foreground">
-                      If selected, contact number will be automatically filled from host
+                      If selected, contact number will be automatically filled from resident
                     </p>
                   </div>
                   <div className="space-y-2">
@@ -534,11 +534,11 @@ export default function Vehicles() {
                       className="bg-secondary"
                       inputMode="numeric"
                       autoComplete="tel"
-                      disabled={!!formData.hostId && !formData.rented}
+                      disabled={!!formData.residentId && !formData.rented}
                     />
-                    {formData.hostId && !formData.rented && (
+                    {formData.residentId && !formData.rented && (
                       <p className="text-xs text-muted-foreground">
-                        Contact number is automatically set from selected host
+                        Contact number is automatically set from selected resident
                       </p>
                     )}
                   </div>
@@ -738,8 +738,8 @@ export default function Vehicles() {
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div>
-                        <p className="text-xs uppercase text-muted-foreground">Host</p>
-                        <p>{getHostNameForVehicle(selectedVehicle) || 'None'}</p>
+                        <p className="text-xs uppercase text-muted-foreground">Resident</p>
+                        <p>{getResidentNameForVehicle(selectedVehicle) || 'None'}</p>
                       </div>
                       <div>
                         <p className="text-xs uppercase text-muted-foreground">Rented</p>

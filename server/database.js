@@ -48,10 +48,53 @@ async function initDatabase() {
   db.run('PRAGMA synchronous = NORMAL'); // Balance between safety and performance
   db.run('PRAGMA cache_size = -64000'); // 64MB cache
   db.run('PRAGMA temp_store = MEMORY'); // Store temp tables in memory
-  
-  // Create hosts table
+
+  // Legacy rename: hosts → residents, vehicles.hostId → residentId (before CREATE IF NOT EXISTS)
+  // Uses raw sql.js Statement API (step / getAsObject), not dbWrapper helpers.
+  const legacyTableExists = (tableName) => {
+    const stmt = db.prepare(
+      "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+    );
+    stmt.bind([tableName]);
+    const exists = stmt.step();
+    stmt.free();
+    return exists;
+  };
+  const legacyVehicleColumnNames = () => {
+    const stmt = db.prepare('PRAGMA table_info(vehicles)');
+    const names = [];
+    while (stmt.step()) {
+      const row = stmt.getAsObject();
+      if (row.name) names.push(String(row.name));
+    }
+    stmt.free();
+    return names;
+  };
+  try {
+    if (legacyTableExists('hosts') && !legacyTableExists('residents')) {
+      db.run('ALTER TABLE hosts RENAME TO residents');
+    }
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    console.log('Note: hosts→residents migration:', errorMsg);
+  }
+  try {
+    if (legacyTableExists('vehicles')) {
+      const names = legacyVehicleColumnNames();
+      if (names.includes('hostId') && !names.includes('residentId')) {
+        db.run('ALTER TABLE vehicles RENAME COLUMN hostId TO residentId');
+      }
+    }
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('no such column') && !errorMsg.includes('duplicate column name')) {
+      console.log('Note: hostId→residentId migration:', errorMsg);
+    }
+  }
+
+  // Create residents table
   db.run(`
-    CREATE TABLE IF NOT EXISTS hosts (
+    CREATE TABLE IF NOT EXISTS residents (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       contactNumber TEXT NOT NULL,
@@ -69,10 +112,10 @@ async function initDatabase() {
       contactNumber TEXT NOT NULL,
       registeredAt TEXT NOT NULL,
       dataSource TEXT NOT NULL DEFAULT 'barangay',
-      hostId TEXT,
+      residentId TEXT,
       rented TEXT,
       purposeOfVisit TEXT,
-      FOREIGN KEY (hostId) REFERENCES hosts(id) ON DELETE SET NULL
+      FOREIGN KEY (residentId) REFERENCES residents(id) ON DELETE SET NULL
     )
   `);
   
@@ -94,13 +137,13 @@ async function initDatabase() {
     // Ignore errors
   }
 
-  // Migrate existing vehicles table to add hostId, rented, and purposeOfVisit columns if needed
+  // Migrate existing vehicles table to add residentId, rented, and purposeOfVisit columns if needed
   try {
-    db.run('ALTER TABLE vehicles ADD COLUMN hostId TEXT');
+    db.run('ALTER TABLE vehicles ADD COLUMN residentId TEXT');
   } catch (error) {
     const errorMsg = error?.message || String(error);
     if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
-      console.log('Note: hostId column migration:', errorMsg);
+      console.log('Note: residentId column migration:', errorMsg);
     }
   }
 

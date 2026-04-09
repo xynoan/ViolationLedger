@@ -2,7 +2,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "@/hooks/useAuth";
 import { MainLayout } from "@/components/layout/MainLayout";
 import Index from "./pages/Index";
@@ -10,7 +10,7 @@ import Login from "./pages/Login";
 import ActivateAccount from "./pages/ActivateAccount";
 import ResetPassword from "./pages/ResetPassword";
 import Vehicles from "./pages/Vehicles";
-import Hosts from "./pages/Hosts";
+import Residents from "./pages/Residents";
 import Cameras from "./pages/Cameras";
 import Warnings from "./pages/Warnings";
 import Tickets from "./pages/Tickets";
@@ -56,7 +56,8 @@ const App = () => (
                     <Routes>
                       <Route path="/" element={<Index />} />
                       <Route path="/vehicles" element={<Vehicles />} />
-                      <Route path="/hosts" element={<Hosts />} />
+                      <Route path="/hosts" element={<Navigate to="/residents" replace />} />
+                      <Route path="/residents" element={<Residents />} />
                       <Route path="/cameras" element={<Cameras />} />
                       <Route path="/warnings" element={<Warnings />} />
                       <Route path="/tickets" element={<Tickets />} />

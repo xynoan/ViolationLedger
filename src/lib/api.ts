@@ -168,22 +168,22 @@ export const vehiclesAPI = {
   }),
 };
 
-// Hosts API
-export const hostsAPI = {
+// Residents API
+export const residentsAPI = {
   getAll: (search?: string) => {
     const query = search ? `?search=${encodeURIComponent(search)}` : '';
-    return fetchAPI(`/hosts${query}`);
+    return fetchAPI(`/residents${query}`);
   },
-  getById: (id: string) => fetchAPI(`/hosts/${id}`),
-  create: (data: any) => fetchAPI('/hosts', {
+  getById: (id: string) => fetchAPI(`/residents/${id}`),
+  create: (data: any) => fetchAPI('/residents', {
     method: 'POST',
     body: JSON.stringify(data),
   }),
-  update: (id: string, data: any) => fetchAPI(`/hosts/${id}`, {
+  update: (id: string, data: any) => fetchAPI(`/residents/${id}`, {
     method: 'PUT',
     body: JSON.stringify(data),
   }),
-  delete: (id: string) => fetchAPI(`/hosts/${id}`, {
+  delete: (id: string) => fetchAPI(`/residents/${id}`, {
     method: 'DELETE',
   }),
 };

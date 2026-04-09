@@ -9,7 +9,7 @@ const ROWS_PER_TABLE = Math.max(
 const RESET_MODE = process.argv.includes('--reset');
 
 const TABLES = [
-  'hosts',
+  'residents',
   'vehicles',
   'cameras',
   'detections',
@@ -51,23 +51,23 @@ function clearCoreTables() {
     'violations',
     'vehicles',
     'cameras',
-    'hosts',
+    'residents',
   ];
   for (const table of clearOrder) {
     db.prepare(`DELETE FROM ${table}`).run();
   }
 }
 
-function seedHosts() {
+function seedResidents() {
   const stmt = db.prepare(
-    `INSERT OR REPLACE INTO hosts (id, name, contactNumber, address, createdAt)
+    `INSERT OR REPLACE INTO residents (id, name, contactNumber, address, createdAt)
      VALUES (?, ?, ?, ?, ?)`
   );
   for (let i = 1; i <= ROWS_PER_TABLE; i += 1) {
-    const hostId = id('HOST', i);
+    const residentId = id('RESIDENT', i);
     stmt.run(
-      hostId,
-      `Host ${i}`,
+      residentId,
+      `Resident ${i}`,
       `0917${String(1000000 + i).slice(-7)}`,
       `Lot ${i}, Main Street, Barangay ${((i - 1) % 10) + 1}`,
       isoHoursAgo(24 * (ROWS_PER_TABLE - i + 1))
@@ -78,7 +78,7 @@ function seedHosts() {
 function seedVehicles() {
   const stmt = db.prepare(
     `INSERT OR REPLACE INTO vehicles
-      (id, plateNumber, ownerName, contactNumber, registeredAt, dataSource, hostId, rented, purposeOfVisit)
+      (id, plateNumber, ownerName, contactNumber, registeredAt, dataSource, residentId, rented, purposeOfVisit)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
   const visitPurposes = ['Delivery', 'Resident Visit', 'Maintenance', 'Pickup', 'Drop-off'];
@@ -90,7 +90,7 @@ function seedVehicles() {
       `09${String(100000000 + i).slice(-9)}`,
       isoHoursAgo(24 * ((i % 45) + 1)),
       seededStatus(['barangay', 'hosted', 'manual'], i),
-      id('HOST', ((i - 1) % ROWS_PER_TABLE) + 1),
+      id('RESIDENT', ((i - 1) % ROWS_PER_TABLE) + 1),
       seededStatus(['yes', 'no'], i),
       visitPurposes[i % visitPurposes.length]
     );
@@ -271,7 +271,7 @@ function run() {
       clearCoreTables();
     }
 
-    seedHosts();
+    seedResidents();
     seedVehicles();
     seedCameras();
     seedDetections();

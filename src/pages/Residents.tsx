@@ -4,7 +4,7 @@ import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Host } from '@/types/parking';
+import { Resident } from '@/types/parking';
 import {
   Table,
   TableBody,
@@ -33,41 +33,41 @@ import {
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/hooks/use-toast';
-import { hostsAPI } from '@/lib/api';
+import { residentsAPI } from '@/lib/api';
 import { useAuth } from '@/hooks/useAuth';
 
-export default function Hosts() {
+export default function Residents() {
   usePageTracking();
   const { user } = useAuth();
   const isBarangayUser = user?.role === 'barangay_user';
-  const [hosts, setHosts] = useState<Host[]>([]);
+  const [residents, setResidents] = useState<Resident[]>([]);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [editingHost, setEditingHost] = useState<Host | null>(null);
-  const [hostToDelete, setHostToDelete] = useState<Host | null>(null);
-  const [isDeletingHost, setIsDeletingHost] = useState(false);
+  const [editingResident, setEditingResident] = useState<Resident | null>(null);
+  const [residentToDelete, setResidentToDelete] = useState<Resident | null>(null);
+  const [isDeletingResident, setIsDeletingResident] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
     contactNumber: '',
     address: '',
   });
 
-  const loadHosts = useCallback(async (initial = false, term = '') => {
+  const loadResidents = useCallback(async (initial = false, term = '') => {
     try {
       if (initial) {
         setIsInitialLoading(true);
       } else {
         setIsRefreshing(true);
       }
-      const data = await hostsAPI.getAll(term || undefined);
-      setHosts(data);
+      const data = await residentsAPI.getAll(term || undefined);
+      setResidents(data);
     } catch (error) {
-      console.error('Error loading hosts:', error);
+      console.error('Error loading residents:', error);
       toast({
         title: "Error",
-        description: "Failed to load hosts. Make sure the backend server is running.",
+        description: "Failed to load residents. Make sure the backend server is running.",
         variant: "destructive",
       });
     } finally {
@@ -79,46 +79,45 @@ export default function Hosts() {
     }
   }, []);
 
-  // Load hosts from API
   useEffect(() => {
-    loadHosts(true);
-  }, [loadHosts]);
+    loadResidents(true);
+  }, [loadResidents]);
 
   useEffect(() => {
     if (isInitialLoading) return;
     const timeout = setTimeout(() => {
-      loadHosts(false, searchTerm);
+      loadResidents(false, searchTerm);
     }, 250);
     return () => clearTimeout(timeout);
-  }, [isInitialLoading, loadHosts, searchTerm]);
+  }, [isInitialLoading, loadResidents, searchTerm]);
 
-  const filteredHosts = hosts.filter(
-    (h) =>
-      h.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      h.contactNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (h.address && h.address.toLowerCase().includes(searchTerm.toLowerCase()))
+  const filteredResidents = residents.filter(
+    (r) =>
+      r.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      r.contactNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (r.address && r.address.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
   const resetForm = () => {
     setFormData({ name: '', contactNumber: '', address: '' });
-    setEditingHost(null);
+    setEditingResident(null);
   };
 
-  const handleOpenDialog = (host?: Host) => {
+  const handleOpenDialog = (resident?: Resident) => {
     if (isBarangayUser) {
       toast({
         title: "Permission Denied",
-        description: "Barangay users are not allowed to modify hosts.",
+        description: "Barangay users are not allowed to modify residents.",
         variant: "destructive",
       });
       return;
     }
-    if (host) {
-      setEditingHost(host);
+    if (resident) {
+      setEditingResident(resident);
       setFormData({
-        name: host.name,
-        contactNumber: host.contactNumber,
-        address: host.address || '',
+        name: resident.name,
+        contactNumber: resident.contactNumber,
+        address: resident.address || '',
       });
     } else {
       resetForm();
@@ -131,11 +130,11 @@ export default function Hosts() {
     resetForm();
   };
 
-  const handleSaveHost = async () => {
+  const handleSaveResident = async () => {
     if (isBarangayUser) {
       toast({
         title: "Permission Denied",
-        description: "Barangay users are not allowed to modify hosts.",
+        description: "Barangay users are not allowed to modify residents.",
         variant: "destructive",
       });
       return;
@@ -150,70 +149,70 @@ export default function Hosts() {
     }
 
     try {
-      if (editingHost) {
-        await hostsAPI.update(editingHost.id, formData);
+      if (editingResident) {
+        await residentsAPI.update(editingResident.id, formData);
         toast({
-          title: "Host Updated",
-          description: "Host details updated successfully",
+          title: "Resident Updated",
+          description: "Resident details updated successfully",
         });
       } else {
-        const hostId = `HOST-${Date.now()}`;
-        await hostsAPI.create({
-          id: hostId,
+        const residentId = `RESIDENT-${Date.now()}`;
+        await residentsAPI.create({
+          id: residentId,
           ...formData,
         });
         toast({
-          title: "Host Added",
-          description: "New host added successfully",
+          title: "Resident Added",
+          description: "New resident added successfully",
         });
       }
       handleCloseDialog();
-      loadHosts();
+      loadResidents();
     } catch (error: any) {
       toast({
         title: "Error",
-        description: error.message || "Failed to save host",
+        description: error.message || "Failed to save resident",
         variant: "destructive",
       });
     }
   };
 
-  const requestDeleteHost = (host: Host) => {
+  const requestDeleteResident = (resident: Resident) => {
     if (isBarangayUser) {
       toast({
         title: "Permission Denied",
-        description: "Barangay users are not allowed to modify hosts.",
+        description: "Barangay users are not allowed to modify residents.",
         variant: "destructive",
       });
       return;
     }
-    setHostToDelete(host);
+    setResidentToDelete(resident);
   };
 
-  const confirmDeleteHost = async () => {
-    if (!hostToDelete) return;
+  const confirmDeleteResident = async () => {
+    if (!residentToDelete) return;
     if (isBarangayUser) {
-      setHostToDelete(null);
+      setResidentToDelete(null);
       return;
     }
-    const id = hostToDelete.id;
-    setIsDeletingHost(true);
+    const id = residentToDelete.id;
+    setIsDeletingResident(true);
     try {
-      await hostsAPI.delete(id);
+      await residentsAPI.delete(id);
       toast({
-        title: "Host Deleted",
-        description: "Host removed from registry",
+        title: "Resident Deleted",
+        description: "Resident removed from registry",
       });
-      setHostToDelete(null);
-      loadHosts();
+      setResidentToDelete(null);
+      loadResidents();
     } catch (error: any) {
       toast({
         title: "Error",
-        description: error.message || "Failed to delete host",
+        description: error.message || "Failed to delete resident",
         variant: "destructive",
       });
     } finally {
-      setIsDeletingHost(false);
+      setIsDeletingResident(false);
     }
   };
 
@@ -223,7 +222,7 @@ export default function Hosts() {
   if (isInitialLoading) {
     return (
       <div className="min-h-screen">
-        <Header title="Hosts Registry" subtitle="Manage registered hosts" />
+        <Header title="Residents Registry" subtitle="Manage registered residents" />
         <div className="p-4 sm:p-6 flex items-center justify-center min-h-[50vh]">
           <div className="h-8 w-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
         </div>
@@ -234,18 +233,17 @@ export default function Hosts() {
   return (
     <div className="min-h-screen">
       <Header 
-        title="Hosts Registry" 
-        subtitle="Manage registered hosts"
+        title="Residents Registry" 
+        subtitle="Manage registered residents"
       />
 
       <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
         <div className="flex items-start gap-2 rounded-lg border border-border bg-card/70 px-3 py-2 text-sm text-muted-foreground">
           <Info className="mt-0.5 h-4 w-4 text-primary" />
           <p className="leading-relaxed">
-          Here's where we add resident details whom will take the role of "Host". They will be the ones who will be receiving a text message if their visitor (non-resident) parked illegally. 
+            Residents listed here are the contacts who receive a text message when a visitor (non-resident) parks illegally.
           </p>
         </div>
-        {/* Actions Bar */}
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 sm:gap-4">
           <div className="relative flex-1 sm:max-w-md">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -262,16 +260,16 @@ export default function Hosts() {
               <DialogTrigger asChild>
                 <Button className="w-full sm:w-auto">
                   <Plus className="h-4 w-4 mr-2" />
-                  Add Host
+                  Add Resident
                 </Button>
               </DialogTrigger>
               <DialogContent className="bg-card border-border mx-4 sm:mx-auto max-w-[calc(100vw-2rem)] sm:max-w-lg">
                 <DialogHeader>
-                  <DialogTitle>{editingHost ? 'Edit Host' : 'Add New Host'}</DialogTitle>
+                  <DialogTitle>{editingResident ? 'Edit Resident' : 'Add New Resident'}</DialogTitle>
                   <DialogDescription>
-                    {editingHost 
-                      ? 'Update the host information below.' 
-                      : 'Enter the host details to add them to the system.'}
+                    {editingResident 
+                      ? 'Update the resident information below.' 
+                      : 'Enter the resident details to add them to the system.'}
                   </DialogDescription>
                 </DialogHeader>
                 <div className="space-y-4 py-4">
@@ -306,8 +304,8 @@ export default function Hosts() {
                       rows={3}
                     />
                   </div>
-                  <Button onClick={handleSaveHost} className="w-full">
-                    {editingHost ? 'Save Changes' : 'Add Host'}
+                  <Button onClick={handleSaveResident} className="w-full">
+                    {editingResident ? 'Save Changes' : 'Add Resident'}
                   </Button>
                 </div>
               </DialogContent>
@@ -318,26 +316,25 @@ export default function Hosts() {
           <p className="text-xs text-muted-foreground">Refreshing results...</p>
         )}
 
-        {hosts.length > 0 ? (
+        {residents.length > 0 ? (
           <>
-            {/* Mobile Cards */}
             <div className="block sm:hidden space-y-3">
-              {filteredHosts.map((host) => (
-                <div key={host.id} className="glass-card rounded-xl p-4 space-y-3">
+              {filteredResidents.map((resident) => (
+                <div key={resident.id} className="glass-card rounded-xl p-4 space-y-3">
                   <div className="flex items-center justify-between">
-                    <span className="font-semibold text-lg">{host.name}</span>
+                    <span className="font-semibold text-lg">{resident.name}</span>
                     {!isBarangayUser && (
                       <div className="flex items-center gap-1">
-                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleOpenDialog(host)}>
+                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleOpenDialog(resident)}>
                           <Edit className="h-4 w-4" />
                         </Button>
                         <Button
                           type="button"
                           variant="outline"
                           size="icon"
-                          onClick={() => requestDeleteHost(host)}
+                          onClick={() => requestDeleteResident(resident)}
                           className={deleteButtonClassName}
-                          aria-label="Delete host"
+                          aria-label="Delete resident"
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
@@ -346,19 +343,18 @@ export default function Hosts() {
                   </div>
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <Phone className="h-4 w-4" />
-                    {host.contactNumber}
+                    {resident.contactNumber}
                   </div>
-                  {host.address && (
+                  {resident.address && (
                     <div className="flex items-start gap-2 text-sm text-muted-foreground">
                       <MapPin className="h-4 w-4 mt-0.5" />
-                      <span>{host.address}</span>
+                      <span>{resident.address}</span>
                     </div>
                   )}
                 </div>
               ))}
             </div>
 
-            {/* Desktop Table */}
             <div className="glass-card rounded-xl overflow-hidden hidden sm:block">
               <div className="overflow-x-auto">
                 <Table>
@@ -371,31 +367,31 @@ export default function Hosts() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredHosts.map((host) => (
-                      <TableRow key={host.id} className="border-border">
-                        <TableCell className="font-semibold">{host.name}</TableCell>
+                    {filteredResidents.map((resident) => (
+                      <TableRow key={resident.id} className="border-border">
+                        <TableCell className="font-semibold">{resident.name}</TableCell>
                         <TableCell>
                           <div className="flex items-center gap-2 text-muted-foreground">
                             <Phone className="h-4 w-4" />
-                            {host.contactNumber}
+                            {resident.contactNumber}
                           </div>
                         </TableCell>
                         <TableCell className="text-muted-foreground">
-                          {host.address || '-'}
+                          {resident.address || '-'}
                         </TableCell>
                         <TableCell className="text-right">
                           {!isBarangayUser && (
                             <div className="flex items-center justify-end gap-2">
-                              <Button variant="ghost" size="icon" onClick={() => handleOpenDialog(host)}>
+                              <Button variant="ghost" size="icon" onClick={() => handleOpenDialog(resident)}>
                                 <Edit className="h-4 w-4" />
                               </Button>
                               <Button
                                 type="button"
                                 variant="outline"
                                 size="icon"
-                                onClick={() => requestDeleteHost(host)}
+                                onClick={() => requestDeleteResident(resident)}
                                 className={deleteButtonClassName}
-                                aria-label="Delete host"
+                                aria-label="Delete resident"
                               >
                                 <Trash2 className="h-4 w-4" />
                               </Button>
@@ -410,35 +406,35 @@ export default function Hosts() {
             </div>
 
             <AlertDialog
-              open={!!hostToDelete}
+              open={!!residentToDelete}
               onOpenChange={(open) => {
-                if (!open) setHostToDelete(null);
+                if (!open) setResidentToDelete(null);
               }}
             >
               <AlertDialogContent>
                 <AlertDialogHeader>
-                  <AlertDialogTitle>Delete host</AlertDialogTitle>
+                  <AlertDialogTitle>Delete resident</AlertDialogTitle>
                   <AlertDialogDescription>
                     Are you sure you want to delete this record?
-                    {hostToDelete && (
+                    {residentToDelete && (
                       <>
                         {' '}
                         This will permanently remove{' '}
-                        <span className="font-semibold text-foreground">{hostToDelete.name}</span>{' '}
+                        <span className="font-semibold text-foreground">{residentToDelete.name}</span>{' '}
                         from the registry.
                       </>
                     )}
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
-                  <AlertDialogCancel disabled={isDeletingHost}>Cancel</AlertDialogCancel>
+                  <AlertDialogCancel disabled={isDeletingResident}>Cancel</AlertDialogCancel>
                   <Button
                     type="button"
                     className="bg-red-600 text-white hover:bg-red-700 focus-visible:ring-red-600"
-                    disabled={isDeletingHost}
-                    onClick={() => void confirmDeleteHost()}
+                    disabled={isDeletingResident}
+                    onClick={() => void confirmDeleteResident()}
                   >
-                    {isDeletingHost ? 'Deleting…' : 'Delete'}
+                    {isDeletingResident ? 'Deleting…' : 'Delete'}
                   </Button>
                 </AlertDialogFooter>
               </AlertDialogContent>
@@ -447,14 +443,14 @@ export default function Hosts() {
         ) : (
           <div className="glass-card rounded-xl p-8 sm:p-12 text-center">
             <Home className="h-12 w-12 sm:h-16 sm:w-16 text-muted-foreground mx-auto mb-4" />
-            <h3 className="text-lg font-semibold text-foreground mb-2">No Hosts Registered</h3>
+            <h3 className="text-lg font-semibold text-foreground mb-2">No Residents Registered</h3>
             <p className="text-muted-foreground mb-6">
-              Add your first host to the registry
+              Add your first resident to the registry
             </p>
             {!isBarangayUser && (
               <Button onClick={() => handleOpenDialog()}>
                 <Plus className="h-4 w-4 mr-2" />
-                Add Your First Host
+                Add Your First Resident
               </Button>
             )}
           </div>
@@ -463,5 +459,4 @@ export default function Hosts() {
     </div>
   );
 }
-
 

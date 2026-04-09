@@ -5,12 +5,12 @@ export interface Vehicle {
   contactNumber: string;
   registeredAt: Date;
   dataSource?: string;
-  hostId?: string;
+  residentId?: string;
   rented?: string;
   purposeOfVisit?: string;
 }
 
-export interface Host {
+export interface Resident {
   id: string;
   name: string;
   contactNumber: string;

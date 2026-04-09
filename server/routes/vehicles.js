@@ -47,7 +47,7 @@ router.get('/:id', (req, res) => {
 
 router.post('/', (req, res) => {
   try {
-    const { id, plateNumber, ownerName, contactNumber, dataSource, hostId, rented, purposeOfVisit } = req.body;
+    const { id, plateNumber, ownerName, contactNumber, dataSource, residentId, rented, purposeOfVisit } = req.body;
     
     if (!id || !plateNumber || !ownerName || !contactNumber) {
       return res.status(400).json({ error: 'Missing required fields' });
@@ -61,12 +61,12 @@ router.post('/', (req, res) => {
     // Default to 'barangay' if dataSource not provided
     const vehicleDataSource = dataSource || 'barangay';
     
-    // If hostId is provided, fetch the host's contact number
+    // If residentId is provided, fetch the resident's contact number
     let finalContactNumber = contactNumber;
-    if (hostId && !rented) {
-      const host = db.prepare('SELECT * FROM hosts WHERE id = ?').get(hostId);
-      if (host) {
-        finalContactNumber = host.contactNumber;
+    if (residentId && !rented) {
+      const resident = db.prepare('SELECT * FROM residents WHERE id = ?').get(residentId);
+      if (resident) {
+        finalContactNumber = resident.contactNumber;
       }
     }
     
@@ -81,9 +81,9 @@ router.post('/', (req, res) => {
     }
     
     db.prepare(`
-      INSERT INTO vehicles (id, plateNumber, ownerName, contactNumber, registeredAt, dataSource, hostId, rented, purposeOfVisit)
+      INSERT INTO vehicles (id, plateNumber, ownerName, contactNumber, registeredAt, dataSource, residentId, rented, purposeOfVisit)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, plateNumber, ownerName, cleanedContact, registeredAt, vehicleDataSource, hostId || null, rented || null, purposeOfVisit);
+    `).run(id, plateNumber, ownerName, cleanedContact, registeredAt, vehicleDataSource, residentId || null, rented || null, purposeOfVisit);
 
     const vehicle = db.prepare('SELECT * FROM vehicles WHERE id = ?').get(id);
     res.status(201).json({
@@ -101,19 +101,19 @@ router.post('/', (req, res) => {
 
 router.put('/:id', requireRole('admin', 'barangay_user'), (req, res) => {
   try {
-    const { plateNumber, ownerName, contactNumber, hostId, rented, purposeOfVisit } = req.body;
+    const { plateNumber, ownerName, contactNumber, residentId, rented, purposeOfVisit } = req.body;
     const vehicle = db.prepare('SELECT * FROM vehicles WHERE id = ?').get(req.params.id);
     
     if (!vehicle) {
       return res.status(404).json({ error: 'Vehicle not found' });
     }
 
-    // If hostId is provided and not rented, fetch the host's contact number
+    // If residentId is provided and not rented, fetch the resident's contact number
     let finalContactNumber = contactNumber !== undefined ? contactNumber : vehicle.contactNumber;
-    if (hostId && !rented) {
-      const host = db.prepare('SELECT * FROM hosts WHERE id = ?').get(hostId);
-      if (host) {
-        finalContactNumber = host.contactNumber;
+    if (residentId && !rented) {
+      const resident = db.prepare('SELECT * FROM residents WHERE id = ?').get(residentId);
+      if (resident) {
+        finalContactNumber = resident.contactNumber;
       }
     }
 
@@ -129,13 +129,13 @@ router.put('/:id', requireRole('admin', 'barangay_user'), (req, res) => {
 
     db.prepare(`
       UPDATE vehicles 
-      SET plateNumber = ?, ownerName = ?, contactNumber = ?, hostId = ?, rented = ?, purposeOfVisit = ?
+      SET plateNumber = ?, ownerName = ?, contactNumber = ?, residentId = ?, rented = ?, purposeOfVisit = ?
       WHERE id = ?
     `).run(
       plateNumber !== undefined ? plateNumber : vehicle.plateNumber,
       ownerName !== undefined ? ownerName : vehicle.ownerName,
       cleanedContact,
-      hostId !== undefined ? (hostId || null) : vehicle.hostId,
+      residentId !== undefined ? (residentId || null) : vehicle.residentId,
       rented !== undefined ? (rented || null) : vehicle.rented,
       purposeOfVisit !== undefined ? purposeOfVisit : vehicle.purposeOfVisit,
       req.params.id

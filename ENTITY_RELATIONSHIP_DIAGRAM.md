@@ -14,7 +14,7 @@ erDiagram
     USERS ||--|| NOTIFICATION_PREFERENCES : has
     USERS ||--o{ TRUSTED_DEVICES : trusts
     
-    HOSTS ||--o{ VEHICLES : accommodates
+    RESIDENTS ||--o{ VEHICLES : accommodates
     
     VEHICLES ||--o{ DETECTIONS : has
     VEHICLES ||--o{ VIOLATIONS : associated-with
@@ -81,13 +81,13 @@ User notification configuration settings
 
 ---
 
-### 3. **HOSTS**
-Establishment/parking lot owners/operators
+### 3. **RESIDENTS**
+Registered residents (contacts for visitor-related SMS)
 
 | Field | Type | Constraints | Notes |
 |-------|------|-------------|-------|
-| `id` | TEXT | PRIMARY KEY | Unique host identifier |
-| `name` | TEXT | NOT NULL | Host/establishment name |
+| `id` | TEXT | PRIMARY KEY | Unique resident identifier |
+| `name` | TEXT | NOT NULL | Resident name |
 | `contactNumber` | TEXT | NOT NULL | Contact phone number |
 | `address` | TEXT | | Physical address |
 | `createdAt` | TEXT | NOT NULL | ISO timestamp |
@@ -108,12 +108,12 @@ Registered or detected vehicles in the system
 | `contactNumber` | TEXT | NOT NULL | Owner contact number |
 | `registeredAt` | TEXT | NOT NULL | ISO timestamp |
 | `dataSource` | TEXT | DEFAULT 'barangay' | Source: barangay, host, manual, etc. |
-| `hostId` | TEXT | FK → hosts | Associated host (if applicable) |
+| `residentId` | TEXT | FK → residents | Associated resident (if applicable) |
 | `rented` | TEXT | | Rental status |
 | `purposeOfVisit` | TEXT | | Purpose of parking |
 
 **Relationships:**
-- Belongs to one `HOSTS` (N:1, optional)
+- Belongs to one `RESIDENTS` (N:1, optional)
 - Has many `DETECTIONS` (1:N)
 - Associated with many `VIOLATIONS` (1:N)
 - Referenced in many `SMS_LOGS` (1:N)
@@ -348,7 +348,7 @@ Trusted devices to skip 2FA for a limited time
 | USERS | AUDIT_LOGS | 1:N | User performs audit-tracked actions |
 | USERS | NOTIFICATION_PREFERENCES | 1:1 | User has notification settings |
 | USERS | TRUSTED_DEVICES | 1:N | User has trusted browser/devices |
-| HOSTS | VEHICLES | 1:N | Host accommodates multiple vehicles |
+| RESIDENTS | VEHICLES | 1:N | Resident linked to multiple vehicles |
 | VEHICLES | DETECTIONS | 1:N | Vehicle has multiple detections |
 | VEHICLES | VIOLATIONS | 1:N | Vehicle has multiple violations |
 | CAMERAS | DETECTIONS | 1:N | Camera captures multiple detections |
@@ -372,9 +372,9 @@ Trusted devices to skip 2FA for a limited time
    - User performs action → AUDIT_LOG records action
    - Audit logs track: who, what, when, where, how
 
-3. **Host Management**
-   - Host created with contact info
-   - Vehicles associated with host
+3. **Resident management**
+   - Resident created with contact info
+   - Vehicles associated with resident
    - Vehicles tracked and monitored
 
 ---
@@ -383,7 +383,7 @@ Trusted devices to skip 2FA for a limited time
 
 ### Foreign Keys
 - `notification_preferences.userId` → `users.id` (CASCADE DELETE)
-- `vehicles.hostId` → `hosts.id` (SET NULL)
+- `vehicles.residentId` → `residents.id` (SET NULL)
 - `audit_logs.userId` → `users.id` (CASCADE DELETE)
 - `trusted_devices.userId` → `users.id` (CASCADE DELETE)
 - `detections.cameraId` → `cameras.id` (implied)
