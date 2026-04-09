@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Plus,
   Search,
@@ -10,17 +10,24 @@ import {
   Info,
   MessageSquare,
   Car,
-  ShieldCheck,
-  UserCircle,
+  Shield,
+  AlertTriangle,
+  AlertCircle,
   ScrollText,
   SlidersHorizontal,
+  Copy,
+  Calendar,
+  FileText,
+  Activity,
+  type LucideIcon,
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useSearchParams, createSearchParams } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Resident, ResidentStatus, Vehicle, Violation } from '@/types/parking';
+import { Resident, ResidentType, Vehicle, Violation } from '@/types/parking';
 import {
   Dialog,
   DialogContent,
@@ -163,12 +170,52 @@ function lastViolationActivityMs(residentId: string, vehicles: Vehicle[], violat
   return Math.max(...list.map((vi) => new Date(vi.timeDetected).getTime()));
 }
 
-function resolveResidentStatus(r: Resident): ResidentStatus {
-  return r.residentStatus === 'guest' ? 'guest' : 'verified';
+function resolveResidentType(r: Resident): ResidentType {
+  const t = r.residentType?.toLowerCase?.();
+  if (t === 'tenant') return 'tenant';
+  return 'homeowner';
 }
 
-function statusBadgeVariant(s: ResidentStatus): 'success' | 'secondary' {
-  return s === 'verified' ? 'success' : 'secondary';
+function residentTypeBadgeClass(type: ResidentType): string {
+  return type === 'tenant'
+    ? 'border-purple-600/55 bg-purple-600 text-white shadow-none hover:bg-purple-600/95 dark:bg-purple-700'
+    : 'border-blue-600/55 bg-blue-600 text-white shadow-none hover:bg-blue-600/95 dark:bg-blue-700';
+}
+
+/** Issued + pending violations on linked plates (unpaid / open enforcement). */
+function countUnpaidViolationsForResident(
+  residentId: string,
+  vehicles: Vehicle[],
+  violations: Violation[],
+): number {
+  return violationsForResidentLinkedPlates(residentId, vehicles, violations).filter(
+    (vi) => vi.status === 'issued' || vi.status === 'pending',
+  ).length;
+}
+
+function getStandingPresentation(unpaid: number): { label: string; className: string; Icon: LucideIcon } {
+  if (unpaid === 0) {
+    return {
+      label: 'Good Standing',
+      className:
+        'border-emerald-600/50 bg-emerald-600/12 text-emerald-950 dark:text-emerald-100 [&>svg]:text-emerald-700 dark:[&>svg]:text-emerald-300',
+      Icon: Shield,
+    };
+  }
+  if (unpaid <= 2) {
+    return {
+      label: 'Warning',
+      className:
+        'border-amber-500/55 bg-amber-500/12 text-amber-950 dark:text-amber-50 [&>svg]:text-amber-700 dark:[&>svg]:text-amber-300',
+      Icon: AlertTriangle,
+    };
+  }
+  return {
+    label: 'Delinquent',
+    className:
+      'border-red-600/50 bg-red-600/12 text-red-950 dark:text-red-100 [&>svg]:text-red-700 dark:[&>svg]:text-red-300',
+    Icon: AlertCircle,
+  };
 }
 
 function violationAccentClass(status: Violation['status']): string {
@@ -210,14 +257,59 @@ function smsHrefForNumber(contact: string): string | null {
   return `sms:${digits}`;
 }
 
+function telHrefForNumber(contact: string): string | null {
+  const digits = contact.replace(/\D/g, '');
+  if (!digits) return null;
+  return `tel:${digits}`;
+}
+
+function formatVehicleDataSourceLabel(source?: string): string | null {
+  if (!source?.trim()) return null;
+  const key = source.trim().toLowerCase();
+  const labels: Record<string, string> = {
+    barangay: 'Barangay',
+    hosted: 'Hosted',
+    manual: 'Manual',
+  };
+  return labels[key] ?? source.trim();
+}
+
+function formatShortDate(d: Date) {
+  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+function normalizeViolationFromApi(x: Violation): Violation {
+  return {
+    ...x,
+    timeDetected: x.timeDetected instanceof Date ? x.timeDetected : new Date(x.timeDetected),
+    timeIssued: x.timeIssued
+      ? x.timeIssued instanceof Date
+        ? x.timeIssued
+        : new Date(x.timeIssued)
+      : undefined,
+    warningExpiresAt: x.warningExpiresAt
+      ? x.warningExpiresAt instanceof Date
+        ? x.warningExpiresAt
+        : new Date(x.warningExpiresAt)
+      : undefined,
+  };
+}
+
+function errMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
+}
+
 export default function Residents() {
   usePageTracking();
-  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuth();
   const isBarangayUser = user?.role === 'barangay_user';
   const [residents, setResidents] = useState<Resident[]>([]);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [violations, setViolations] = useState<Violation[]>([]);
+  const [violationsLoading, setViolationsLoading] = useState(false);
+  const violationsLoadPromiseRef = useRef<Promise<void> | null>(null);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -235,8 +327,39 @@ export default function Residents() {
     contactNumber: '',
     houseNumber: '',
     streetName: '',
-    residentStatus: 'verified' as ResidentStatus,
+    residentType: 'homeowner' as ResidentType,
   });
+
+  const syncResidentIdToUrl = useCallback(
+    (id: string | null) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          if (id) next.set('residentId', id);
+          else next.delete('residentId');
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
+
+  const copyContactNumber = useCallback(async (contact: string) => {
+    try {
+      await navigator.clipboard.writeText(contact);
+      toast({
+        title: 'Copied',
+        description: 'Contact number copied to clipboard.',
+      });
+    } catch {
+      toast({
+        title: 'Copy failed',
+        description: 'Could not access the clipboard.',
+        variant: 'destructive',
+      });
+    }
+  }, []);
 
   const loadResidents = useCallback(async (initial = false, term = '') => {
     try {
@@ -263,6 +386,96 @@ export default function Residents() {
     }
   }, []);
 
+  const loadViolationsForRegistry = useCallback(async () => {
+    if (violationsLoadPromiseRef.current) {
+      return violationsLoadPromiseRef.current;
+    }
+    const p = (async () => {
+      try {
+        setViolationsLoading(true);
+        const viol = await violationsAPI.getAll({ limit: 500 });
+        setViolations(viol.map(normalizeViolationFromApi));
+      } catch (e) {
+        console.error('Error loading violations for registry:', e);
+      } finally {
+        setViolationsLoading(false);
+        violationsLoadPromiseRef.current = null;
+      }
+    })();
+    violationsLoadPromiseRef.current = p;
+    return p;
+  }, []);
+
+  const openProfileResidentId = profileResident?.id;
+
+  const { data: residentViolationsFromApi = [], isLoading: residentViolationsLoading } = useQuery({
+    queryKey: ['violations', 'byResident', openProfileResidentId],
+    queryFn: async () => {
+      const raw = (await violationsAPI.getAll({
+        residentId: openProfileResidentId!,
+        limit: 500,
+      })) as Violation[];
+      return raw.map(normalizeViolationFromApi);
+    },
+    enabled: !!openProfileResidentId,
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const v = await vehiclesAPI.getAll();
+        if (!cancelled) {
+          setVehicles(
+            v.map((x: Vehicle) => ({
+              ...x,
+              registeredAt: x.registeredAt instanceof Date ? x.registeredAt : new Date(x.registeredAt),
+            })),
+          );
+        }
+      } catch (e) {
+        console.error('Error loading vehicles for registry:', e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (standingFilter !== 'all' || sortBy === 'recent_violation') {
+      void loadViolationsForRegistry();
+    }
+  }, [standingFilter, sortBy, loadViolationsForRegistry]);
+
+  useEffect(() => {
+    if (!openProfileResidentId) return;
+    void loadViolationsForRegistry();
+  }, [openProfileResidentId, loadViolationsForRegistry]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const run = () => {
+      if (!cancelled) void loadViolationsForRegistry();
+    };
+    let idleHandle: number | undefined;
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    if (typeof window.requestIdleCallback === 'function') {
+      idleHandle = window.requestIdleCallback(run, { timeout: 5000 });
+    } else {
+      timeoutHandle = window.setTimeout(run, 800);
+    }
+    return () => {
+      cancelled = true;
+      if (idleHandle !== undefined && typeof window.cancelIdleCallback === 'function') {
+        window.cancelIdleCallback(idleHandle);
+      }
+      if (timeoutHandle !== undefined) {
+        clearTimeout(timeoutHandle);
+      }
+    };
+  }, [loadViolationsForRegistry]);
+
   useEffect(() => {
     loadResidents(true);
   }, [loadResidents]);
@@ -276,45 +489,44 @@ export default function Residents() {
   }, [isInitialLoading, loadResidents, searchTerm]);
 
   useEffect(() => {
+    const rawId = searchParams.get('residentId')?.trim();
+    if (!rawId) {
+      setProfileResident((prev) => (prev ? null : prev));
+      return;
+    }
+    if (isInitialLoading) return;
+    if (profileResident?.id === rawId) return;
+
+    const fromList = residents.find((r) => r.id === rawId);
+    if (fromList) {
+      setProfileResident(fromList);
+      return;
+    }
+
     let cancelled = false;
-    (async () => {
-      try {
-        const [v, viol] = await Promise.all([
-          vehiclesAPI.getAll(),
-          violationsAPI.getAll({ limit: 500 }),
-        ]);
-        if (!cancelled) {
-          setVehicles(
-            v.map((x: Vehicle) => ({
-              ...x,
-              registeredAt: x.registeredAt instanceof Date ? x.registeredAt : new Date(x.registeredAt),
-            })),
-          );
-          setViolations(
-            viol.map((x: Violation) => ({
-              ...x,
-              timeDetected: x.timeDetected instanceof Date ? x.timeDetected : new Date(x.timeDetected),
-              timeIssued: x.timeIssued
-                ? x.timeIssued instanceof Date
-                  ? x.timeIssued
-                  : new Date(x.timeIssued)
-                : undefined,
-              warningExpiresAt: x.warningExpiresAt
-                ? x.warningExpiresAt instanceof Date
-                  ? x.warningExpiresAt
-                  : new Date(x.warningExpiresAt)
-                : undefined,
-            })),
-          );
-        }
-      } catch (e) {
-        console.error('Error loading registry context:', e);
-      }
-    })();
+    residentsAPI
+      .getById(rawId)
+      .then((r: Resident) => {
+        if (cancelled) return;
+        setProfileResident({
+          ...r,
+          createdAt:
+            r.createdAt instanceof Date ? r.createdAt : new Date(r.createdAt as unknown as string),
+        });
+      })
+      .catch(() => {
+        if (cancelled) return;
+        toast({
+          title: 'Resident not found',
+          description: 'The linked profile may have been removed.',
+          variant: 'destructive',
+        });
+        syncResidentIdToUrl(null);
+      });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [searchParams, residents, isInitialLoading, profileResident?.id, syncResidentIdToUrl]);
 
   useEffect(() => {
     if (searchTerm.trim() === '') {
@@ -407,7 +619,7 @@ export default function Residents() {
       contactNumber: '',
       houseNumber: '',
       streetName: '',
-      residentStatus: 'verified',
+      residentType: 'homeowner',
     });
     setEditingResident(null);
   };
@@ -428,7 +640,7 @@ export default function Residents() {
         contactNumber: resident.contactNumber,
         houseNumber: resident.houseNumber || '',
         streetName: resident.streetName || '',
-        residentStatus: resolveResidentStatus(resident),
+        residentType: resolveResidentType(resident),
       });
     } else {
       resetForm();
@@ -481,7 +693,7 @@ export default function Residents() {
       contactNumber: formData.contactNumber,
       houseNumber: formData.houseNumber.trim(),
       streetName: street,
-      residentStatus: formData.residentStatus,
+      residentType: formData.residentType,
     };
 
     try {
@@ -512,10 +724,11 @@ export default function Residents() {
       setProfileResident((prev) =>
         prev && editingResident && prev.id === editingResident.id ? { ...prev, ...normalizedSaved } : prev,
       );
-    } catch (error: any) {
+      queryClient.invalidateQueries({ queryKey: ['violations', 'byResident', saved.id] });
+    } catch (error: unknown) {
       toast({
         title: 'Error',
-        description: error.message || 'Failed to save resident',
+        description: errMessage(error, 'Failed to save resident'),
         variant: 'destructive',
       });
     }
@@ -540,6 +753,7 @@ export default function Residents() {
       return;
     }
     const id = residentToDelete.id;
+    const clearProfileUrl = profileResident?.id === id;
     setIsDeletingResident(true);
     try {
       await residentsAPI.delete(id);
@@ -549,11 +763,13 @@ export default function Residents() {
       });
       setResidentToDelete(null);
       setProfileResident((p) => (p?.id === id ? null : p));
+      if (clearProfileUrl) syncResidentIdToUrl(null);
+      queryClient.invalidateQueries({ queryKey: ['violations', 'byResident', id] });
       loadResidents();
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: 'Error',
-        description: error.message || 'Failed to delete resident',
+        description: errMessage(error, 'Failed to delete resident'),
         variant: 'destructive',
       });
     } finally {
@@ -565,10 +781,82 @@ export default function Residents() {
     'h-8 w-8 border-red-600 text-red-600 hover:bg-red-600/15 hover:text-red-700 dark:hover:bg-red-600/20';
 
   const profileVehicles = profileResident ? vehiclesForResident(profileResident.id, vehicles) : [];
-  const profileViolations = profileResident
-    ? recentViolationsForResident(profileResident.id, vehicles, violations)
-    : [];
+  const platesForProfile = useMemo(
+    () =>
+      profileResident
+        ? vehiclesForResident(profileResident.id, vehicles)
+            .map((v) => v.plateNumber.trim())
+            .filter(Boolean)
+        : [],
+    [profileResident, vehicles],
+  );
+  const useApiViolationsForProfile =
+    !!profileResident &&
+    !!openProfileResidentId &&
+    profileResident.id === openProfileResidentId;
+
+  const profileViolationsPreview = useMemo(() => {
+    if (!profileResident) return [];
+    if (useApiViolationsForProfile) {
+      if (residentViolationsLoading) return [];
+      return [...residentViolationsFromApi]
+        .sort((a, b) => new Date(b.timeDetected).getTime() - new Date(a.timeDetected).getTime())
+        .slice(0, 3);
+    }
+    return recentViolationsForResident(profileResident.id, vehicles, violations);
+  }, [
+    profileResident,
+    useApiViolationsForProfile,
+    residentViolationsLoading,
+    residentViolationsFromApi,
+    vehicles,
+    violations,
+  ]);
+
+  const profileOpenViolationCount = useMemo(() => {
+    if (!profileResident) return 0;
+    if (useApiViolationsForProfile && !residentViolationsLoading) {
+      return residentViolationsFromApi.filter((v) => v.status === 'issued' || v.status === 'pending').length;
+    }
+    return countUnpaidViolationsForResident(profileResident.id, vehicles, violations);
+  }, [
+    profileResident,
+    useApiViolationsForProfile,
+    residentViolationsLoading,
+    residentViolationsFromApi,
+    vehicles,
+    violations,
+  ]);
+
+  const profileLastActivityMs = useMemo(() => {
+    if (!profileResident) return 0;
+    if (useApiViolationsForProfile && !residentViolationsLoading) {
+      if (residentViolationsFromApi.length === 0) return 0;
+      return Math.max(
+        ...residentViolationsFromApi.map((v) => new Date(v.timeDetected).getTime()),
+      );
+    }
+    return lastViolationActivityMs(profileResident.id, vehicles, violations);
+  }, [
+    profileResident,
+    useApiViolationsForProfile,
+    residentViolationsLoading,
+    residentViolationsFromApi,
+    vehicles,
+    violations,
+  ]);
   const profileSms = profileResident ? smsHrefForNumber(profileResident.contactNumber) : null;
+  const profileTel = profileResident ? telHrefForNumber(profileResident.contactNumber) : null;
+  const profileResidentType = profileResident ? resolveResidentType(profileResident) : null;
+  const profileStandingPresentation = profileResident
+    ? getStandingPresentation(profileOpenViolationCount)
+    : null;
+  const ProfileSheetStandingIcon = profileStandingPresentation?.Icon;
+
+  const closeProfileAndUrl = useCallback(() => {
+    setProfileResident(null);
+    syncResidentIdToUrl(null);
+  }, [syncResidentIdToUrl]);
 
   if (isInitialLoading) {
     return (
@@ -679,17 +967,17 @@ export default function Residents() {
                     </div>
                   </div>
                   <div className="space-y-2">
-                    <Label>Resident status</Label>
+                    <Label>Resident type</Label>
                     <Select
-                      value={formData.residentStatus}
-                      onValueChange={(v) => setFormData({ ...formData, residentStatus: v as ResidentStatus })}
+                      value={formData.residentType}
+                      onValueChange={(v) => setFormData({ ...formData, residentType: v as ResidentType })}
                     >
                       <SelectTrigger className="bg-secondary">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="verified">Verified</SelectItem>
-                        <SelectItem value="guest">Guest</SelectItem>
+                        <SelectItem value="homeowner">Homeowner</SelectItem>
+                        <SelectItem value="tenant">Tenant</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -710,14 +998,14 @@ export default function Residents() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
             <div className="space-y-1.5">
               <Label htmlFor="filter-standing" className="text-xs text-muted-foreground">
-                Standing
+                Violation record
               </Label>
               <Select
                 value={standingFilter}
                 onValueChange={(v) => setStandingFilter(v as StandingFilter)}
               >
                 <SelectTrigger id="filter-standing" className="bg-secondary">
-                  <SelectValue placeholder="Standing" />
+                  <SelectValue placeholder="Violation record" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All</SelectItem>
@@ -786,6 +1074,11 @@ export default function Residents() {
               </Button>
             </div>
           )}
+          {violationsLoading && (standingFilter !== 'all' || sortBy === 'recent_violation') && (
+            <p className="text-xs text-muted-foreground pt-1 border-t border-border/60">
+              Loading violation data for standing and activity sort…
+            </p>
+          )}
         </div>
 
         {isRefreshing && <p className="text-xs text-muted-foreground">Refreshing results...</p>}
@@ -798,7 +1091,10 @@ export default function Residents() {
               aria-label="Residents"
             >
               {filteredResidents.map((resident) => {
-                const status = resolveResidentStatus(resident);
+                const rt = resolveResidentType(resident);
+                const unpaidCount = countUnpaidViolationsForResident(resident.id, vehicles, violations);
+                const standing = getStandingPresentation(unpaidCount);
+                const StandingIcon = standing.Icon;
                 const rv = vehiclesForResident(resident.id, vehicles);
                 const rvCount = rv.length;
                 const hasActiveStanding = hasActiveViolationsStanding(resident.id, vehicles, violations);
@@ -807,7 +1103,10 @@ export default function Residents() {
                     key={resident.id}
                     type="button"
                     role="listitem"
-                    onClick={() => setProfileResident(resident)}
+                    onClick={() => {
+                      setProfileResident(resident);
+                      syncResidentIdToUrl(resident.id);
+                    }}
                     className={cn(
                       'glass-card rounded-xl p-4 text-left transition-shadow hover:shadow-md hover:ring-1 hover:ring-primary/20',
                       'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
@@ -824,17 +1123,28 @@ export default function Residents() {
                         )}
                         <div className="min-w-0 flex-1">
                         <p className="font-semibold text-lg text-foreground truncate">{resident.name}</p>
-                        <Badge variant={statusBadgeVariant(status)} className="mt-1.5 capitalize">
-                          {status === 'verified' ? (
+                        <div className="flex flex-wrap gap-1.5 mt-1.5">
+                          <Badge
+                            className={cn(
+                              'border font-semibold text-xs capitalize shadow-none',
+                              residentTypeBadgeClass(rt),
+                            )}
+                          >
                             <span className="inline-flex items-center gap-1">
-                              <ShieldCheck className="h-3 w-3" /> Verified
+                              {rt === 'homeowner' ? <Home className="h-3 w-3 shrink-0" aria-hidden /> : null}
+                              {rt === 'homeowner' ? 'Homeowner' : 'Tenant'}
                             </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1">
-                              <UserCircle className="h-3 w-3" /> Guest
-                            </span>
-                          )}
-                        </Badge>
+                          </Badge>
+                          <Badge
+                            className={cn(
+                              'inline-flex items-center gap-1 border font-semibold text-xs shadow-none',
+                              standing.className,
+                            )}
+                          >
+                            <StandingIcon className="h-3 w-3 shrink-0" aria-hidden />
+                            {standing.label}
+                          </Badge>
+                        </div>
                         </div>
                       </div>
                       {!isBarangayUser && (
@@ -887,12 +1197,21 @@ export default function Residents() {
               })}
             </div>
 
-            <Sheet open={!!profileResident} onOpenChange={(open) => !open && setProfileResident(null)}>
+            <Sheet
+              modal={false}
+              open={!!profileResident}
+              onOpenChange={(open) => {
+                if (!open) {
+                  setProfileResident(null);
+                  syncResidentIdToUrl(null);
+                }
+              }}
+            >
               <SheetContent
                 side="right"
                 className="w-full sm:max-w-lg overflow-y-auto border-border bg-background px-4 sm:px-6"
               >
-                {profileResident && (
+                {profileResident && profileResidentType && profileStandingPresentation && (
                   <>
                     <SheetHeader className="text-left space-y-1 pr-8">
                       <SheetTitle className="text-xl">{profileResident.name}</SheetTitle>
@@ -900,16 +1219,121 @@ export default function Residents() {
                     </SheetHeader>
                     <div className="mt-6 space-y-6 pb-8">
                       <div className="flex flex-wrap items-center gap-2">
-                        <Badge variant={statusBadgeVariant(resolveResidentStatus(profileResident))} className="capitalize">
-                          {resolveResidentStatus(profileResident) === 'verified' ? 'Verified' : 'Guest'}
+                        <Badge
+                          className={cn(
+                            'border font-semibold capitalize shadow-none',
+                            residentTypeBadgeClass(profileResidentType),
+                          )}
+                        >
+                          <span className="inline-flex items-center gap-1">
+                            {profileResidentType === 'homeowner' ? (
+                              <Home className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                            ) : null}
+                            {profileResidentType === 'homeowner' ? 'Homeowner' : 'Tenant'}
+                          </span>
+                        </Badge>
+                        <Badge
+                          className={cn(
+                            'inline-flex items-center gap-1 border font-semibold shadow-none',
+                            profileStandingPresentation.className,
+                          )}
+                        >
+                          {ProfileSheetStandingIcon ? (
+                            <ProfileSheetStandingIcon className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                          ) : null}
+                          {profileStandingPresentation.label}
                         </Badge>
                       </div>
+
+                      <div className="flex flex-wrap gap-3 rounded-lg border border-border bg-secondary/30 p-3">
+                        <div className="min-w-[5.5rem] flex-1">
+                          <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                            Linked vehicles
+                          </p>
+                          <p className="text-xl font-semibold tabular-nums text-foreground">
+                            {profileVehicles.length}
+                          </p>
+                        </div>
+                        <div className="min-w-[6rem] flex-1">
+                          <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                            Open violations
+                          </p>
+                          <p
+                            className={cn(
+                              'text-xl font-semibold tabular-nums',
+                              profileOpenViolationCount > 0 ? 'text-destructive' : 'text-foreground',
+                            )}
+                          >
+                            {profileOpenViolationCount}
+                          </p>
+                          <p className="text-[10px] text-muted-foreground leading-tight mt-0.5">
+                            Issued or pending
+                          </p>
+                        </div>
+                        <div className="min-w-[7rem] flex-[1.2]">
+                          <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground flex items-center gap-1">
+                            <Activity className="h-3 w-3" />
+                            Last activity
+                          </p>
+                          <p className="text-sm font-semibold text-foreground mt-0.5">
+                            {profileLastActivityMs > 0
+                              ? formatShortDate(new Date(profileLastActivityMs))
+                              : '—'}
+                          </p>
+                          <p className="text-[10px] text-muted-foreground leading-tight mt-0.5">
+                            Latest linked violation
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-start gap-2 text-sm">
+                        <Calendar className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
+                        <div>
+                          <p className="text-xs uppercase text-muted-foreground">Registered</p>
+                          <p className="font-medium">
+                            {profileResident.createdAt instanceof Date
+                              ? profileResident.createdAt.toLocaleDateString(undefined, {
+                                  year: 'numeric',
+                                  month: 'short',
+                                  day: 'numeric',
+                                })
+                              : new Date(profileResident.createdAt as unknown as string).toLocaleDateString(
+                                  undefined,
+                                  { year: 'numeric', month: 'short', day: 'numeric' },
+                                )}
+                          </p>
+                        </div>
+                      </div>
+
                       <div className="space-y-3 text-sm">
                         <div className="flex items-start gap-2">
-                          <Phone className="h-4 w-4 text-muted-foreground mt-0.5" />
-                          <div>
+                          <Phone className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
+                          <div className="min-w-0 flex-1">
                             <p className="text-xs uppercase text-muted-foreground">Contact</p>
-                            <p className="font-medium">{profileResident.contactNumber}</p>
+                            <p className="font-medium break-all">{profileResident.contactNumber}</p>
+                            <div className="flex flex-wrap gap-2 mt-2">
+                              {profileTel ? (
+                                <Button variant="outline" size="sm" className="h-8 gap-1.5" asChild>
+                                  <a
+                                    href={profileTel}
+                                    onPointerDown={(e) => e.stopPropagation()}
+                                  >
+                                    <Phone className="h-3.5 w-3.5" />
+                                    Call
+                                  </a>
+                                </Button>
+                              ) : null}
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-8 gap-1.5"
+                                onClick={() => copyContactNumber(profileResident.contactNumber)}
+                              >
+                                <Copy className="h-3.5 w-3.5" />
+                                Copy
+                              </Button>
+                            </div>
                           </div>
                         </div>
                         <div className="flex items-start gap-2">
@@ -948,46 +1372,105 @@ export default function Residents() {
                         {profileVehicles.length === 0 ? (
                           <p className="text-sm text-muted-foreground">No vehicles linked to this resident.</p>
                         ) : (
-                          <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-thin">
-                            {profileVehicles.map((v) => (
-                              <div
-                                key={v.id}
-                                className="shrink-0 rounded-lg border border-border bg-secondary/40 px-3 py-2 min-w-[130px] max-w-[180px]"
-                              >
-                                <p className="font-mono text-sm font-medium">{v.plateNumber}</p>
-                                <p className="text-xs text-muted-foreground truncate" title={v.ownerName}>
-                                  {v.ownerName}
-                                </p>
-                              </div>
-                            ))}
+                          <div className="space-y-2">
+                            {profileVehicles.map((v) => {
+                              const regAt =
+                                v.registeredAt instanceof Date ? v.registeredAt : new Date(v.registeredAt);
+                              const sourceLabel = formatVehicleDataSourceLabel(v.dataSource);
+                              const rentedLabel = v.rented?.trim();
+                              return (
+                                <div
+                                  key={v.id}
+                                  className="rounded-lg border border-border bg-secondary/40 px-3 py-2.5 space-y-1.5"
+                                >
+                                  <div className="flex items-start justify-between gap-2">
+                                    <p className="font-mono text-sm font-semibold tracking-tight">{v.plateNumber}</p>
+                                    {sourceLabel ? (
+                                      <Badge variant="outline" className="shrink-0 text-[10px] font-normal px-1.5 py-0">
+                                        {sourceLabel}
+                                      </Badge>
+                                    ) : null}
+                                  </div>
+                                  <p className="text-xs text-muted-foreground truncate" title={v.ownerName}>
+                                    {v.ownerName}
+                                  </p>
+                                  <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
+                                    <span>Registered {formatShortDate(regAt)}</span>
+                                    {rentedLabel ? (
+                                      <span className="capitalize">Rented: {rentedLabel}</span>
+                                    ) : null}
+                                  </div>
+                                  {v.purposeOfVisit?.trim() ? (
+                                    <p className="text-[11px] text-muted-foreground leading-snug">
+                                      <span className="font-medium text-foreground/85">Purpose: </span>
+                                      {v.purposeOfVisit.trim()}
+                                    </p>
+                                  ) : null}
+                                </div>
+                              );
+                            })}
                           </div>
                         )}
                       </div>
 
                       <div>
                         <p className="text-xs uppercase text-muted-foreground mb-2">Violation history</p>
-                        {profileViolations.length === 0 ? (
-                          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-800 dark:text-emerald-200">
-                            Clean record — no recent infractions on file for linked plates.
-                          </div>
+                        {profileViolationsPreview.length === 0 ? (
+                          residentViolationsLoading && useApiViolationsForProfile && profileVehicles.length > 0 ? (
+                            <p className="text-sm text-muted-foreground">Loading violation history…</p>
+                          ) : profileVehicles.length === 0 ? (
+                            <div className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+                              No linked vehicles — violations are matched by plate once vehicles are linked.
+                            </div>
+                          ) : (
+                            <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-800 dark:text-emerald-200">
+                              Clean record — no recent infractions on file for linked plates.
+                            </div>
+                          )
                         ) : (
-                          <ul className="space-y-3 border-l-2 border-border pl-4 ml-1">
-                            {profileViolations.map((vi) => (
-                              <li key={vi.id} className="relative">
-                                <span
-                                  className={cn(
-                                    'absolute -left-[21px] top-1.5 h-2.5 w-2.5 rounded-full',
-                                    violationAccentClass(vi.status),
-                                  )}
-                                />
-                                <p className="text-xs text-muted-foreground">
-                                  {new Date(vi.timeDetected).toLocaleString()}
-                                </p>
-                                <p className="text-sm font-medium font-mono">{vi.plateNumber}</p>
-                                <p className="text-xs capitalize text-muted-foreground">Status: {vi.status}</p>
-                              </li>
-                            ))}
-                          </ul>
+                          <>
+                            <p className="text-[11px] text-muted-foreground mb-2">
+                              Click a row to open Violations History filtered by that plate.
+                            </p>
+                            <ul className="space-y-2 border-l-2 border-border pl-4 ml-1">
+                              {profileViolationsPreview.map((vi) => (
+                                <li key={vi.id} className="relative">
+                                  <span
+                                    className={cn(
+                                      'absolute -left-[21px] top-3 h-2.5 w-2.5 rounded-full',
+                                      violationAccentClass(vi.status),
+                                    )}
+                                    aria-hidden
+                                  />
+                                  <Link
+                                    to={{
+                                      pathname: '/violations',
+                                      search: createSearchParams({
+                                        plate: vi.plateNumber,
+                                        violationId: vi.id,
+                                      }).toString(),
+                                    }}
+                                    onClick={closeProfileAndUrl}
+                                    className={cn(
+                                      'block w-full text-left rounded-md -mx-2 px-2 py-1.5 transition-colors',
+                                      'hover:bg-secondary/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                                    )}
+                                    title="Open in Violations History"
+                                  >
+                                    <p className="text-xs text-muted-foreground">
+                                      {new Date(vi.timeDetected).toLocaleString()}
+                                    </p>
+                                    <p className="text-sm font-medium font-mono">{vi.plateNumber}</p>
+                                    <p className="text-xs text-muted-foreground flex items-center gap-1">
+                                      <MapPin className="h-3 w-3 shrink-0" />
+                                      {vi.cameraLocationId}
+                                    </p>
+                                    <p className="text-xs capitalize text-muted-foreground">Status: {vi.status}</p>
+                                  </Link>
+                                </li>
+                              ))}
+                            </ul>
+                          </>
                         )}
                       </div>
 
@@ -996,7 +1479,7 @@ export default function Residents() {
                         <div className="flex flex-col sm:flex-row flex-wrap gap-2">
                           {profileSms ? (
                             <Button variant="default" className="gap-2" asChild>
-                              <a href={profileSms}>
+                              <a href={profileSms} onPointerDown={(e) => e.stopPropagation()}>
                                 <MessageSquare className="h-4 w-4" />
                                 SMS resident
                               </a>
@@ -1014,23 +1497,69 @@ export default function Residents() {
                               onClick={() => {
                                 handleOpenDialog(profileResident);
                                 setProfileResident(null);
+                                syncResidentIdToUrl(null);
                               }}
                             >
                               <Edit className="h-4 w-4" />
                               Edit profile
                             </Button>
                           )}
-                          <Button
-                            variant="outline"
-                            className="gap-2"
-                            onClick={() => {
-                              navigate('/audit-logs', { state: { presetSearch: profileResident.name } });
-                              setProfileResident(null);
-                            }}
-                          >
-                            <ScrollText className="h-4 w-4" />
-                            View activity logs
+                          <Button variant="outline" className="gap-2" asChild>
+                            <Link
+                              to="/audit-logs"
+                              state={{ presetSearch: profileResident.name }}
+                              onClick={closeProfileAndUrl}
+                            >
+                              <ScrollText className="h-4 w-4" />
+                              View activity logs
+                            </Link>
                           </Button>
+                          <Button variant="outline" className="gap-2" asChild>
+                            <Link
+                              to={{
+                                pathname: '/vehicles',
+                                search: createSearchParams({ residentId: profileResident.id }).toString(),
+                              }}
+                              onClick={closeProfileAndUrl}
+                            >
+                              <Car className="h-4 w-4" />
+                              View vehicles
+                            </Link>
+                          </Button>
+                          {platesForProfile.length > 0 ? (
+                            <Button variant="outline" className="gap-2" asChild>
+                              <Link
+                                to={{
+                                  pathname: '/violations',
+                                  search: createSearchParams({ plate: platesForProfile[0] }).toString(),
+                                }}
+                                state={
+                                  platesForProfile.length > 1 ? { relatedPlates: platesForProfile } : undefined
+                                }
+                                onClick={closeProfileAndUrl}
+                              >
+                                <FileText className="h-4 w-4" />
+                                View violations
+                              </Link>
+                            </Button>
+                          ) : (
+                            <Button
+                              variant="outline"
+                              className="gap-2"
+                              type="button"
+                              onClick={() => {
+                                toast({
+                                  title: 'No linked plates',
+                                  description:
+                                    'Link vehicles to this resident to search violations by plate.',
+                                  variant: 'destructive',
+                                });
+                              }}
+                            >
+                              <FileText className="h-4 w-4" />
+                              View violations
+                            </Button>
+                          )}
                         </div>
                       </div>
                     </div>

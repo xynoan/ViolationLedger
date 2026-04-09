@@ -169,7 +169,7 @@ export async function createViolationFromDetection(plateNumber, cameraLocationId
 
 router.get('/', (req, res) => {
   try {
-    const { status, locationId, startDate, endDate, plateNumber } = req.query;
+    const { status, locationId, startDate, endDate, plateNumber, residentId } = req.query;
     
     let query = 'SELECT * FROM violations WHERE 1=1';
     const params = [];
@@ -195,6 +195,18 @@ router.get('/', (req, res) => {
       endDateObj.setDate(endDateObj.getDate() + 1);
       query += ' AND timeDetected < ?';
       params.push(endDateObj.toISOString());
+    }
+
+    if (residentId) {
+      const plateRows = db.prepare('SELECT plateNumber FROM vehicles WHERE residentId = ?').all(residentId);
+      const plates = plateRows.map((r) => r.plateNumber).filter(Boolean);
+      if (plates.length === 0) {
+        query += ' AND 1=0';
+      } else {
+        const ph = plates.map(() => '?').join(',');
+        query += ` AND plateNumber IN (${ph})`;
+        params.push(...plates);
+      }
     }
     
     if (plateNumber) {

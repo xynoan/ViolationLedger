@@ -5,11 +5,18 @@ import { RESIDENT_STREET_SET, composeResidentAddress } from '../residentStreets.
 const router = express.Router();
 
 const ALLOWED_RESIDENT_STATUS = new Set(['verified', 'guest']);
+const ALLOWED_RESIDENT_TYPE = new Set(['homeowner', 'tenant']);
 
 function normalizeResidentStatus(value) {
   const v = typeof value === 'string' ? value.toLowerCase().trim() : '';
   if (ALLOWED_RESIDENT_STATUS.has(v)) return v;
   return 'verified';
+}
+
+function normalizeResidentType(value) {
+  const v = typeof value === 'string' ? value.toLowerCase().trim() : '';
+  if (ALLOWED_RESIDENT_TYPE.has(v)) return v;
+  return 'homeowner';
 }
 
 router.get('/', (req, res) => {
@@ -55,7 +62,7 @@ router.get('/:id', (req, res) => {
 
 router.post('/', (req, res) => {
   try {
-    const { id, name, contactNumber, houseNumber, streetName, residentStatus } = req.body;
+    const { id, name, contactNumber, houseNumber, streetName, residentStatus, residentType } = req.body;
 
     if (!id || !name || !contactNumber) {
       return res.status(400).json({ error: 'Missing required fields: id, name, contactNumber' });
@@ -73,6 +80,7 @@ router.post('/', (req, res) => {
 
     const createdAt = new Date().toISOString();
     const status = normalizeResidentStatus(residentStatus);
+    const type = normalizeResidentType(residentType);
 
     // Store contact number exactly as input - NO CONVERSION
     // Only remove spaces, dashes, and parentheses for clean storage
@@ -85,9 +93,9 @@ router.post('/', (req, res) => {
     }
 
     db.prepare(`
-      INSERT INTO residents (id, name, contactNumber, address, houseNumber, streetName, createdAt, residentStatus)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, name, cleanedContact, composedAddress, hn || null, sn, createdAt, status);
+      INSERT INTO residents (id, name, contactNumber, address, houseNumber, streetName, createdAt, residentStatus, residentType)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, name, cleanedContact, composedAddress, hn || null, sn, createdAt, status, type);
 
     const created = db.prepare('SELECT * FROM residents WHERE id = ?').get(id);
     res.status(201).json({
@@ -105,7 +113,7 @@ router.post('/', (req, res) => {
 
 router.put('/:id', (req, res) => {
   try {
-    const { name, contactNumber, houseNumber, streetName, residentStatus } = req.body;
+    const { name, contactNumber, houseNumber, streetName, residentStatus, residentType } = req.body;
     const resident = db.prepare('SELECT * FROM residents WHERE id = ?').get(req.params.id);
 
     if (!resident) {
@@ -147,9 +155,14 @@ router.put('/:id', (req, res) => {
         ? normalizeResidentStatus(residentStatus)
         : normalizeResidentStatus(resident.residentStatus);
 
+    const nextType =
+      residentType !== undefined
+        ? normalizeResidentType(residentType)
+        : normalizeResidentType(resident.residentType);
+
     db.prepare(`
       UPDATE residents 
-      SET name = ?, contactNumber = ?, address = ?, houseNumber = ?, streetName = ?, residentStatus = ?
+      SET name = ?, contactNumber = ?, address = ?, houseNumber = ?, streetName = ?, residentStatus = ?, residentType = ?
       WHERE id = ?
     `).run(
       name || resident.name,
@@ -158,6 +171,7 @@ router.put('/:id', (req, res) => {
       nextH || null,
       nextS,
       nextStatus,
+      nextType,
       req.params.id
     );
 

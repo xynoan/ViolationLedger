@@ -196,6 +196,7 @@ export const violationsAPI = {
     startDate?: string;
     endDate?: string;
     plateNumber?: string;
+    residentId?: string;
     limit?: number;
   }) => {
     const params = new URLSearchParams();
@@ -204,6 +205,7 @@ export const violationsAPI = {
     if (filters?.startDate) params.append('startDate', filters.startDate);
     if (filters?.endDate) params.append('endDate', filters.endDate);
     if (filters?.plateNumber) params.append('plateNumber', filters.plateNumber);
+    if (filters?.residentId) params.append('residentId', filters.residentId);
     if (filters?.limit != null) params.append('limit', String(filters.limit));
     const query = params.toString();
     return fetchAPI(`/violations${query ? `?${query}` : ''}`, { cache: false });

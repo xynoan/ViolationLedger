@@ -139,6 +139,22 @@ async function initDatabase() {
     }
   }
 
+  try {
+    db.run(`ALTER TABLE residents ADD COLUMN residentType TEXT DEFAULT 'homeowner'`);
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: residents.residentType migration:', errorMsg);
+    }
+  }
+  try {
+    db.run(
+      `UPDATE residents SET residentType = 'homeowner' WHERE residentType IS NULL OR residentType = ''`,
+    );
+  } catch {
+    /* ignore */
+  }
+
   // Create tables
   db.run(`
     CREATE TABLE IF NOT EXISTS vehicles (

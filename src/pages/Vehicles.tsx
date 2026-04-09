@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
-import { Plus, Search, Edit, Trash2, Phone, Car, Info } from 'lucide-react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { Plus, Search, Edit, Trash2, Phone, Car, Info, Home } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
 import { Button } from '@/components/ui/button';
@@ -36,11 +36,17 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from '@/hooks/use-toast';
 import { vehiclesAPI, residentsAPI } from '@/lib/api';
 import { useAuth } from '@/hooks/useAuth';
+import { useSearchParams } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { SearchNoMatchesEmpty } from '@/components/search/SearchNoMatchesEmpty';
 
 const RENTED_OPTIONS = ['Court', 'Community Center', 'Barangay Hall'] as const;
 const RENTED_NONE = '__rented_none__';
 const PURPOSE_OPTIONS = ['Visit resident', 'Barangay hall', 'Reservation'] as const;
+
+function errMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
+}
 
 const digitsOnly = (value: string) => value.replace(/\D/g, '');
 const lettersAndSpacesOnly = (value: string) => value.replace(/[^a-zA-Z\s]/g, '');
@@ -48,6 +54,8 @@ const ownerNameValid = (value: string) => /^[a-zA-Z\s]+$/.test(value.trim());
 
 export default function Vehicles() {
   usePageTracking();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const queryClient = useQueryClient();
   const { user } = useAuth();
   const isEncoder = user?.role === 'encoder';
    const isBarangayUser = user?.role === 'barangay_user';
@@ -134,8 +142,51 @@ export default function Vehicles() {
   const filteredVehicles = vehicles.filter(
     (v) =>
       v.plateNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      v.ownerName.toLowerCase().includes(searchTerm.toLowerCase())
+      v.ownerName.toLowerCase().includes(searchTerm.toLowerCase()),
   );
+
+  const residentFilterId = searchParams.get('residentId')?.trim() ?? '';
+  const [residentFilterLabel, setResidentFilterLabel] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!residentFilterId) {
+      setResidentFilterLabel(null);
+      return;
+    }
+    const local = residents.find((r) => r.id === residentFilterId);
+    if (local) {
+      setResidentFilterLabel(local.name);
+      return;
+    }
+    let cancelled = false;
+    residentsAPI
+      .getById(residentFilterId)
+      .then((r) => {
+        if (!cancelled) setResidentFilterLabel(r.name);
+      })
+      .catch(() => {
+        if (!cancelled) setResidentFilterLabel(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [residentFilterId, residents]);
+
+  const displayedVehicles = useMemo(() => {
+    if (!residentFilterId) return filteredVehicles;
+    return filteredVehicles.filter((v) => v.residentId === residentFilterId);
+  }, [filteredVehicles, residentFilterId]);
+
+  const clearResidentFilter = useCallback(() => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete('residentId');
+        return next;
+      },
+      { replace: true },
+    );
+  }, [setSearchParams]);
 
   const resetForm = () => {
     setFormData({ 
@@ -284,10 +335,16 @@ export default function Vehicles() {
       }
       handleCloseDialog();
       loadVehicles();
-    } catch (error: any) {
+      const affectedResidentIds = new Set<string>();
+      if (formData.residentId) affectedResidentIds.add(formData.residentId);
+      if (editingVehicle?.residentId) affectedResidentIds.add(editingVehicle.residentId);
+      affectedResidentIds.forEach((rid) => {
+        queryClient.invalidateQueries({ queryKey: ['violations', 'byResident', rid] });
+      });
+    } catch (error: unknown) {
       toast({
         title: "Error",
-        description: error.message || "Failed to save vehicle",
+        description: errMessage(error, "Failed to save vehicle"),
         variant: "destructive",
       });
     }
@@ -344,6 +401,7 @@ export default function Vehicles() {
       return;
     }
     const id = vehicleToDelete.id;
+    const residentIdForInvalidate = vehicleToDelete.residentId;
     setIsDeletingVehicle(true);
     try {
       await vehiclesAPI.delete(id);
@@ -353,10 +411,13 @@ export default function Vehicles() {
       });
       setVehicleToDelete(null);
       loadVehicles();
-    } catch (error: any) {
+      if (residentIdForInvalidate) {
+        queryClient.invalidateQueries({ queryKey: ['violations', 'byResident', residentIdForInvalidate] });
+      }
+    } catch (error: unknown) {
       toast({
         title: "Error",
-        description: error.message || "Failed to delete vehicle",
+        description: errMessage(error, "Failed to delete vehicle"),
         variant: "destructive",
       });
     } finally {
@@ -400,6 +461,23 @@ export default function Vehicles() {
             Here's where we add non-resident vehicle details if their plate number is detected on cctv, text message will be sent to their number.
           </p>
         </div>
+        {residentFilterId && (
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between rounded-lg border border-primary/25 bg-primary/5 px-3 py-2.5 text-sm">
+            <div className="flex items-start gap-2 text-muted-foreground">
+              <Home className="h-4 w-4 text-primary shrink-0 mt-0.5" />
+              <p>
+                Showing vehicles linked to{' '}
+                <span className="font-medium text-foreground">
+                  {residentFilterLabel ?? 'resident'}
+                </span>
+                {residentFilterLabel ? null : ' (loading name…)'}
+              </p>
+            </div>
+            <Button type="button" variant="outline" size="sm" className="shrink-0" onClick={clearResidentFilter}>
+              Show all vehicles
+            </Button>
+          </div>
+        )}
         {/* Actions Bar */}
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 sm:gap-4">
           <div className="relative flex-1 sm:max-w-md">
@@ -610,11 +688,11 @@ export default function Vehicles() {
           <p className="text-xs text-muted-foreground">Refreshing results...</p>
         )}
 
-        {filteredVehicles.length > 0 ? (
+        {displayedVehicles.length > 0 ? (
           <>
             {/* Mobile Cards */}
             <div className="block sm:hidden space-y-3">
-              {filteredVehicles.map((vehicle) => (
+              {displayedVehicles.map((vehicle) => (
                 <div key={vehicle.id} className="glass-card rounded-xl p-4 space-y-3">
                   <div className="flex items-center justify-between">
                     <span className="font-mono font-medium text-lg">{vehicle.plateNumber}</span>
@@ -662,7 +740,7 @@ export default function Vehicles() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredVehicles.map((vehicle) => (
+                    {displayedVehicles.map((vehicle) => (
                       <TableRow key={vehicle.id} className="border-border">
                         <TableCell className="font-mono font-medium">{vehicle.plateNumber}</TableCell>
                         <TableCell>{vehicle.ownerName}</TableCell>
@@ -800,6 +878,24 @@ export default function Vehicles() {
               </AlertDialogContent>
             </AlertDialog>
           </>
+        ) : filteredVehicles.length > 0 && residentFilterId ? (
+          <div className="glass-card rounded-xl p-8 sm:p-12 text-center">
+            <Car className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+            <h3 className="text-lg font-semibold text-foreground mb-2">No vehicles for this resident</h3>
+            <p className="text-muted-foreground mb-6 text-sm max-w-md mx-auto">
+              {residentFilterLabel
+                ? `No registered vehicles are linked to ${residentFilterLabel} with the current search.`
+                : 'No vehicles match this resident filter.'}
+            </p>
+            <div className="flex flex-col sm:flex-row gap-2 justify-center">
+              <Button type="button" variant="secondary" onClick={clearResidentFilter}>
+                Show all vehicles
+              </Button>
+              <Button type="button" variant="outline" onClick={() => setSearchTerm('')}>
+                Clear search
+              </Button>
+            </div>
+          </div>
         ) : registryHasVehicles && searchTerm.trim() ? (
           <SearchNoMatchesEmpty
             searchTerm={searchTerm}

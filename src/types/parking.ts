@@ -12,6 +12,9 @@ export interface Vehicle {
 
 export type ResidentStatus = 'verified' | 'guest';
 
+/** Property relationship; drives registry badges (Homeowner vs Tenant). */
+export type ResidentType = 'homeowner' | 'tenant';
+
 export interface Resident {
   id: string;
   name: string;
@@ -22,6 +25,8 @@ export interface Resident {
   streetName?: string;
   createdAt: Date;
   residentStatus?: ResidentStatus;
+  /** Homeowner or Tenant; default homeowner when unset (legacy rows). */
+  residentType?: ResidentType;
 }
 
 export interface Camera {

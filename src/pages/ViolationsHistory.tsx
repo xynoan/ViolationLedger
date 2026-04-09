@@ -1,6 +1,8 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useSearchParams, useLocation } from 'react-router-dom';
+import { cn } from '@/lib/utils';
 import { SearchNoMatchesEmpty } from '@/components/search/SearchNoMatchesEmpty';
-import { FileText, Search, Filter, Download, Calendar, MapPin, BarChart3, TrendingUp, CheckCircle } from 'lucide-react';
+import { FileText, Search, Filter, Download, Calendar, MapPin, BarChart3, TrendingUp, CheckCircle, Info } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
 import { trackAction } from '@/lib/auditTracking';
@@ -44,8 +46,23 @@ interface ViolationStats {
   byDate: Array<{ date: string; count: number }>;
 }
 
+type ViolationListFilters = {
+  status?: string;
+  locationId?: string;
+  startDate?: string;
+  endDate?: string;
+  plateNumber?: string;
+};
+
+function errMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
+}
+
 export default function ViolationsHistory() {
   usePageTracking();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const location = useLocation();
+  const appliedPlatePresetRef = useRef(false);
   const [violations, setViolations] = useState<Violation[]>([]);
   const [cameras, setCameras] = useState<Camera[]>([]);
   const [stats, setStats] = useState<ViolationStats | null>(null);
@@ -63,6 +80,36 @@ export default function ViolationsHistory() {
   const [registryHasViolations, setRegistryHasViolations] = useState(false);
   const [clearingId, setClearingId] = useState<string | null>(null);
 
+  const multiPlateContext = useMemo(() => {
+    const plates = (location.state as { relatedPlates?: string[] } | null)?.relatedPlates;
+    if (!Array.isArray(plates) || plates.length < 2) return null;
+    return plates;
+  }, [location.state]);
+
+  const highlightViolationId = searchParams.get('violationId')?.trim() ?? '';
+
+  useEffect(() => {
+    if (appliedPlatePresetRef.current) return;
+    const fromQuery = searchParams.get('plate')?.trim();
+    const fromState = (location.state as { presetPlate?: string } | null)?.presetPlate?.trim();
+    const plate = fromQuery || fromState;
+    if (plate) {
+      setSearchTerm(plate);
+      appliedPlatePresetRef.current = true;
+    }
+  }, [searchParams, location.state]);
+
+  useEffect(() => {
+    if (!highlightViolationId || violations.length === 0 || isRefreshing) return;
+    const t = window.setTimeout(() => {
+      document.getElementById(`violation-row-${highlightViolationId}`)?.scrollIntoView({
+        block: 'center',
+        behavior: 'smooth',
+      });
+    }, 120);
+    return () => clearTimeout(t);
+  }, [highlightViolationId, violations, isRefreshing]);
+
   const loadCameras = async () => {
     try {
       const data = await camerasAPI.getAll();
@@ -79,8 +126,8 @@ export default function ViolationsHistory() {
       } else {
         setIsRefreshing(true);
       }
-      const filters: any = {};
-      
+      const filters: ViolationListFilters = {};
+
       if (statusFilter !== 'all') {
         filters.status = statusFilter;
       }
@@ -97,8 +144,8 @@ export default function ViolationsHistory() {
         filters.plateNumber = debouncedSearchTerm;
       }
 
-      const data = await violationsAPI.getAll(filters);
-      const processedViolations = data.map((v: any) => ({
+      const data = (await violationsAPI.getAll(filters)) as Violation[];
+      const processedViolations = data.map((v) => ({
         ...v,
         timeDetected: new Date(v.timeDetected),
         timeIssued: v.timeIssued ? new Date(v.timeIssued) : undefined,
@@ -124,7 +171,7 @@ export default function ViolationsHistory() {
   const loadStats = useCallback(async () => {
     try {
       setIsLoadingStats(true);
-      const filters: any = {};
+      const filters: { startDate?: string; endDate?: string; locationId?: string } = {};
       
       if (startDate) {
         filters.startDate = new Date(startDate).toISOString();
@@ -188,10 +235,10 @@ export default function ViolationsHistory() {
       });
       await loadViolations();
       await loadStats();
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Error",
-        description: error.message || "Failed to clear violation",
+        description: errMessage(error, "Failed to clear violation"),
         variant: "destructive",
       });
     } finally {
@@ -255,6 +302,15 @@ export default function ViolationsHistory() {
     setStartDate('');
     setEndDate('');
     setSearchTerm('');
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete('plate');
+        next.delete('violationId');
+        return next;
+      },
+      { replace: true },
+    );
   };
 
   const uniqueLocations = Array.from(new Set(cameras.map(c => c.locationId))).sort();
@@ -278,6 +334,22 @@ export default function ViolationsHistory() {
       />
 
       <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
+        {multiPlateContext && (
+          <div
+            className="flex gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2.5 text-sm text-muted-foreground"
+            role="status"
+          >
+            <Info className="h-4 w-4 shrink-0 text-primary mt-0.5" />
+            <p className="leading-relaxed">
+              Showing violations for plate{' '}
+              <span className="font-mono font-medium text-foreground">{multiPlateContext[0]}</span>. This resident has{' '}
+              {multiPlateContext.length} linked plates — use Search Plate for others:{' '}
+              <span className="font-mono text-foreground">
+                {multiPlateContext.slice(1).join(', ')}
+              </span>
+            </p>
+          </div>
+        )}
         {/* Statistics Cards */}
         {stats && !isLoadingStats && (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -429,7 +501,14 @@ export default function ViolationsHistory() {
                 </TableHeader>
                 <TableBody>
                   {violations.map((violation) => (
-                    <TableRow key={violation.id} className="border-border">
+                    <TableRow
+                      key={violation.id}
+                      id={`violation-row-${violation.id}`}
+                      className={cn(
+                        'border-border',
+                        highlightViolationId === violation.id && 'bg-primary/10 ring-2 ring-inset ring-primary/35',
+                      )}
+                    >
                       <TableCell className="font-mono font-medium">{violation.plateNumber}</TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">

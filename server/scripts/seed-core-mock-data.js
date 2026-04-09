@@ -61,8 +61,8 @@ function clearCoreTables() {
 
 function seedResidents() {
   const stmt = db.prepare(
-    `INSERT OR REPLACE INTO residents (id, name, contactNumber, address, houseNumber, streetName, createdAt, residentStatus)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT OR REPLACE INTO residents (id, name, contactNumber, address, houseNumber, streetName, createdAt, residentStatus, residentType)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
   for (let i = 1; i <= ROWS_PER_TABLE; i += 1) {
     const residentId = id('RESIDENT', i);
@@ -78,7 +78,8 @@ function seedResidents() {
       hn,
       street,
       isoHoursAgo(24 * (ROWS_PER_TABLE - i + 1)),
-      i % 7 === 0 ? 'guest' : 'verified'
+      i % 7 === 0 ? 'guest' : 'verified',
+      i % 3 === 0 ? 'tenant' : 'homeowner',
     );
   }
 }
