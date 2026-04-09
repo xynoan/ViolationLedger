@@ -36,6 +36,11 @@ import { toast } from '@/hooks/use-toast';
 import { hostsAPI } from '@/lib/api';
 import { useAuth } from '@/hooks/useAuth';
 
+const digitsOnly = (value: string) => value.replace(/\D/g, '');
+const lettersAndSpacesOnly = (value: string) => value.replace(/[^a-zA-Z\s]/g, '');
+const hostNameValid = (value: string) => /^[a-zA-Z\s]+$/.test(value.trim());
+const contactNumberValid = (value: string) => digitsOnly(value).length === 13;
+
 export default function Hosts() {
   usePageTracking();
   const { user } = useAuth();
@@ -123,7 +128,10 @@ export default function Hosts() {
       });
       return;
     }
-    if (!formData.name || !formData.contactNumber) {
+    const nameTrimmed = formData.name.trim();
+    const contactClean = digitsOnly(formData.contactNumber);
+
+    if (!nameTrimmed || !contactClean) {
       toast({
         title: "Validation Error",
         description: "Please fill in name and contact number",
@@ -132,9 +140,33 @@ export default function Hosts() {
       return;
     }
 
+    if (!hostNameValid(nameTrimmed)) {
+      toast({
+        title: "Validation Error",
+        description: "Name may only contain letters and spaces",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!contactNumberValid(contactClean)) {
+      toast({
+        title: "Validation Error",
+        description: "Contact number must be exactly 13 digits",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const payload = {
+      name: nameTrimmed,
+      contactNumber: contactClean,
+      address: formData.address.trim(),
+    };
+
     try {
       if (editingHost) {
-        await hostsAPI.update(editingHost.id, formData);
+        await hostsAPI.update(editingHost.id, payload);
         toast({
           title: "Host Updated",
           description: "Host details updated successfully",
@@ -143,7 +175,7 @@ export default function Hosts() {
         const hostId = `HOST-${Date.now()}`;
         await hostsAPI.create({
           id: hostId,
-          ...formData,
+          ...payload,
         });
         toast({
           title: "Host Added",
@@ -217,15 +249,15 @@ export default function Hosts() {
   return (
     <div className="min-h-screen">
       <Header 
-        title="Hosts Registry" 
-        subtitle="Manage registered hosts"
+        title="Residents Registry" 
+        subtitle="Manage registered residents"
       />
 
       <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
         <div className="flex items-start gap-2 rounded-lg border border-border bg-card/70 px-3 py-2 text-sm text-muted-foreground">
           <Info className="mt-0.5 h-4 w-4 text-primary" />
           <p className="leading-relaxed">
-          Here's where we add resident details whom will take the role of "Host". They will be the ones who will be receiving a text message if their visitor (non-resident) parked illegally. 
+          Here's where we add resident details whom. They will be the ones who will be receiving a text message if their visitor (non-resident) parked illegally. 
           </p>
         </div>
         {/* Actions Bar */}
@@ -245,12 +277,12 @@ export default function Hosts() {
               <DialogTrigger asChild>
                 <Button className="w-full sm:w-auto">
                   <Plus className="h-4 w-4 mr-2" />
-                  Add Host
+                  Add Resident
                 </Button>
               </DialogTrigger>
               <DialogContent className="bg-card border-border mx-4 sm:mx-auto max-w-[calc(100vw-2rem)] sm:max-w-lg">
                 <DialogHeader>
-                  <DialogTitle>{editingHost ? 'Edit Host' : 'Add New Host'}</DialogTitle>
+                  <DialogTitle>{editingHost ? 'Edit Resident' : 'Add New Resident'}</DialogTitle>
                   <DialogDescription>
                     {editingHost 
                       ? 'Update the host information below.' 
@@ -264,7 +296,9 @@ export default function Hosts() {
                       id="name"
                       placeholder="Juan dela Cruz"
                       value={formData.name}
-                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                      onChange={(e) =>
+                        setFormData({ ...formData, name: lettersAndSpacesOnly(e.target.value) })
+                      }
                       className="bg-secondary"
                     />
                   </div>
@@ -272,11 +306,22 @@ export default function Hosts() {
                     <Label htmlFor="contactNumber">Contact Number *</Label>
                     <Input
                       id="contactNumber"
-                      placeholder="+639171234567"
+                      placeholder="6391712345678"
                       value={formData.contactNumber}
-                      onChange={(e) => setFormData({ ...formData, contactNumber: e.target.value })}
+                      onChange={(e) =>
+                        setFormData({
+                          ...formData,
+                          contactNumber: digitsOnly(e.target.value).slice(0, 13),
+                        })
+                      }
                       className="bg-secondary"
+                      inputMode="numeric"
+                      autoComplete="tel"
+                      maxLength={13}
                     />
+                    <p className="text-xs text-muted-foreground">
+                      Contact number must be exactly 13 digits
+                    </p>
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="address">Address</Label>
@@ -290,7 +335,7 @@ export default function Hosts() {
                     />
                   </div>
                   <Button onClick={handleSaveHost} className="w-full">
-                    {editingHost ? 'Save Changes' : 'Add Host'}
+                    {editingHost ? 'Save Changes' : 'Add Resident'}
                   </Button>
                 </div>
               </DialogContent>
@@ -375,7 +420,7 @@ export default function Hosts() {
                                 size="icon"
                                 onClick={() => requestDeleteHost(host)}
                                 className={deleteButtonClassName}
-                                aria-label="Delete host"
+                                aria-label="Delete Resident"
                               >
                                 <Trash2 className="h-4 w-4" />
                               </Button>
@@ -427,14 +472,14 @@ export default function Hosts() {
         ) : (
           <div className="glass-card rounded-xl p-8 sm:p-12 text-center">
             <Home className="h-12 w-12 sm:h-16 sm:w-16 text-muted-foreground mx-auto mb-4" />
-            <h3 className="text-lg font-semibold text-foreground mb-2">No Hosts Registered</h3>
+            <h3 className="text-lg font-semibold text-foreground mb-2">No Resident Registered</h3>
             <p className="text-muted-foreground mb-6">
-              Add your first host to the registry
+              Add your first resident to the registry
             </p>
             {!isBarangayUser && (
               <Button onClick={() => handleOpenDialog()}>
                 <Plus className="h-4 w-4 mr-2" />
-                Add Your First Host
+                Add Your First Resident
               </Button>
             )}
           </div>

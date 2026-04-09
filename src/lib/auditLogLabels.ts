@@ -213,7 +213,7 @@ export function formatLogTimestamp(iso: string): string {
   const datePart = d.toLocaleDateString('en-US', {
     month: 'short',
     day: 'numeric',
-    ...(sameYear ? {} : { year: 'numeric' }),
+    year: 'numeric',
   });
   const timePart = d.toLocaleTimeString('en-US', {
     hour: 'numeric',

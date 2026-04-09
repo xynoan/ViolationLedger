@@ -12,14 +12,14 @@ router.get('/', async (req, res) => {
     const params = [];
     
     if (startDate) {
-      dateFilter += ' AND timestamp >= ?';
+      dateFilter += ' AND timeDetected >= ?';
       params.push(startDate);
     }
     
     if (endDate) {
       const endDateObj = new Date(endDate);
       endDateObj.setDate(endDateObj.getDate() + 1);
-      dateFilter += ' AND timestamp < ?';
+      dateFilter += ' AND timeDetected < ?';
       params.push(endDateObj.toISOString());
     }
     

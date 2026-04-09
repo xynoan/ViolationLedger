@@ -39,11 +39,12 @@ import { useAuth } from '@/hooks/useAuth';
 
 const RENTED_OPTIONS = ['Court', 'Community Center', 'Barangay Hall'] as const;
 const RENTED_NONE = '__rented_none__';
-const PURPOSE_OPTIONS = ['Visit resident', 'Barangay hall', 'Reservation'] as const;
+const PURPOSE_OPTIONS = ['Visit resident', 'Barangay hall', 'Reservation', 'Rent - Court', 'Rent - Community Center', 'Rent - Barangay Hall'] as const;
 
 const digitsOnly = (value: string) => value.replace(/\D/g, '');
 const lettersAndSpacesOnly = (value: string) => value.replace(/[^a-zA-Z\s]/g, '');
 const ownerNameValid = (value: string) => /^[a-zA-Z\s]+$/.test(value.trim());
+const contactNumberValid = (value: string) => digitsOnly(value).length === 13;
 
 export default function Vehicles() {
   usePageTracking();
@@ -222,6 +223,15 @@ export default function Vehicles() {
       toast({
         title: "Validation Error",
         description: "Contact number is required",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (contactClean && !contactNumberValid(contactClean)) {
+      toast({
+        title: "Validation Error",
+        description: "Contact number must be exactly 13 digits",
         variant: "destructive",
       });
       return;
@@ -428,13 +438,13 @@ export default function Vehicles() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="hostId">Host (Optional)</Label>
+                    <Label htmlFor="hostId">Resident's Name (Optional)</Label>
                     <Select 
                       value={formData.hostId || undefined} 
                       onValueChange={handleHostChange}
                     >
                       <SelectTrigger id="hostId" className="bg-secondary">
-                        <SelectValue placeholder="Select a host" />
+                        <SelectValue placeholder="Select a resident" />
                       </SelectTrigger>
                       <SelectContent>
                         {hosts.map((host) => (
@@ -459,7 +469,7 @@ export default function Vehicles() {
                       If selected, contact number will be automatically filled from host
                     </p>
                   </div>
-                  <div className="space-y-2">
+                  {/* <div className="space-y-2">
                     <Label htmlFor="rented">Rented (Optional)</Label>
                     <Select
                       value={
@@ -495,19 +505,23 @@ export default function Vehicles() {
                     <p className="text-xs text-muted-foreground">
                       If vehicle is rented, choose the location. Contact number will be the renter&apos;s.
                     </p>
-                  </div>
+                  </div> */}
                   <div className="space-y-2">
                     <Label htmlFor="contactNumber">Contact Number *</Label>
                     <Input
                       id="contactNumber"
-                      placeholder="09171234567"
+                      placeholder="6391712345678"
                       value={formData.contactNumber}
                       onChange={(e) =>
-                        setFormData({ ...formData, contactNumber: digitsOnly(e.target.value) })
+                        setFormData({
+                          ...formData,
+                          contactNumber: digitsOnly(e.target.value).slice(0, 13),
+                        })
                       }
                       className="bg-secondary"
                       inputMode="numeric"
                       autoComplete="tel"
+                      maxLength={13}
                       disabled={!!formData.hostId && !formData.rented}
                     />
                     {formData.hostId && !formData.rented && (
@@ -515,6 +529,9 @@ export default function Vehicles() {
                         Contact number is automatically set from selected host
                       </p>
                     )}
+                    <p className="text-xs text-muted-foreground">
+                      Contact number must be exactly 13 digits
+                    </p>
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="purposeOfVisit">Purpose of Visit *</Label>
@@ -712,10 +729,10 @@ export default function Vehicles() {
                         <p className="text-xs uppercase text-muted-foreground">Host</p>
                         <p>{getHostNameForVehicle(selectedVehicle) || 'None'}</p>
                       </div>
-                      <div>
+                      {/* <div>
                         <p className="text-xs uppercase text-muted-foreground">Rented</p>
                         <p>{selectedVehicle.rented || 'No'}</p>
-                      </div>
+                      </div> */}
                     </div>
                     <div>
                       <p className="text-xs uppercase text-muted-foreground">Registered</p>

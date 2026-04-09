@@ -400,7 +400,11 @@ export default function AuditLogs() {
               </div>
               <div className="space-y-2">
                 <Label>&nbsp;</Label>
-                <Button onClick={clearFilters} variant="outline" className="w-full">
+                <Button
+                  onClick={clearFilters}
+                  variant="destructive"
+                  className="w-full"
+                >
                   Clear Filters
                 </Button>
               </div>

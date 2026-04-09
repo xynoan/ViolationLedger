@@ -1,5 +1,5 @@
-import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
+import { useState } from 'react';
 import { 
   LayoutDashboard, 
   Car, 
@@ -26,7 +26,7 @@ import { useAuth } from '@/hooks/useAuth';
 const navItems = [
   { path: '/', icon: LayoutDashboard, label: 'Dashboard', adminOnly: false },
   { path: '/vehicles', icon: Car, label: 'Vehicles', adminOnly: false },
-  { path: '/hosts', icon: Home, label: 'Hosts', adminOnly: false },
+  { path: '/hosts', icon: Home, label: 'Residents', adminOnly: false },
   { path: '/cameras', icon: Camera, label: 'Cameras', adminOnly: false },
   // { path: '/upload', icon: Upload, label: 'Upload Image', adminOnly: false },
   { path: '/warnings', icon: AlertTriangle, label: 'Warnings', adminOnly: false },
@@ -35,7 +35,7 @@ const navItems = [
   { path: '/analytics', icon: BarChart3, label: 'Analytics', adminOnly: false },
   { path: '/users', icon: Users, label: 'User Management', adminOnly: true },
   { path: '/audit-logs', icon: ClipboardList, label: 'Activity Logs', adminOnly: true },
-  { path: '/settings', icon: Settings, label: 'Settings', adminOnly: false },
+  { path: '/settings', icon: Settings, label: 'System Health & Configuration', adminOnly: false },
 ];
 
 function NavContent({ collapsed, onNavigate }: { collapsed?: boolean; onNavigate?: () => void }) {

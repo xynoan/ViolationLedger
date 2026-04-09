@@ -15,14 +15,109 @@ function normalizePlateForMatch(plateNumber) {
   return String(plateNumber).replace(/\s+/g, '').toUpperCase();
 }
 
-export async function createViolationFromDetection(plateNumber, cameraLocationId, detectionId = null) {
+export async function createViolationFromDetection(plateNumber, cameraLocationId, detectionId = null, class_name = 'vehicle') {
   try {
-    if (!plateNumber || plateNumber.toUpperCase() === 'NONE' || plateNumber.toUpperCase() === 'BLUR') {
+    if (!plateNumber) {
       return null;
     }
 
+    const normalizedInput = normalizePlateForMatch(plateNumber);
+    const isUnreadablePlate = normalizedInput === 'NONE' || normalizedInput === 'BLUR';
+
+    if (isUnreadablePlate) {
+      const existingUnreadableViolation = db.prepare(`
+        SELECT * FROM violations
+        WHERE plateNumber = ?
+        AND cameraLocationId = ?
+        AND status IN ('warning', 'pending')
+        ORDER BY timeDetected DESC
+        LIMIT 1
+      `).get(normalizedInput, cameraLocationId);
+
+      if (existingUnreadableViolation) {
+        return {
+          ...existingUnreadableViolation,
+          timeDetected: new Date(existingUnreadableViolation.timeDetected),
+          timeIssued: existingUnreadableViolation.timeIssued ? new Date(existingUnreadableViolation.timeIssued) : null,
+          warningExpiresAt: existingUnreadableViolation.warningExpiresAt
+            ? new Date(existingUnreadableViolation.warningExpiresAt)
+            : null,
+          messageSent: false,
+          messageLogId: null
+        };
+      }
+
+      const violationId = `VIOL-${normalizedInput}-${cameraLocationId}-${Date.now()}`;
+      const timeDetected = new Date().toISOString();
+      const expiresDate = new Date();
+      expiresDate.setMinutes(expiresDate.getMinutes() + GRACE_PERIOD_MINUTES);
+      const expiresAt = expiresDate.toISOString();
+
+      db.prepare(`
+        INSERT INTO violations (id, ticketId, plateNumber, cameraLocationId, timeDetected, status, warningExpiresAt, class_name)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        violationId,
+        null,
+        normalizedInput,
+        cameraLocationId,
+        timeDetected,
+        'warning',
+        expiresAt,
+        class_name
+      );
+
+      try {
+        const camera = db.prepare('SELECT * FROM cameras WHERE locationId = ?').get(cameraLocationId);
+        const cameraId = camera?.id || null;
+        const warningNotificationId = `NOTIF-WARNING-${violationId}-${Date.now()}`;
+        const warningTitle = normalizedInput === 'BLUR'
+          ? `New Warning - Blur Plate at ${cameraLocationId}`
+          : `New Warning - Plate Not Visible at ${cameraLocationId}`;
+        const warningMessage = normalizedInput === 'BLUR'
+          ? `Illegal parking detected at ${cameraLocationId}. The plate area is visible but unreadable. ${GRACE_PERIOD_MINUTES}-minute grace period started.`
+          : `Illegal parking detected at ${cameraLocationId}. No readable plate was captured. ${GRACE_PERIOD_MINUTES}-minute grace period started.`;
+
+        db.prepare(`
+          INSERT INTO notifications (
+            id, type, title, message, cameraId, locationId,
+            incidentId, detectionId, imageUrl, imageBase64,
+            plateNumber, timeDetected, reason, timestamp, read
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          warningNotificationId,
+          'warning_created',
+          warningTitle,
+          warningMessage,
+          cameraId,
+          cameraLocationId,
+          null,
+          detectionId,
+          null,
+          null,
+          normalizedInput,
+          timeDetected,
+          normalizedInput === 'BLUR' ? 'Unreadable plate warning created' : 'No plate visible warning created',
+          new Date().toISOString(),
+          0
+        );
+      } catch (notifError) {
+        console.error('Error creating unreadable-plate warning notification:', notifError);
+      }
+
+      const violation = db.prepare('SELECT * FROM violations WHERE id = ?').get(violationId);
+      return {
+        ...violation,
+        timeDetected: new Date(violation.timeDetected),
+        timeIssued: violation.timeIssued ? new Date(violation.timeIssued) : null,
+        warningExpiresAt: violation.warningExpiresAt ? new Date(violation.warningExpiresAt) : null,
+        messageSent: false,
+        messageLogId: null
+      };
+    }
+
     // Get vehicle info to check if registered
-    const normalizedPlate = normalizePlateForMatch(plateNumber);
+    const normalizedPlate = normalizedInput;
     const vehicle = db
       .prepare(`SELECT * FROM vehicles WHERE REPLACE(UPPER(plateNumber), ' ', '') = ?`)
       .get(normalizedPlate);
@@ -80,8 +175,8 @@ export async function createViolationFromDetection(plateNumber, cameraLocationId
     // Create violation only if it's a new violation
     if (true) {
       db.prepare(`
-        INSERT INTO violations (id, ticketId, plateNumber, cameraLocationId, timeDetected, status, warningExpiresAt)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO violations (id, ticketId, plateNumber, cameraLocationId, timeDetected, status, warningExpiresAt, class_name)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         violationId,
         null, // ticketId (assigned later)
@@ -89,7 +184,8 @@ export async function createViolationFromDetection(plateNumber, cameraLocationId
         cameraLocationId,
         timeDetected,
         status,
-        expiresAt
+        expiresAt,
+        class_name
       );
       
       // Send SMS message to vehicle owner (only for new violations)

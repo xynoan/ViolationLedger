@@ -167,7 +167,7 @@ class MonitoringService {
 
         console.log(
           `🔍 Monitoring check for violation ${warning.id}: plate=${warning.plateNumber}, location=${warning.cameraLocationId}, ` +
-          `expiresAt=${expiresAt ? expiresAt.toISOString() : 'N/A'}, isExpired=${Boolean(isExpired)}, isStillPresent=${isStillPresent}`
+          `expiresAt=${expiresAt ? expiresAt.toISOString() : 'N/A'}, isExpired=${Boolean(isExpired)}, isStillPresent=${isStillPresent}, type=${warning.class_name}`
         );
 
         if (isExpired && !isStillPresent) {

@@ -120,13 +120,7 @@ export function Header({ title, subtitle, action }: HeaderProps) {
             {action}
           </div>
         )}
-        <div className="relative hidden sm:block">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input 
-            placeholder="Search..." 
-            className="w-48 md:w-64 pl-9 bg-secondary border-border"
-          />
-        </div>
+
         
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -206,7 +200,7 @@ export function Header({ title, subtitle, action }: HeaderProps) {
                             <img 
                               src={imageSrc} 
                               alt="Camera snapshot" 
-                              className="mt-2 rounded-md max-w-full h-20 object-cover border border-border"
+                              className="mt-2 rounded-md max-w-full h-20 w-full object-contain bg-muted border border-border"
                               onError={(e) => {
                                 (e.target as HTMLImageElement).style.display = 'none';
                               }}
