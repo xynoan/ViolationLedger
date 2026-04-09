@@ -45,7 +45,6 @@ interface CaptureResult {
   imageBase64: string | null;
   detections: Array<{
     class_name: string;
-    confidence: number;
     bbox: number[];
   }>;
 }
@@ -127,7 +126,6 @@ export default function Tickets() {
                 imageBase64: detectionWithImage?.imageBase64 || null,
                 detections: validDetections.map((d: any) => ({
                   class_name: d.class_name || 'vehicle',
-                  confidence: d.confidence || 0,
                   bbox: d.bbox || []
                 }))
               });
