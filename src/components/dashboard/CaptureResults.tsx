@@ -49,7 +49,11 @@ interface CaptureResult {
   }>;
 }
 
-export function CaptureResults() {
+interface CaptureResultsProps {
+  autoRefresh?: boolean;
+}
+
+export function CaptureResults({ autoRefresh = true }: CaptureResultsProps) {
   const navigate = useNavigate();
   const [captureResults, setCaptureResults] = useState<CaptureResult[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -58,10 +62,11 @@ export function CaptureResults() {
 
   useEffect(() => {
     loadCaptureResults();
+    if (!autoRefresh) return;
     // Refresh more frequently for near real-time updates
     const interval = setInterval(loadCaptureResults, 5000);
     return () => clearInterval(interval);
-  }, []);
+  }, [autoRefresh]);
 
   const loadCaptureResults = async () => {
     try {

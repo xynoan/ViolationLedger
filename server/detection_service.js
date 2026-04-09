@@ -27,6 +27,9 @@ const workers = new Map();
 /** cameraId -> Set<WebSocket> */
 const subscribers = new Map();
 
+/** cameraId -> latest worker status text */
+const workerStatuses = new Map();
+
 /** HTTP server for WebSocket upgrade */
 let wss = null;
 
@@ -125,6 +128,27 @@ function saveVehicleDetectionsFromWorker(cameraId, msg) {
   }
 }
 
+function broadcastStatus(cameraId, status, detail = null) {
+  const text = detail || status;
+  workerStatuses.set(cameraId, text);
+
+  const subs = subscribers.get(cameraId);
+  if (!subs || subs.size === 0) return;
+
+  const payload = JSON.stringify({
+    type: 'status',
+    cameraId,
+    status,
+    detail: text,
+  });
+
+  for (const ws of subs) {
+    if (ws.readyState === 1) {
+      ws.send(payload);
+    }
+  }
+}
+
 function getOnlineCamerasWithDeviceId() {
   try {
     const rows = db.prepare('SELECT id, deviceId FROM cameras WHERE status = ? AND deviceId IS NOT NULL AND deviceId != ?').all('online', '');
@@ -146,6 +170,7 @@ function startWorker(cameraId, deviceId) {
 
   const rtspUrl = buildRtspUrl(deviceId);
   console.log(`[Detection] Starting worker for ${cameraId} -> ${rtspUrl}`);
+  broadcastStatus(cameraId, 'loading_model', 'Loading model...');
 
   const proc = spawn(pythonCmd, [
     DETECTION_WORKER_PATH,
@@ -181,10 +206,18 @@ function startWorker(cameraId, deviceId) {
   proc.stderr.on('data', (data) => {
     const str = data.toString().trim();
     if (str) console.log(`[Worker ${cameraId}]`, str);
+    if (str.includes('Loading model')) {
+      broadcastStatus(cameraId, 'loading_model', 'Loading model...');
+    } else if (str.includes('Model loaded') && str.includes('starting detection loop')) {
+      broadcastStatus(cameraId, 'starting_detection_loop', 'Starting detection loop...');
+    } else if (str.includes('Model loaded')) {
+      broadcastStatus(cameraId, 'model_loaded', 'Model loaded');
+    }
   });
 
   proc.on('close', (code, signal) => {
     workers.delete(cameraId);
+    workerStatuses.delete(cameraId);
     if (code !== 0 && code !== null) {
       console.warn(`[Detection] Worker ${cameraId} exited: code=${code} signal=${signal}`);
     }
@@ -193,6 +226,7 @@ function startWorker(cameraId, deviceId) {
   proc.on('error', (err) => {
     console.error(`[Detection] Worker ${cameraId} error:`, err);
     workers.delete(cameraId);
+    workerStatuses.delete(cameraId);
   });
 
   workers.set(cameraId, proc);
@@ -248,6 +282,15 @@ function subscribe(ws, cameraId) {
     subscribers.set(cameraId, new Set());
   }
   subscribers.get(cameraId).add(ws);
+
+  if (workerStatuses.has(cameraId) && ws.readyState === 1) {
+    ws.send(JSON.stringify({
+      type: 'status',
+      cameraId,
+      status: 'current',
+      detail: workerStatuses.get(cameraId),
+    }));
+  }
 }
 
 function unsubscribe(ws, cameraId) {

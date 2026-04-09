@@ -105,9 +105,18 @@ export default function Dashboard() {
           (s, d: any) => s + normalizeConfidence(d.confidence),
           0
         );
-        setPlateConfidenceAvg(sum / withReadablePlate.length);
+        const avg = sum / withReadablePlate.length;
+        console.log('[Dashboard] Plate accuracy summary', {
+          averageConfidence: avg,
+          readablePlateCount: withReadablePlate.length,
+        });
+        setPlateConfidenceAvg(avg);
         setPlateReadCount(withReadablePlate.length);
       } else {
+        console.log('[Dashboard] Plate accuracy summary', {
+          averageConfidence: null,
+          readablePlateCount: 0,
+        });
         setPlateConfidenceAvg(null);
         setPlateReadCount(0);
       }
@@ -159,6 +168,7 @@ export default function Dashboard() {
   const clearedToday = violations.filter(v => v.status === 'cleared');
   const onlineCameras = cameras.filter(c => c.status === 'online');
   const firstOnlineCamera = onlineCameras[0];
+  const registeredPlates = vehicles.map((vehicle) => vehicle.plateNumber);
 
   const hasData = vehicles.length > 0 || cameras.length > 0 || violations.length > 0;
 
@@ -178,6 +188,7 @@ export default function Dashboard() {
       <Header 
         title="Dashboard" 
         subtitle="Monitor parking violations in real-time"
+        autoRefreshNotifications={false}
       />
 
       <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
@@ -235,16 +246,13 @@ export default function Dashboard() {
             variant="success"
           />
           <StatCard
-            title="Plate recognition"
-            value={plateConfidenceAvg !== null ? `${Math.round(plateConfidenceAvg * 100)}%` : '—'}
-            subtitle={
-              plateReadCount > 0
-                ? `Avg. confidence · ${plateReadCount} plate read${plateReadCount === 1 ? '' : 's'}`
-                : 'No successful plate reads yet'
-            }
+            title="Plate Accuracy"
+            value={plateConfidenceAvg !== null ? `${Math.round(plateConfidenceAvg * 100)}%` : 'N/A'}
             icon={ScanSearch}
+            subtitle={plateReadCount > 0 ? `${plateReadCount} readable plate${plateReadCount === 1 ? '' : 's'} in the latest fetch` : 'No readable plates detected'}
             variant="default"
           />
+     
         </div>
 
         {!hasData ? (
@@ -364,6 +372,7 @@ export default function Dashboard() {
               {firstOnlineCamera ? (
                 <CameraFeed 
                   camera={firstOnlineCamera}
+                  registeredPlates={registeredPlates}
                   onRefresh={() => {
                     // Reload cameras when refresh is called
                     camerasAPI.getAll().then((data) => {

@@ -30,6 +30,7 @@ import { RefreshCw } from 'lucide-react';
 
 interface CameraFeedProps {
   camera: Camera;
+  registeredPlates?: string[];
   onRefresh?: () => void;
   onDelete?: (id: string) => void;
   canDelete?: boolean;
@@ -37,6 +38,7 @@ interface CameraFeedProps {
 
 export const CameraFeed = memo(function CameraFeed({
   camera,
+  registeredPlates = [],
   onRefresh,
   onDelete,
   canDelete = true,
@@ -52,8 +54,7 @@ export const CameraFeed = memo(function CameraFeed({
   });
   const {
     detections,
-    vehicleCount,
-    plateCount,
+    workerStatus,
   } = useYoloDetection(camera.id, isOnline);
 
   const handleRefresh = useCallback(() => {
@@ -85,9 +86,18 @@ export const CameraFeed = memo(function CameraFeed({
             isOnline={isOnline}
             camera={camera}
             detections={detections}
-            vehicleCount={vehicleCount + plateCount}
+            registeredPlates={registeredPlates}
             enablePlateRecognition={false}
           />
+        </div>
+
+        <div className="border-t border-border bg-muted/40 px-4 py-2">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span className="status-indicator status-active" />
+            <span className="font-mono">
+              {workerStatus || (isOnline ? 'Connecting detection worker...' : 'Detection offline')}
+            </span>
+          </div>
         </div>
 
         <CameraFooter
@@ -129,7 +139,7 @@ export const CameraFeed = memo(function CameraFeed({
               isOnline={isOnline}
               camera={camera}
               detections={detections}
-              vehicleCount={vehicleCount + plateCount}
+              registeredPlates={registeredPlates}
               fullscreen
               enablePlateRecognition={false}
             />
