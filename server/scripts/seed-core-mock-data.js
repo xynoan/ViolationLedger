@@ -87,8 +87,8 @@ function seedResidents() {
 function seedVehicles() {
   const stmt = db.prepare(
     `INSERT OR REPLACE INTO vehicles
-      (id, plateNumber, ownerName, contactNumber, registeredAt, dataSource, residentId, rented, purposeOfVisit, vehicleType)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      (id, plateNumber, ownerName, contactNumber, registeredAt, dataSource, residentId, rented, purposeOfVisit, vehicleType, visitorCategory)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
   const visitPurposes = ['Delivery', 'Resident Visit', 'Maintenance', 'Pickup', 'Drop-off'];
   const vehicleTypes = ['car', 'motorcycle', 'truck', 'van', 'suv', 'tricycle', 'other'];
@@ -104,6 +104,7 @@ function seedVehicles() {
       seededStatus(['yes', 'no'], i),
       visitPurposes[i % visitPurposes.length],
       vehicleTypes[(i - 1) % vehicleTypes.length],
+      null,
     );
   }
 }

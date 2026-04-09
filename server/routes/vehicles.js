@@ -20,6 +20,14 @@ function normalizeVehicleType(value) {
   return 'car';
 }
 
+const ALLOWED_VISITOR_CATEGORY = new Set(['guest', 'delivery', 'rental']);
+
+function normalizeVisitorCategory(value) {
+  const v = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  if (ALLOWED_VISITOR_CATEGORY.has(v)) return v;
+  return null;
+}
+
 router.use(authenticateToken);
 router.get('/', (req, res) => {
   try {
@@ -73,6 +81,7 @@ router.post('/', (req, res) => {
       rented,
       purposeOfVisit,
       vehicleType,
+      visitorCategory: visitorCategoryRaw,
     } = req.body;
 
     if (!id || !plateNumber || !ownerName) {
@@ -85,10 +94,13 @@ router.post('/', (req, res) => {
     const vt = normalizeVehicleType(vehicleType);
     const purpose = purposeOfVisit != null && purposeOfVisit !== '' ? String(purposeOfVisit) : null;
 
+    const rid = residentId ? String(residentId).trim() : null;
+    let visitorCategory = rid ? null : normalizeVisitorCategory(visitorCategoryRaw);
+
     let finalContactNumber =
       contactNumber !== undefined && contactNumber !== null ? String(contactNumber) : '';
-    if (residentId && !rented) {
-      const resident = db.prepare('SELECT * FROM residents WHERE id = ?').get(residentId);
+    if (rid && !rented) {
+      const resident = db.prepare('SELECT * FROM residents WHERE id = ?').get(rid);
       if (!resident) {
         return res.status(400).json({ error: 'Invalid resident' });
       }
@@ -99,15 +111,30 @@ router.post('/', (req, res) => {
     // Only remove spaces, dashes, and parentheses for clean storage
     const cleanedContact = finalContactNumber.trim().replace(/[\s\-\(\)]/g, '');
 
-    if (residentId && !rented && (!cleanedContact || cleanedContact.length === 0)) {
+    if (rid && !rented && (!cleanedContact || cleanedContact.length === 0)) {
       return res.status(400).json({
         error: 'Could not resolve contact for linked resident',
       });
     }
 
+    if (!rid) {
+      if (!visitorCategory) {
+        return res.status(400).json({ error: 'Visitor category is required for vehicles not linked to a resident' });
+      }
+      if (!purpose || String(purpose).trim() === '') {
+        return res.status(400).json({ error: 'Purpose of visit is required' });
+      }
+      if (!cleanedContact || cleanedContact.length === 0) {
+        return res.status(400).json({ error: 'Contact number is required' });
+      }
+      if (visitorCategory === 'rental' && (!rented || String(rented).trim() === '')) {
+        return res.status(400).json({ error: 'Rental location is required for short-term rentals' });
+      }
+    }
+
     db.prepare(`
-      INSERT INTO vehicles (id, plateNumber, ownerName, contactNumber, registeredAt, dataSource, residentId, rented, purposeOfVisit, vehicleType)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO vehicles (id, plateNumber, ownerName, contactNumber, registeredAt, dataSource, residentId, rented, purposeOfVisit, vehicleType, visitorCategory)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       plateNumber,
@@ -115,10 +142,11 @@ router.post('/', (req, res) => {
       cleanedContact,
       registeredAt,
       vehicleDataSource,
-      residentId || null,
+      rid,
       rented || null,
       purpose,
       vt,
+      visitorCategory,
     );
 
     const vehicle = db.prepare('SELECT * FROM vehicles WHERE id = ?').get(id);
@@ -137,7 +165,16 @@ router.post('/', (req, res) => {
 
 router.put('/:id', requireRole('admin', 'barangay_user'), (req, res) => {
   try {
-    const { plateNumber, ownerName, contactNumber, residentId, rented, purposeOfVisit, vehicleType } = req.body;
+    const {
+      plateNumber,
+      ownerName,
+      contactNumber,
+      residentId,
+      rented,
+      purposeOfVisit,
+      vehicleType,
+      visitorCategory: visitorCategoryRaw,
+    } = req.body;
     const vehicle = db.prepare('SELECT * FROM vehicles WHERE id = ?').get(req.params.id);
     
     if (!vehicle) {
@@ -173,9 +210,40 @@ router.put('/:id', requireRole('admin', 'barangay_user'), (req, res) => {
     const nextVt =
       vehicleType !== undefined ? normalizeVehicleType(vehicleType) : vehicle.vehicleType || 'car';
 
+    let nextVisitorCategory = null;
+    if (nextResidentId) {
+      nextVisitorCategory = null;
+    } else if (visitorCategoryRaw !== undefined) {
+      nextVisitorCategory = normalizeVisitorCategory(visitorCategoryRaw);
+    } else {
+      nextVisitorCategory = vehicle.visitorCategory ?? null;
+      if (!nextVisitorCategory) {
+        nextVisitorCategory =
+          vehicle.rented && String(vehicle.rented).trim()
+            ? 'rental'
+            : String(vehicle.purposeOfVisit || '')
+                .toLowerCase()
+                .includes('deliver')
+              ? 'delivery'
+              : 'guest';
+      }
+    }
+    if (!nextResidentId && purposeOfVisit !== undefined) {
+      const p = purposeOfVisit != null && purposeOfVisit !== '' ? String(purposeOfVisit) : null;
+      if (!p || String(p).trim() === '') {
+        return res.status(400).json({ error: 'Purpose of visit is required' });
+      }
+    }
+    if (!nextResidentId && nextVisitorCategory === 'rental') {
+      const r = rented !== undefined ? rented : vehicle.rented;
+      if (!r || String(r).trim() === '') {
+        return res.status(400).json({ error: 'Rental location is required for short-term rentals' });
+      }
+    }
+
     db.prepare(`
       UPDATE vehicles 
-      SET plateNumber = ?, ownerName = ?, contactNumber = ?, residentId = ?, rented = ?, purposeOfVisit = ?, vehicleType = ?
+      SET plateNumber = ?, ownerName = ?, contactNumber = ?, residentId = ?, rented = ?, purposeOfVisit = ?, vehicleType = ?, visitorCategory = ?
       WHERE id = ?
     `).run(
       plateNumber !== undefined ? plateNumber : vehicle.plateNumber,
@@ -185,6 +253,7 @@ router.put('/:id', requireRole('admin', 'barangay_user'), (req, res) => {
       rented !== undefined ? (rented || null) : vehicle.rented,
       purposeOfVisit !== undefined ? purposeOfVisit : vehicle.purposeOfVisit,
       nextVt,
+      nextVisitorCategory,
       req.params.id
     );
 

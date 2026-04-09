@@ -225,6 +225,35 @@ async function initDatabase() {
       console.log('Note: vehicleType column migration:', errorMsg);
     }
   }
+
+  try {
+    db.run('ALTER TABLE vehicles ADD COLUMN visitorCategory TEXT');
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: visitorCategory column migration:', errorMsg);
+    }
+  }
+
+  try {
+    db.run(`
+      UPDATE vehicles SET visitorCategory = NULL
+      WHERE residentId IS NOT NULL AND TRIM(IFNULL(residentId, '')) != ''
+    `);
+    db.run(`
+      UPDATE vehicles SET visitorCategory = CASE
+        WHEN IFNULL(TRIM(rented), '') != '' THEN 'rental'
+        WHEN LOWER(IFNULL(purposeOfVisit, '')) LIKE '%deliver%' THEN 'delivery'
+        ELSE 'guest'
+      END
+      WHERE residentId IS NULL OR TRIM(IFNULL(residentId, '')) = ''
+    `);
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('no such column') && !errorMsg.includes('no such table')) {
+      console.log('Note: visitorCategory backfill:', errorMsg);
+    }
+  }
   
   db.run(`
     CREATE TABLE IF NOT EXISTS cameras (

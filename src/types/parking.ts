@@ -10,6 +10,8 @@ export interface Vehicle {
   purposeOfVisit?: string;
   /** Normalized slug: car, motorcycle, truck, etc. */
   vehicleType?: string;
+  /** Non-resident visitor classification (null when linked to a resident). */
+  visitorCategory?: 'guest' | 'delivery' | 'rental' | null;
 }
 
 export type ResidentStatus = 'verified' | 'guest';

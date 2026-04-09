@@ -1,10 +1,24 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Plus, Search, Edit, Trash2, Phone, Car, Info, Home, ChevronDown } from 'lucide-react';
+import {
+  Plus,
+  Search,
+  Edit,
+  Trash2,
+  Car,
+  Info,
+  Home,
+  ChevronDown,
+  MapPin,
+  Shield,
+  AlertTriangle,
+  AlertCircle,
+  type LucideIcon,
+} from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Vehicle, Resident } from '@/types/parking';
+import { Vehicle, Resident, ResidentType, Violation } from '@/types/parking';
 import {
   Table,
   TableBody,
@@ -34,12 +48,14 @@ import {
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from '@/hooks/use-toast';
-import { vehiclesAPI, residentsAPI } from '@/lib/api';
+import { vehiclesAPI, residentsAPI, violationsAPI } from '@/lib/api';
 import { useAuth } from '@/hooks/useAuth';
 import { useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { SearchNoMatchesEmpty } from '@/components/search/SearchNoMatchesEmpty';
 import { cn } from '@/lib/utils';
+import { Badge } from '@/components/ui/badge';
+import { formatResidentAddressLine } from '@/lib/residentStreets';
 
 const VEHICLE_TYPE_OPTIONS = [
   { value: 'car', label: 'Car' },
@@ -66,6 +82,67 @@ function formatVehicleTypeLabel(value?: string): string {
   return found?.label ?? value;
 }
 
+const normPlate = (p: string) => String(p || '').replace(/\s+/g, '').toUpperCase();
+
+function violationsForResidentLinkedPlates(
+  residentId: string,
+  vehicleRows: Vehicle[],
+  violationRows: Violation[],
+): Violation[] {
+  const plates = new Set(
+    vehicleRows.filter((v) => v.residentId === residentId).map((v) => normPlate(v.plateNumber)),
+  );
+  if (plates.size === 0) return [];
+  return violationRows.filter((vi) => plates.has(normPlate(vi.plateNumber)));
+}
+
+function countUnpaidViolationsForResident(
+  residentId: string,
+  vehicleRows: Vehicle[],
+  violationRows: Violation[],
+): number {
+  return violationsForResidentLinkedPlates(residentId, vehicleRows, violationRows).filter(
+    (vi) => vi.status === 'issued' || vi.status === 'pending',
+  ).length;
+}
+
+function getStandingPresentation(unpaid: number): { label: string; className: string; Icon: LucideIcon } {
+  if (unpaid === 0) {
+    return {
+      label: 'Good Standing',
+      className:
+        'border-emerald-600/50 bg-emerald-600/12 text-emerald-950 dark:text-emerald-100 [&>svg]:text-emerald-700 dark:[&>svg]:text-emerald-300',
+      Icon: Shield,
+    };
+  }
+  if (unpaid <= 2) {
+    return {
+      label: 'Warning',
+      className:
+        'border-amber-500/55 bg-amber-500/12 text-amber-950 dark:text-amber-50 [&>svg]:text-amber-700 dark:[&>svg]:text-amber-300',
+      Icon: AlertTriangle,
+    };
+  }
+  return {
+    label: 'Delinquent',
+    className:
+      'border-red-600/50 bg-red-600/12 text-red-950 dark:text-red-100 [&>svg]:text-red-700 dark:[&>svg]:text-red-300',
+    Icon: AlertCircle,
+  };
+}
+
+function resolveResidentType(r: Resident): ResidentType {
+  const t = r.residentType?.toLowerCase?.();
+  if (t === 'tenant') return 'tenant';
+  return 'homeowner';
+}
+
+function residentTypeBadgeClass(type: ResidentType): string {
+  return type === 'tenant'
+    ? 'border-purple-600/55 bg-purple-600 text-white shadow-none hover:bg-purple-600/95 dark:bg-purple-700'
+    : 'border-blue-600/55 bg-blue-600 text-white shadow-none hover:bg-blue-600/95 dark:bg-blue-700';
+}
+
 export default function Vehicles() {
   usePageTracking();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -76,10 +153,10 @@ export default function Vehicles() {
    const isAdmin = user?.role === 'admin';
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [residents, setResidents] = useState<Resident[]>([]);
+  const [violations, setViolations] = useState<Violation[]>([]);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  const [registryHasVehicles, setRegistryHasVehicles] = useState(false);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
   const [editingVehicle, setEditingVehicle] = useState<Vehicle | null>(null);
@@ -148,16 +225,42 @@ export default function Vehicles() {
   }, [loadResidents]);
 
   useEffect(() => {
-    if (searchTerm.trim() === '') {
-      setRegistryHasVehicles(vehicles.length > 0);
-    }
-  }, [vehicles, searchTerm]);
+    let cancelled = false;
+    violationsAPI
+      .getAll({ limit: 500 })
+      .then((raw) => {
+        if (cancelled) return;
+        setViolations(
+          raw.map((x: Violation) => ({
+            ...x,
+            timeDetected:
+              x.timeDetected instanceof Date ? x.timeDetected : new Date(x.timeDetected as unknown as string),
+          })),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setViolations([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
-  const filteredVehicles = vehicles.filter(
-    (v) =>
-      v.plateNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      v.ownerName.toLowerCase().includes(searchTerm.toLowerCase()),
+  const residentIdsRegistered = useMemo(() => new Set(residents.map((r) => r.id)), [residents]);
+
+  const vehiclesLinkedToRegisteredResidents = useMemo(
+    () => vehicles.filter((v) => v.residentId && residentIdsRegistered.has(v.residentId)),
+    [vehicles, residentIdsRegistered],
   );
+
+  const filteredLinkedVehicles = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    if (!q) return vehiclesLinkedToRegisteredResidents;
+    return vehiclesLinkedToRegisteredResidents.filter(
+      (v) =>
+        v.plateNumber.toLowerCase().includes(q) || v.ownerName.toLowerCase().includes(q),
+    );
+  }, [vehiclesLinkedToRegisteredResidents, searchTerm]);
 
   const residentFilterId = searchParams.get('residentId')?.trim() ?? '';
   const [residentFilterLabel, setResidentFilterLabel] = useState<string | null>(null);
@@ -186,10 +289,10 @@ export default function Vehicles() {
     };
   }, [residentFilterId, residents]);
 
-  const displayedVehicles = useMemo(() => {
-    if (!residentFilterId) return filteredVehicles;
-    return filteredVehicles.filter((v) => v.residentId === residentFilterId);
-  }, [filteredVehicles, residentFilterId]);
+  const displayedLinkedVehicles = useMemo(() => {
+    if (!residentFilterId) return filteredLinkedVehicles;
+    return filteredLinkedVehicles.filter((v) => v.residentId === residentFilterId);
+  }, [filteredLinkedVehicles, residentFilterId]);
 
   const ownerQuery = formData.ownerName.trim().toLowerCase();
   const suggestedResidents = useMemo(() => {
@@ -383,6 +486,21 @@ export default function Vehicles() {
     return resident?.name || null;
   };
 
+  const residentForInfoDialog = useMemo(() => {
+    if (!selectedVehicle?.residentId) return null;
+    return residents.find((r) => r.id === selectedVehicle.residentId) ?? null;
+  }, [selectedVehicle, residents]);
+
+  const standingForInfoDialog = useMemo(() => {
+    if (!residentForInfoDialog) return null;
+    const unpaid = countUnpaidViolationsForResident(
+      residentForInfoDialog.id,
+      vehicles,
+      violations,
+    );
+    return getStandingPresentation(unpaid);
+  }, [residentForInfoDialog, vehicles, violations]);
+
   const requestDeleteVehicle = (vehicle: Vehicle) => {
     if (isEncoder || isBarangayUser) {
       toast({
@@ -459,7 +577,8 @@ export default function Vehicles() {
         <div className="flex items-start gap-2 rounded-lg border border-border bg-card/70 px-3 py-2 text-sm text-muted-foreground">
           <Info className="mt-0.5 h-4 w-4 text-primary" />
           <p className="leading-relaxed">
-            Here's where we add non-resident vehicle details if their plate number is detected on cctv, text message will be sent to their number.
+            This registry lists vehicles linked to a registered resident. Use Add Vehicle to register a plate and tie it
+            to a resident for SMS and enforcement workflows.
           </p>
         </div>
         {residentFilterId && (
@@ -639,40 +758,50 @@ export default function Vehicles() {
           <p className="text-xs text-muted-foreground">Refreshing results...</p>
         )}
 
-        {displayedVehicles.length > 0 ? (
+        {displayedLinkedVehicles.length > 0 ? (
           <>
             {/* Mobile Cards */}
             <div className="block sm:hidden space-y-3">
-              {displayedVehicles.map((vehicle) => (
+              {displayedLinkedVehicles.map((vehicle) => (
                 <div key={vehicle.id} className="glass-card rounded-xl p-4 space-y-3">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-2">
                     <span className="font-mono font-medium text-lg">{vehicle.plateNumber}</span>
-                    {!isEncoder && isAdmin && (
-                      <div className="flex items-center gap-1">
-                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleOpenDialog(vehicle)}>
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="icon"
-                          onClick={() => requestDeleteVehicle(vehicle)}
-                          className={deleteButtonClassName}
-                          aria-label="Delete vehicle"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    )}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 shrink-0"
+                      onClick={() => handleViewVehicle(vehicle)}
+                      aria-label="View resident summary"
+                    >
+                      <Info className="h-4 w-4" />
+                    </Button>
                   </div>
-                  <div className="text-sm text-foreground">{vehicle.ownerName}</div>
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Phone className="h-4 w-4" />
-                    {vehicle.contactNumber}
+                  <div className="text-sm text-muted-foreground">
+                    {formatVehicleTypeLabel(vehicle.vehicleType)}
+                  </div>
+                  <div className="text-sm text-foreground font-medium">
+                    {getResidentNameForVehicle(vehicle) ?? vehicle.ownerName}
                   </div>
                   <div className="text-xs text-muted-foreground">
-                    Registered: {new Date(vehicle.registeredAt).toLocaleDateString()}
+                    Date registered: {new Date(vehicle.registeredAt).toLocaleDateString()}
                   </div>
+                  {!isEncoder && isAdmin && (
+                    <div className="flex items-center gap-1 pt-1">
+                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleOpenDialog(vehicle)}>
+                        <Edit className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        onClick={() => requestDeleteVehicle(vehicle)}
+                        className={deleteButtonClassName}
+                        aria-label="Delete vehicle"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -684,22 +813,19 @@ export default function Vehicles() {
                   <TableHeader>
                     <TableRow className="border-border hover:bg-transparent">
                       <TableHead className="text-muted-foreground">Plate Number</TableHead>
-                      <TableHead className="text-muted-foreground">Name</TableHead>
-                      <TableHead className="text-muted-foreground">Contact</TableHead>
-                      <TableHead className="text-muted-foreground">Registered</TableHead>
+                      <TableHead className="text-muted-foreground">Vehicle Type</TableHead>
+                      <TableHead className="text-muted-foreground">Owner (Resident)</TableHead>
+                      <TableHead className="text-muted-foreground">Date Registered</TableHead>
                       <TableHead className="text-muted-foreground text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {displayedVehicles.map((vehicle) => (
+                    {displayedLinkedVehicles.map((vehicle) => (
                       <TableRow key={vehicle.id} className="border-border">
                         <TableCell className="font-mono font-medium">{vehicle.plateNumber}</TableCell>
-                        <TableCell>{vehicle.ownerName}</TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2 text-muted-foreground">
-                            <Phone className="h-4 w-4" />
-                            {vehicle.contactNumber}
-                          </div>
+                        <TableCell>{formatVehicleTypeLabel(vehicle.vehicleType)}</TableCell>
+                        <TableCell className="font-medium">
+                          {getResidentNameForVehicle(vehicle) ?? vehicle.ownerName}
                         </TableCell>
                         <TableCell className="text-muted-foreground">
                           {new Date(vehicle.registeredAt).toLocaleDateString()}
@@ -710,7 +836,7 @@ export default function Vehicles() {
                               variant="ghost"
                               size="icon"
                               onClick={() => handleViewVehicle(vehicle)}
-                              aria-label="View details"
+                              aria-label="View resident summary"
                             >
                               <Info className="h-4 w-4" />
                             </Button>
@@ -750,49 +876,71 @@ export default function Vehicles() {
             >
               <DialogContent className="bg-card border-border mx-4 sm:mx-auto max-w-[calc(100vw-2rem)] sm:max-w-md">
                 <DialogHeader>
-                  <DialogTitle>Vehicle Details</DialogTitle>
+                  <DialogTitle>
+                    {residentForInfoDialog ? residentForInfoDialog.name : 'Resident summary'}
+                  </DialogTitle>
                   <DialogDescription>
-                    {selectedVehicle ? `Full information for ${selectedVehicle.plateNumber}` : 'Full vehicle information'}
+                    {selectedVehicle ? (
+                      <>
+                        Linked resident for vehicle{' '}
+                        <span className="font-mono font-medium text-foreground">{selectedVehicle.plateNumber}</span>
+                      </>
+                    ) : (
+                      'Resident details'
+                    )}
                   </DialogDescription>
                 </DialogHeader>
-                {selectedVehicle && (
+                {selectedVehicle && residentForInfoDialog && standingForInfoDialog ? (
                   <div className="space-y-4 py-2 text-sm">
-                    <div>
-                      <p className="text-xs uppercase text-muted-foreground">Plate Number</p>
-                      <p className="font-mono font-medium">{selectedVehicle.plateNumber}</p>
+                    <div className="flex flex-wrap gap-2">
+                      <Badge
+                        className={cn(
+                          'border font-semibold capitalize shadow-none',
+                          residentTypeBadgeClass(resolveResidentType(residentForInfoDialog)),
+                        )}
+                      >
+                        <span className="inline-flex items-center gap-1">
+                          {resolveResidentType(residentForInfoDialog) === 'homeowner' ? (
+                            <Home className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                          ) : null}
+                          {resolveResidentType(residentForInfoDialog) === 'homeowner' ? 'Homeowner' : 'Tenant'}
+                        </span>
+                      </Badge>
+                      <Badge
+                        className={cn(
+                          'inline-flex items-center gap-1 border font-semibold shadow-none',
+                          standingForInfoDialog.className,
+                        )}
+                      >
+                        {(() => {
+                          const StandingIcon = standingForInfoDialog.Icon;
+                          return (
+                            <>
+                              <StandingIcon className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                              {standingForInfoDialog.label}
+                            </>
+                          );
+                        })()}
+                      </Badge>
                     </div>
-                    <div>
-                      <p className="text-xs uppercase text-muted-foreground">Owner Name</p>
-                      <p className="font-medium">{selectedVehicle.ownerName}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs uppercase text-muted-foreground">Vehicle Type</p>
-                      <p>{formatVehicleTypeLabel(selectedVehicle.vehicleType)}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs uppercase text-muted-foreground">Contact Number</p>
-                      <p>{selectedVehicle.contactNumber || '—'}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs uppercase text-muted-foreground">Purpose of Visit</p>
-                      <p>{selectedVehicle.purposeOfVisit || '—'}</p>
-                    </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="flex items-start gap-2">
+                      <MapPin className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
                       <div>
-                        <p className="text-xs uppercase text-muted-foreground">Resident</p>
-                        <p>{getResidentNameForVehicle(selectedVehicle) || 'None'}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs uppercase text-muted-foreground">Rented</p>
-                        <p>{selectedVehicle.rented || 'No'}</p>
+                        <p className="text-xs uppercase text-muted-foreground">Address</p>
+                        <p className="font-medium text-foreground leading-snug">
+                          {formatResidentAddressLine(residentForInfoDialog) || '—'}
+                        </p>
                       </div>
                     </div>
-                    <div>
-                      <p className="text-xs uppercase text-muted-foreground">Registered</p>
-                      <p>{new Date(selectedVehicle.registeredAt).toLocaleString()}</p>
-                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Standing is based on issued and pending violations for plates linked to this resident.
+                    </p>
                   </div>
-                )}
+                ) : selectedVehicle ? (
+                  <p className="text-sm text-muted-foreground py-2">
+                    Could not load this resident&apos;s profile. They may have been removed from the registry.
+                  </p>
+                ) : null}
               </DialogContent>
             </Dialog>
 
@@ -833,13 +981,13 @@ export default function Vehicles() {
               </AlertDialogContent>
             </AlertDialog>
           </>
-        ) : filteredVehicles.length > 0 && residentFilterId ? (
+        ) : filteredLinkedVehicles.length > 0 && residentFilterId ? (
           <div className="glass-card rounded-xl p-8 sm:p-12 text-center">
             <Car className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
             <h3 className="text-lg font-semibold text-foreground mb-2">No vehicles for this resident</h3>
             <p className="text-muted-foreground mb-6 text-sm max-w-md mx-auto">
               {residentFilterLabel
-                ? `No registered vehicles are linked to ${residentFilterLabel} with the current search.`
+                ? `No resident-linked vehicles match for ${residentFilterLabel} with the current search.`
                 : 'No vehicles match this resident filter.'}
             </p>
             <div className="flex flex-col sm:flex-row gap-2 justify-center">
@@ -851,12 +999,27 @@ export default function Vehicles() {
               </Button>
             </div>
           </div>
-        ) : registryHasVehicles && searchTerm.trim() ? (
+        ) : vehiclesLinkedToRegisteredResidents.length > 0 && searchTerm.trim() ? (
           <SearchNoMatchesEmpty
             searchTerm={searchTerm}
             onClear={() => setSearchTerm('')}
-            hint="Check your spelling or try searching for a different plate number or owner name."
+            hint="Check your spelling or try searching for a different plate number or resident owner name."
           />
+        ) : vehicles.length > 0 && vehiclesLinkedToRegisteredResidents.length === 0 ? (
+          <div className="glass-card rounded-xl p-8 sm:p-12 text-center">
+            <Car className="h-12 w-12 sm:h-16 sm:w-16 text-muted-foreground mx-auto mb-4" />
+            <h3 className="text-lg font-semibold text-foreground mb-2">No resident-linked vehicles</h3>
+            <p className="text-muted-foreground mb-6 text-sm max-w-md mx-auto">
+              This list only shows vehicles tied to a registered resident. Add or edit a vehicle and choose a resident
+              under Owner Name to link it.
+            </p>
+            {!isBarangayUser && (
+              <Button onClick={() => handleOpenDialog()}>
+                <Plus className="h-4 w-4 mr-2" />
+                Register vehicle
+              </Button>
+            )}
+          </div>
         ) : (
           <div className="glass-card rounded-xl p-8 sm:p-12 text-center">
             <Car className="h-12 w-12 sm:h-16 sm:w-16 text-muted-foreground mx-auto mb-4" />
