@@ -33,6 +33,47 @@ import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, Cart
 import { Camera as CameraType } from '@/types/parking';
 
 const COLORS = ['#3b82f6', '#ef4444', '#f59e0b', '#10b981', '#8b5cf6', '#ec4899'];
+type TrendData = { currentTotal: number; previousTotal: number; delta: number; deltaPct: number };
+
+function getTrendMeta(trend?: TrendData | null) {
+  if (!trend) {
+    return {
+      Icon: Minus,
+      tone: 'text-muted-foreground',
+      label: 'No comparison available',
+    };
+  }
+
+  if (trend.delta > 0) {
+    return {
+      Icon: ArrowUpRight,
+      tone: 'text-destructive',
+      label: `+${trend.deltaPct}% vs previous 7-day period`,
+    };
+  }
+
+  if (trend.delta < 0) {
+    return {
+      Icon: ArrowDownRight,
+      tone: 'text-green-600',
+      label: `${trend.deltaPct}% vs previous 7-day period`,
+    };
+  }
+
+  return {
+    Icon: Minus,
+    tone: 'text-muted-foreground',
+    label: '0% vs previous 7-day period',
+  };
+}
+
+function escapeCsvValue(value: unknown): string {
+  const str = String(value ?? '');
+  if (str.includes('"') || str.includes(',') || str.includes('\n')) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
 
 export default function Analytics() {
   usePageTracking();
@@ -89,6 +130,74 @@ export default function Analytics() {
     setLocationFilter('all');
   };
 
+  const handleExportReport = () => {
+    if (!analytics) {
+      toast({
+        title: 'Export failed',
+        description: 'No analytics data available to export.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    try {
+      const generatedAt = new Date();
+      const formattedDate = generatedAt.toISOString().slice(0, 10);
+      const rows: string[] = [];
+      const selectedLocation = locationFilter === 'all' ? 'All Locations' : locationFilter;
+
+      rows.push('Analytics Report');
+      rows.push(`Date Range Start,${escapeCsvValue(startDate || 'All')}`);
+      rows.push(`Date Range End,${escapeCsvValue(endDate || 'All')}`);
+      rows.push(`Location,${escapeCsvValue(selectedLocation)}`);
+      rows.push(`Generated At,${escapeCsvValue(generatedAt.toISOString())}`);
+      rows.push('');
+
+      rows.push('Violations Over Time');
+      rows.push('Date,Violations');
+      if (violationsOverTimeData.length > 0) {
+        for (const item of violationsOverTimeData) {
+          rows.push(`${escapeCsvValue(item.date)},${escapeCsvValue(item.violations)}`);
+        }
+      } else {
+        rows.push('No data,0');
+      }
+      rows.push('');
+
+      rows.push('Top Violation Locations');
+      rows.push('Location,Violations');
+      if (violationsByLocationData.length > 0) {
+        for (const item of violationsByLocationData) {
+          rows.push(`${escapeCsvValue(item.cameraLocationId)},${escapeCsvValue(item.count)}`);
+        }
+      } else {
+        rows.push('No data,0');
+      }
+
+      const csvContent = rows.join('\n');
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `analytics-report-${formattedDate}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      toast({
+        title: 'Export successful',
+        description: `Saved analytics-report-${formattedDate}.csv`,
+      });
+    } catch (error) {
+      toast({
+        title: 'Export failed',
+        description: error instanceof Error ? error.message : 'Unable to export CSV report',
+        variant: 'destructive',
+      });
+    }
+  };
+
   const uniqueLocations = Array.from(new Set(cameras.map(c => c.locationId))).sort();
 
   // Prepare chart data - only essential charts
@@ -106,27 +215,15 @@ export default function Analytics() {
     value: count
   }));
   const descriptive = analytics?.violations.descriptive;
-  const heatmapData = descriptive?.hourHeatmap || [];
-  const maxHeatCount = Math.max(...heatmapData.map(item => item.count), 0);
+  const byHourMap = new Map((analytics?.violations.byHour || []).map((item) => [item.hour, item.count]));
+  const peakHoursData = Array.from({ length: 24 }, (_, hour) => ({
+    hourLabel: `${hour.toString().padStart(2, '0')}:00`,
+    count: byHourMap.get(hour) || 0,
+  }));
+  const hasPeakHoursData = peakHoursData.some((item) => item.count > 0);
 
-  const trend = descriptive?.periodComparison;
-  const trendIcon = trend
-    ? trend.delta > 0
-      ? ArrowUpRight
-      : trend.delta < 0
-        ? ArrowDownRight
-        : Minus
-    : Minus;
-  const trendTone = trend
-    ? trend.delta > 0
-      ? 'text-destructive'
-      : trend.delta < 0
-        ? 'text-green-600'
-        : 'text-muted-foreground'
-    : 'text-muted-foreground';
-  const trendLabel = trend
-    ? `${trend.delta >= 0 ? '+' : ''}${trend.deltaPct}% from previous month`
-    : 'No comparison available';
+  const violationTrendMeta = getTrendMeta(descriptive?.sevenDayComparison);
+  const warningTrendMeta = getTrendMeta(analytics?.warnings.sevenDayComparison);
 
   if (isLoading) {
     return (
@@ -167,10 +264,15 @@ export default function Analytics() {
         title="Analytics" 
         subtitle="Comprehensive system statistics and insights"
         action={
-          <Button onClick={loadAnalytics} disabled={isLoading} variant="outline" size="sm">
-            <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
-            Refresh
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button onClick={handleExportReport} variant="outline" size="sm">
+              Export Report
+            </Button>
+            <Button onClick={loadAnalytics} disabled={isLoading} variant="outline" size="sm">
+              <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+              Refresh
+            </Button>
+          </div>
         }
       />
 
@@ -236,12 +338,12 @@ export default function Analytics() {
                 <div>
                   <p className="text-sm text-muted-foreground">Violations</p>
                   <p className="text-2xl font-bold">{analytics.violations.total}</p>
-                  <div className={`mt-1 flex items-center gap-1 text-xs ${trendTone}`}>
+                  <div className={`mt-1 flex items-center gap-1 text-xs ${violationTrendMeta.tone}`}>
                     {(() => {
-                      const TrendIcon = trendIcon;
+                      const TrendIcon = violationTrendMeta.Icon;
                       return <TrendIcon className="h-3 w-3" />;
                     })()}
-                    <span>{trendLabel}</span>
+                    <span>{violationTrendMeta.label}</span>
                   </div>
                 </div>
                 <FileText className="h-8 w-8 text-destructive" />
@@ -254,7 +356,13 @@ export default function Analytics() {
                 <div>
                   <p className="text-sm text-muted-foreground">Warnings</p>
                   <p className="text-2xl font-bold">{analytics.warnings.total}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">{trendLabel}</p>
+                  <div className={`mt-1 flex items-center gap-1 text-xs ${warningTrendMeta.tone}`}>
+                    {(() => {
+                      const TrendIcon = warningTrendMeta.Icon;
+                      return <TrendIcon className="h-3 w-3" />;
+                    })()}
+                    <span>{warningTrendMeta.label}</span>
+                  </div>
                 </div>
                 <AlertTriangle className="h-8 w-8 text-yellow-500" />
               </div>
@@ -266,7 +374,7 @@ export default function Analytics() {
                 <div>
                   <p className="text-sm text-muted-foreground">Vehicles</p>
                   <p className="text-2xl font-bold">{analytics.vehicles.total}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">{trendLabel}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Filter-scoped total</p>
                 </div>
                 <Car className="h-8 w-8 text-primary" />
               </div>
@@ -278,7 +386,7 @@ export default function Analytics() {
                 <div>
                   <p className="text-sm text-muted-foreground">Detections</p>
                   <p className="text-2xl font-bold">{analytics.detections.total}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">{trendLabel}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Filter-scoped total</p>
                 </div>
                 <Camera className="h-8 w-8 text-primary" />
               </div>
@@ -290,7 +398,7 @@ export default function Analytics() {
                 <div>
                   <p className="text-sm text-muted-foreground">SMS Sent</p>
                   <p className="text-2xl font-bold">{analytics.sms.total}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">{trendLabel}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Filter-scoped total</p>
                 </div>
                 <MessageSquare className="h-8 w-8 text-primary" />
               </div>
@@ -302,7 +410,7 @@ export default function Analytics() {
                 <div>
                   <p className="text-sm text-muted-foreground">Cameras</p>
                   <p className="text-2xl font-bold">{analytics.cameras.total}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">{trendLabel}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">System inventory</p>
                 </div>
                 <Camera className="h-8 w-8 text-primary" />
               </div>
@@ -316,14 +424,14 @@ export default function Analytics() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Clock3 className="h-5 w-5" />
-                Avg. Overstay
+                Average Duration of Infraction
               </CardTitle>
-              <CardDescription>Average warning window duration in minutes</CardDescription>
+              <CardDescription>{descriptive?.avgInfractionToActionLabel || 'Average time from first detection to action in minutes'}</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-bold">
-                {descriptive?.avgInfractionDurationMinutes != null
-                  ? `${Math.round(descriptive.avgInfractionDurationMinutes)} min`
+                {descriptive?.avgInfractionToActionMinutes != null
+                  ? `${Math.round(descriptive.avgInfractionToActionMinutes)} min`
                   : 'No data'}
               </div>
             </CardContent>
@@ -363,15 +471,15 @@ export default function Analytics() {
             <CardContent className="space-y-2">
               <div className="text-sm flex items-center justify-between">
                 <span className="text-muted-foreground">Current Period</span>
-                <span className="font-medium">{trend?.currentTotal ?? 0}</span>
+                <span className="font-medium">{descriptive?.periodComparison?.currentTotal ?? 0}</span>
               </div>
               <div className="text-sm flex items-center justify-between">
                 <span className="text-muted-foreground">Previous Period</span>
-                <span className="font-medium">{trend?.previousTotal ?? 0}</span>
+                <span className="font-medium">{descriptive?.periodComparison?.previousTotal ?? 0}</span>
               </div>
-              <div className={`text-sm flex items-center justify-between ${trendTone}`}>
+              <div className={`text-sm flex items-center justify-between ${getTrendMeta(descriptive?.periodComparison).tone}`}>
                 <span>Delta</span>
-                <span className="font-semibold">{trend?.delta ?? 0}</span>
+                <span className="font-semibold">{descriptive?.periodComparison?.delta ?? 0}</span>
               </div>
             </CardContent>
           </Card>
@@ -381,28 +489,24 @@ export default function Analytics() {
         <Card>
           <CardHeader>
             <CardTitle>Peak Violation Hours</CardTitle>
-            <CardDescription>Hourly density heatmap for selected filters</CardDescription>
+            <CardDescription>Violation volume by hour (00:00-23:00) for selected filters</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-6 sm:grid-cols-8 md:grid-cols-12 gap-2">
-              {heatmapData.map((item) => {
-                const intensity = maxHeatCount > 0 ? item.count / maxHeatCount : 0;
-                const background = item.count > 0
-                  ? `rgba(239, 68, 68, ${0.2 + (intensity * 0.8)})`
-                  : 'rgba(148, 163, 184, 0.15)';
-                return (
-                  <div
-                    key={item.hour}
-                    className="rounded-md p-2 text-center border"
-                    style={{ backgroundColor: background }}
-                    title={`${item.hour.toString().padStart(2, '0')}:00 - ${item.count} violations`}
-                  >
-                    <div className="text-xs text-muted-foreground">{item.hour.toString().padStart(2, '0')}</div>
-                    <div className="text-sm font-semibold">{item.count}</div>
-                  </div>
-                );
-              })}
-            </div>
+            {hasPeakHoursData ? (
+              <ChartContainer config={{ count: { label: 'Violations', color: '#ef4444' } }}>
+                <BarChart data={peakHoursData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="hourLabel" interval={2} />
+                  <YAxis />
+                  <ChartTooltip content={<ChartTooltipContent />} />
+                  <Bar dataKey="count" fill="#ef4444" />
+                </BarChart>
+              </ChartContainer>
+            ) : (
+              <div className="h-[240px] flex items-center justify-center text-muted-foreground">
+                No peak-hour data in selected filters
+              </div>
+            )}
           </CardContent>
         </Card>
 

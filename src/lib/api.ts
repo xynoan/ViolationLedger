@@ -325,11 +325,20 @@ export interface AnalyticsResponse {
     descriptive: {
       hourHeatmap: Array<{ hour: number; count: number }>;
       avgInfractionDurationMinutes: number | null;
+      avgInfractionToActionMinutes: number | null;
+      avgInfractionToActionLabel: string;
       repeatOffenders: {
         uniqueVehicles: number;
         recurringVehicles: number;
         recurringPct: number;
         threshold: number;
+      };
+      sevenDayComparison: {
+        currentTotal: number;
+        previousTotal: number;
+        delta: number;
+        deltaPct: number;
+        basis: 'previous_7_day_period';
       };
       periodComparison: {
         currentTotal: number;
@@ -345,6 +354,13 @@ export interface AnalyticsResponse {
     overTime: Array<{ date: string; count: number }>;
     converted: number;
     conversionRate: string;
+    sevenDayComparison: {
+      currentTotal: number;
+      previousTotal: number;
+      delta: number;
+      deltaPct: number;
+      basis: 'previous_7_day_period';
+    };
   };
   detections: {
     total: number;
