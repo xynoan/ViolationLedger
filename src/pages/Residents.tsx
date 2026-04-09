@@ -13,6 +13,7 @@ import {
   ShieldCheck,
   UserCircle,
   ScrollText,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Header } from '@/components/layout/Header';
@@ -45,16 +46,122 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { toast } from '@/hooks/use-toast';
 import { residentsAPI, vehiclesAPI, violationsAPI } from '@/lib/api';
 import { useAuth } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
 import { SearchNoMatchesEmpty } from '@/components/search/SearchNoMatchesEmpty';
+import {
+  formatResidentAddressLine,
+  RESIDENT_STREET_OPTIONS,
+  RESIDENT_STREET_SET,
+} from '@/lib/residentStreets';
+
+type StandingFilter = 'all' | 'active_violations' | 'clean';
+type ResidentSort = 'name_asc' | 'most_vehicles' | 'recent_violation';
 
 const normPlate = (p: string) => String(p || '').replace(/\s+/g, '').toUpperCase();
+
+/** Parse address text into unique location keys: Barangay numbers + comma-separated street/area segments (excludes leading Lot lines). */
+function extractLocationKeysFromAddress(address: string | undefined): string[] {
+  const raw = (address || '').trim();
+  if (!raw) return [];
+  const keys = new Set<string>();
+
+  const brgyGlobal = /\b(?:Barangay|BRGY|Brgy\.?)\s*(\d+)\b/gi;
+  let m: RegExpExecArray | null;
+  while ((m = brgyGlobal.exec(raw)) !== null) {
+    keys.add(`Barangay ${m[1]}`);
+  }
+
+  const parts = raw.split(',').map((p) => p.trim()).filter(Boolean);
+  for (const part of parts) {
+    if (/^lot\s+/i.test(part)) continue;
+    const brgyOnly = part.match(/^(?:Barangay|BRGY|Brgy\.?)\s*(\d+)$/i);
+    if (brgyOnly) {
+      keys.add(`Barangay ${brgyOnly[1]}`);
+      continue;
+    }
+    if (part.length >= 2) keys.add(part);
+  }
+
+  return [...keys];
+}
+
+/** Order filter dropdown: Barangay first, then streets in catalog order, then any other legacy keys. */
+function sortLocationFilterOptions(keys: string[]): string[] {
+  const streetOrder = new Map(RESIDENT_STREET_OPTIONS.map((s, i) => [s, i]));
+  return [...keys].sort((a, b) => {
+    const ma = a.match(/^Barangay\s+(\d+)$/i);
+    const mb = b.match(/^Barangay\s+(\d+)$/i);
+    if (ma && mb) return Number(ma[1]) - Number(mb[1]);
+    if (ma && !mb) return -1;
+    if (!ma && mb) return 1;
+    const ia = streetOrder.has(a) ? streetOrder.get(a)! : 1000;
+    const ib = streetOrder.has(b) ? streetOrder.get(b)! : 1000;
+    if (ia !== 1000 || ib !== 1000) return ia - ib;
+    return a.localeCompare(b, undefined, { sensitivity: 'base' });
+  });
+}
+
+/**
+ * Location filter = street when `streetName` is set (current model).
+ * Legacy rows: barangay + comma segments, and lines like "12 Twin Peaks Drive" collapse to the known street name.
+ */
+function collectResidentLocationKeys(resident: Resident): string[] {
+  const sn = resident.streetName?.trim();
+  if (sn) return sortLocationFilterOptions([sn]);
+
+  const set = new Set<string>(extractLocationKeysFromAddress(resident.address));
+  for (const k of [...set]) {
+    const m = k.match(/^\s*\S+\s+(.+)$/);
+    if (m && RESIDENT_STREET_SET.has(m[1].trim())) {
+      set.add(m[1].trim());
+      set.delete(k);
+    }
+  }
+  return sortLocationFilterOptions([...set]);
+}
+
+function residentMatchesLocationFilter(resident: Resident, locationKey: string): boolean {
+  if (locationKey === 'all') return true;
+  return collectResidentLocationKeys(resident).includes(locationKey);
+}
+
+function violationsForResidentLinkedPlates(
+  residentId: string,
+  vehicles: Vehicle[],
+  violations: Violation[],
+): Violation[] {
+  const plates = new Set(
+    vehicles.filter((v) => v.residentId === residentId).map((v) => normPlate(v.plateNumber)),
+  );
+  if (plates.size === 0) return [];
+  return violations.filter((vi) => plates.has(normPlate(vi.plateNumber)));
+}
+
+function hasActiveViolationsStanding(residentId: string, vehicles: Vehicle[], violations: Violation[]): boolean {
+  return violationsForResidentLinkedPlates(residentId, vehicles, violations).some(
+    (vi) => vi.status === 'issued' || vi.status === 'pending',
+  );
+}
+
+function isCleanViolationRecord(residentId: string, vehicles: Vehicle[], violations: Violation[]): boolean {
+  return violationsForResidentLinkedPlates(residentId, vehicles, violations).length === 0;
+}
+
+function linkedVehicleCount(residentId: string, vehicles: Vehicle[]): number {
+  return vehiclesForResident(residentId, vehicles).length;
+}
+
+function lastViolationActivityMs(residentId: string, vehicles: Vehicle[], violations: Violation[]): number {
+  const list = violationsForResidentLinkedPlates(residentId, vehicles, violations);
+  if (list.length === 0) return 0;
+  return Math.max(...list.map((vi) => new Date(vi.timeDetected).getTime()));
+}
 
 function resolveResidentStatus(r: Resident): ResidentStatus {
   return r.residentStatus === 'guest' ? 'guest' : 'verified';
@@ -114,6 +221,9 @@ export default function Residents() {
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [locationFilter, setLocationFilter] = useState<string>('all');
+  const [standingFilter, setStandingFilter] = useState<StandingFilter>('all');
+  const [sortBy, setSortBy] = useState<ResidentSort>('name_asc');
   const [registryHasResidents, setRegistryHasResidents] = useState(false);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingResident, setEditingResident] = useState<Resident | null>(null);
@@ -123,7 +233,8 @@ export default function Residents() {
   const [formData, setFormData] = useState({
     name: '',
     contactNumber: '',
-    address: '',
+    houseNumber: '',
+    streetName: '',
     residentStatus: 'verified' as ResidentStatus,
   });
 
@@ -211,19 +322,93 @@ export default function Residents() {
     }
   }, [residents, searchTerm]);
 
-  const filteredResidents = useMemo(
-    () =>
-      residents.filter(
-        (r) =>
-          r.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          r.contactNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          (r.address && r.address.toLowerCase().includes(searchTerm.toLowerCase())),
-      ),
-    [residents, searchTerm],
-  );
+  const uniqueLocationOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const r of residents) {
+      for (const k of collectResidentLocationKeys(r)) {
+        set.add(k);
+      }
+    }
+    return sortLocationFilterOptions([...set]);
+  }, [residents]);
+
+  useEffect(() => {
+    if (locationFilter !== 'all' && !uniqueLocationOptions.includes(locationFilter)) {
+      setLocationFilter('all');
+    }
+  }, [locationFilter, uniqueLocationOptions]);
+
+  const hasActiveFilters =
+    locationFilter !== 'all' || standingFilter !== 'all' || sortBy !== 'name_asc';
+
+  const clearSearchAndFilters = useCallback(() => {
+    setSearchTerm('');
+    setLocationFilter('all');
+    setStandingFilter('all');
+    setSortBy('name_asc');
+  }, []);
+
+  const filteredResidents = useMemo(() => {
+    const q = searchTerm.toLowerCase().trim();
+    let list = residents.filter(
+      (r) =>
+        !q ||
+        r.name.toLowerCase().includes(q) ||
+        r.contactNumber.toLowerCase().includes(q) ||
+        formatResidentAddressLine(r).toLowerCase().includes(q) ||
+        (r.address && r.address.toLowerCase().includes(q)) ||
+        (r.houseNumber && r.houseNumber.toLowerCase().includes(q)) ||
+        (r.streetName && r.streetName.toLowerCase().includes(q)),
+    );
+
+    if (locationFilter !== 'all') {
+      list = list.filter((r) => residentMatchesLocationFilter(r, locationFilter));
+    }
+
+    if (standingFilter === 'active_violations') {
+      list = list.filter((r) => hasActiveViolationsStanding(r.id, vehicles, violations));
+    } else if (standingFilter === 'clean') {
+      list = list.filter((r) => isCleanViolationRecord(r.id, vehicles, violations));
+    }
+
+    list = [...list].sort((a, b) => {
+      switch (sortBy) {
+        case 'most_vehicles': {
+          const ca = linkedVehicleCount(a.id, vehicles);
+          const cb = linkedVehicleCount(b.id, vehicles);
+          if (cb !== ca) return cb - ca;
+          return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+        }
+        case 'recent_violation': {
+          const ta = lastViolationActivityMs(a.id, vehicles, violations);
+          const tb = lastViolationActivityMs(b.id, vehicles, violations);
+          if (tb !== ta) return tb - ta;
+          return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+        }
+        default:
+          return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+      }
+    });
+
+    return list;
+  }, [
+    residents,
+    searchTerm,
+    vehicles,
+    violations,
+    locationFilter,
+    standingFilter,
+    sortBy,
+  ]);
 
   const resetForm = () => {
-    setFormData({ name: '', contactNumber: '', address: '', residentStatus: 'verified' });
+    setFormData({
+      name: '',
+      contactNumber: '',
+      houseNumber: '',
+      streetName: '',
+      residentStatus: 'verified',
+    });
     setEditingResident(null);
   };
 
@@ -241,7 +426,8 @@ export default function Residents() {
       setFormData({
         name: resident.name,
         contactNumber: resident.contactNumber,
-        address: resident.address || '',
+        houseNumber: resident.houseNumber || '',
+        streetName: resident.streetName || '',
         residentStatus: resolveResidentStatus(resident),
       });
     } else {
@@ -272,19 +458,45 @@ export default function Residents() {
       });
       return;
     }
+    const street = formData.streetName.trim();
+    if (!street) {
+      toast({
+        title: 'Validation Error',
+        description: 'Please select a street',
+        variant: 'destructive',
+      });
+      return;
+    }
+    if (!RESIDENT_STREET_SET.has(street)) {
+      toast({
+        title: 'Validation Error',
+        description: 'Please choose a street from the list',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    const payload = {
+      name: formData.name,
+      contactNumber: formData.contactNumber,
+      houseNumber: formData.houseNumber.trim(),
+      streetName: street,
+      residentStatus: formData.residentStatus,
+    };
 
     try {
+      let saved: Resident;
       if (editingResident) {
-        await residentsAPI.update(editingResident.id, formData);
+        saved = await residentsAPI.update(editingResident.id, payload);
         toast({
           title: 'Resident Updated',
           description: 'Resident details updated successfully',
         });
       } else {
         const residentId = `RESIDENT-${Date.now()}`;
-        await residentsAPI.create({
+        saved = await residentsAPI.create({
           id: residentId,
-          ...formData,
+          ...payload,
         });
         toast({
           title: 'Resident Added',
@@ -293,16 +505,12 @@ export default function Residents() {
       }
       handleCloseDialog();
       loadResidents();
+      const normalizedSaved: Resident = {
+        ...saved,
+        createdAt: saved.createdAt instanceof Date ? saved.createdAt : new Date(saved.createdAt as unknown as string),
+      };
       setProfileResident((prev) =>
-        prev && editingResident && prev.id === editingResident.id
-          ? {
-              ...prev,
-              name: formData.name,
-              contactNumber: formData.contactNumber,
-              address: formData.address,
-              residentStatus: formData.residentStatus,
-            }
-          : prev,
+        prev && editingResident && prev.id === editingResident.id ? { ...prev, ...normalizedSaved } : prev,
       );
     } catch (error: any) {
       toast({
@@ -385,14 +593,15 @@ export default function Residents() {
             receive SMS when a linked visitor vehicle is involved in enforcement workflows.
           </p>
         </div>
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 sm:gap-4">
-          <div className="relative flex-1 sm:max-w-md">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="relative flex-1 min-w-0 sm:max-w-md">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               placeholder="Search by name, contact, or address..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="pl-9 bg-secondary"
+              id="residents-search"
             />
           </div>
 
@@ -434,16 +643,40 @@ export default function Residents() {
                       className="bg-secondary"
                     />
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="address">Address</Label>
-                    <Textarea
-                      id="address"
-                      placeholder="Street, Barangay, City"
-                      value={formData.address}
-                      onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-                      className="bg-secondary"
-                      rows={3}
-                    />
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-2">
+                      <Label htmlFor="houseNumber">House number</Label>
+                      <Input
+                        id="houseNumber"
+                        placeholder="e.g. 12-A"
+                        value={formData.houseNumber}
+                        onChange={(e) => setFormData({ ...formData, houseNumber: e.target.value })}
+                        className="bg-secondary"
+                      />
+                    </div>
+                    <div className="space-y-2 sm:col-span-1">
+                      <Label htmlFor="streetName">Street *</Label>
+                      <Select
+                        value={formData.streetName || '__unset__'}
+                        onValueChange={(v) =>
+                          setFormData({ ...formData, streetName: v === '__unset__' ? '' : v })
+                        }
+                      >
+                        <SelectTrigger id="streetName" className="bg-secondary">
+                          <SelectValue placeholder="Select street" />
+                        </SelectTrigger>
+                        <SelectContent className="max-h-[280px]">
+                          <SelectItem value="__unset__" className="text-muted-foreground">
+                            Select street
+                          </SelectItem>
+                          {RESIDENT_STREET_OPTIONS.map((s) => (
+                            <SelectItem key={s} value={s}>
+                              {s}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
                   <div className="space-y-2">
                     <Label>Resident status</Label>
@@ -468,6 +701,93 @@ export default function Residents() {
             </Dialog>
           )}
         </div>
+
+        <div className="rounded-lg border border-border bg-card/50 p-3 sm:p-4 space-y-3">
+          <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+            <SlidersHorizontal className="h-4 w-4 text-muted-foreground" />
+            Filters
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="filter-standing" className="text-xs text-muted-foreground">
+                Standing
+              </Label>
+              <Select
+                value={standingFilter}
+                onValueChange={(v) => setStandingFilter(v as StandingFilter)}
+              >
+                <SelectTrigger id="filter-standing" className="bg-secondary">
+                  <SelectValue placeholder="Standing" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All</SelectItem>
+                  <SelectItem value="active_violations">Active Violations</SelectItem>
+                  <SelectItem value="clean">Clean Record</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground leading-snug">
+                Based on violations for vehicles linked to each resident (issued or pending vs. none).
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="filter-location" className="text-xs text-muted-foreground">
+                Location
+              </Label>
+              <Select value={locationFilter} onValueChange={setLocationFilter}>
+                <SelectTrigger id="filter-location" className="bg-secondary w-full max-w-full">
+                  <SelectValue placeholder="All locations" />
+                </SelectTrigger>
+                <SelectContent className="max-h-[280px]">
+                  <SelectItem value="all">All locations</SelectItem>
+                  {uniqueLocationOptions.map((loc) => (
+                    <SelectItem key={loc} value={loc}>
+                      {loc}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground leading-snug">
+                Matches each resident&apos;s street (from the registry). Older free-text addresses still pick up
+                Barangay tags and comma-separated segments when present.
+              </p>
+            </div>
+          </div>
+          <div className="space-y-2">
+            <span className="text-xs text-muted-foreground font-medium">Sort by</span>
+            <ToggleGroup
+              type="single"
+              value={sortBy}
+              onValueChange={(v) => {
+                if (v) setSortBy(v as ResidentSort);
+              }}
+              variant="outline"
+              size="sm"
+              className="flex flex-wrap justify-start gap-1.5"
+              aria-label="Sort residents"
+            >
+              <ToggleGroupItem value="name_asc" className="text-xs px-2.5">
+                Name (A–Z)
+              </ToggleGroupItem>
+              <ToggleGroupItem value="most_vehicles" className="text-xs px-2.5">
+                Most Vehicles
+              </ToggleGroupItem>
+              <ToggleGroupItem value="recent_violation" className="text-xs px-2.5">
+                Recent Activity
+              </ToggleGroupItem>
+            </ToggleGroup>
+            <p className="text-[11px] text-muted-foreground leading-snug">
+              Recent activity uses the latest violation date for vehicles linked to each resident.
+            </p>
+          </div>
+          {hasActiveFilters && (
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <Button type="button" variant="ghost" size="sm" className="h-8" onClick={clearSearchAndFilters}>
+                Reset filters &amp; sort
+              </Button>
+            </div>
+          )}
+        </div>
+
         {isRefreshing && <p className="text-xs text-muted-foreground">Refreshing results...</p>}
 
         {filteredResidents.length > 0 ? (
@@ -481,6 +801,7 @@ export default function Residents() {
                 const status = resolveResidentStatus(resident);
                 const rv = vehiclesForResident(resident.id, vehicles);
                 const rvCount = rv.length;
+                const hasActiveStanding = hasActiveViolationsStanding(resident.id, vehicles, violations);
                 return (
                   <button
                     key={resident.id}
@@ -493,7 +814,15 @@ export default function Residents() {
                     )}
                   >
                     <div className="flex items-start justify-between gap-2 mb-3">
-                      <div className="min-w-0">
+                      <div className="min-w-0 flex-1 flex items-start gap-2">
+                        {hasActiveStanding && (
+                          <span
+                            className="mt-2 h-2 w-2 shrink-0 rounded-full bg-destructive shadow-sm"
+                            title="Has issued or pending violations on linked vehicles"
+                            aria-hidden
+                          />
+                        )}
+                        <div className="min-w-0 flex-1">
                         <p className="font-semibold text-lg text-foreground truncate">{resident.name}</p>
                         <Badge variant={statusBadgeVariant(status)} className="mt-1.5 capitalize">
                           {status === 'verified' ? (
@@ -506,6 +835,7 @@ export default function Residents() {
                             </span>
                           )}
                         </Badge>
+                        </div>
                       </div>
                       {!isBarangayUser && (
                         <div
@@ -540,10 +870,10 @@ export default function Residents() {
                       <Phone className="h-3.5 w-3.5 shrink-0" />
                       <span className="truncate">{resident.contactNumber}</span>
                     </div>
-                    {resident.address && (
+                    {formatResidentAddressLine(resident) && (
                       <div className="flex items-start gap-2 text-xs text-muted-foreground line-clamp-2">
                         <MapPin className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                        <span>{resident.address}</span>
+                        <span>{formatResidentAddressLine(resident)}</span>
                       </div>
                     )}
                     <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
@@ -584,9 +914,29 @@ export default function Residents() {
                         </div>
                         <div className="flex items-start gap-2">
                           <MapPin className="h-4 w-4 text-muted-foreground mt-0.5" />
-                          <div>
-                            <p className="text-xs uppercase text-muted-foreground">Address</p>
-                            <p>{profileResident.address || '—'}</p>
+                          <div className="space-y-2 min-w-0">
+                            {(profileResident.houseNumber?.trim() || profileResident.streetName?.trim()) ? (
+                              <>
+                                <div>
+                                  <p className="text-xs uppercase text-muted-foreground">House number</p>
+                                  <p className="font-medium">{profileResident.houseNumber?.trim() || '—'}</p>
+                                </div>
+                                <div>
+                                  <p className="text-xs uppercase text-muted-foreground">Street</p>
+                                  <p className="font-medium">{profileResident.streetName?.trim() || '—'}</p>
+                                </div>
+                              </>
+                            ) : (
+                              <div>
+                                <p className="text-xs uppercase text-muted-foreground">Address (legacy)</p>
+                                <p className="font-medium break-words">
+                                  {profileResident.address?.trim() || '—'}
+                                </p>
+                                <p className="text-[11px] text-muted-foreground mt-1">
+                                  Edit this resident and choose a street from the list to use the new address format.
+                                </p>
+                              </div>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -724,8 +1074,20 @@ export default function Residents() {
               </AlertDialogContent>
             </AlertDialog>
           </>
+        ) : residents.length > 0 && filteredResidents.length === 0 ? (
+          <div className="glass-card rounded-xl p-8 sm:p-12 text-center">
+            <Search className="mx-auto mb-4 h-14 w-14 sm:h-16 sm:w-16 text-muted-foreground" strokeWidth={1.25} />
+            <h3 className="text-lg font-semibold text-foreground mb-2">No matching residents</h3>
+            <p className="text-muted-foreground mb-6 max-w-md mx-auto text-sm leading-relaxed">
+              Nothing in the current list matches your search text or filters. Try widening the search or resetting
+              filters and sort.
+            </p>
+            <Button type="button" variant="secondary" onClick={clearSearchAndFilters}>
+              Clear search, filters &amp; sort
+            </Button>
+          </div>
         ) : registryHasResidents && searchTerm.trim() ? (
-          <SearchNoMatchesEmpty searchTerm={searchTerm} onClear={() => setSearchTerm('')} />
+          <SearchNoMatchesEmpty searchTerm={searchTerm} onClear={clearSearchAndFilters} />
         ) : (
           <div className="glass-card rounded-xl p-8 sm:p-12 text-center">
             <Home className="h-12 w-12 sm:h-16 sm:w-16 text-muted-foreground mx-auto mb-4" />

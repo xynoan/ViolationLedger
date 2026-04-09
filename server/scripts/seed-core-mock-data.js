@@ -1,5 +1,6 @@
 import db from '../database.js';
 import { pathToFileURL } from 'url';
+import { RESIDENT_STREET_OPTIONS } from '../residentStreets.js';
 
 const MIN_ROWS = 50;
 const ROWS_PER_TABLE = Math.max(
@@ -60,16 +61,22 @@ function clearCoreTables() {
 
 function seedResidents() {
   const stmt = db.prepare(
-    `INSERT OR REPLACE INTO residents (id, name, contactNumber, address, createdAt, residentStatus)
-     VALUES (?, ?, ?, ?, ?, ?)`
+    `INSERT OR REPLACE INTO residents (id, name, contactNumber, address, houseNumber, streetName, createdAt, residentStatus)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
   );
   for (let i = 1; i <= ROWS_PER_TABLE; i += 1) {
     const residentId = id('RESIDENT', i);
+    const street = RESIDENT_STREET_OPTIONS[(i - 1) % RESIDENT_STREET_OPTIONS.length];
+    const hn = String(100 + ((i - 1) % 180));
+    const brgy = ((i - 1) % 10) + 1;
+    const composed = `${hn} ${street}, Barangay ${brgy}`;
     stmt.run(
       residentId,
       `Resident ${i}`,
       `0917${String(1000000 + i).slice(-7)}`,
-      `Lot ${i}, Main Street, Barangay ${((i - 1) % 10) + 1}`,
+      composed,
+      hn,
+      street,
       isoHoursAgo(24 * (ROWS_PER_TABLE - i + 1)),
       i % 7 === 0 ? 'guest' : 'verified'
     );

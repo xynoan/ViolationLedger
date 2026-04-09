@@ -11,6 +11,7 @@
     "dev:all:mock": "concurrently \"npm run dev:server:mock\" \"cross-env VITE_API_URL=http://localhost:3002/api npm run dev\"",
     "seed:core:mock": "cd server && cross-env DB_PATH=parking.mock.db npm run seed:core",
     "seed:core:mock:reset": "cd server && cross-env DB_PATH=parking.mock.db npm run seed:core:reset",
+    "seed:core:reset": "cd server && cross-env DB_PATH=parking.db npm run seed:core:reset",
     "build": "vite build",
     "build:dev": "vite build --mode development",
     "build:prod": "cross-env VITE_API_URL=/api VITE_DISABLE_WS=false vite build",

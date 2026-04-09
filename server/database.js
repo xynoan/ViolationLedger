@@ -1,10 +1,14 @@
 import initSqlJs from 'sql.js';
 import fs from 'fs-extra';
+import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, isAbsolute, join, resolve } from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+
+// So CLI tools (e.g. seed) use the same DB_PATH as the server when .env is present.
+dotenv.config({ path: join(__dirname, '.env') });
 
 const rawDbPath = String(process.env.DB_PATH || '').trim();
 const dbPath = rawDbPath
@@ -116,6 +120,23 @@ async function initDatabase() {
     db.run(`UPDATE residents SET residentStatus = 'verified' WHERE residentStatus IS NULL OR residentStatus = ''`);
   } catch {
     /* ignore */
+  }
+
+  try {
+    db.run(`ALTER TABLE residents ADD COLUMN houseNumber TEXT`);
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: residents.houseNumber migration:', errorMsg);
+    }
+  }
+  try {
+    db.run(`ALTER TABLE residents ADD COLUMN streetName TEXT`);
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: residents.streetName migration:', errorMsg);
+    }
   }
 
   // Create tables

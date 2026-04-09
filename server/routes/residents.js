@@ -1,5 +1,6 @@
 import express from 'express';
 import db from '../database.js';
+import { RESIDENT_STREET_SET, composeResidentAddress } from '../residentStreets.js';
 
 const router = express.Router();
 
@@ -17,11 +18,13 @@ router.get('/', (req, res) => {
     let residents;
 
     if (search) {
+      const like = `%${search}%`;
       residents = db.prepare(`
         SELECT * FROM residents 
         WHERE name LIKE ? OR contactNumber LIKE ? OR address LIKE ?
+           OR IFNULL(houseNumber, '') LIKE ? OR IFNULL(streetName, '') LIKE ?
         ORDER BY name ASC
-      `).all(`%${search}%`, `%${search}%`, `%${search}%`);
+      `).all(like, like, like, like, like);
     } else {
       residents = db.prepare('SELECT * FROM residents ORDER BY name ASC').all();
     }
@@ -52,11 +55,21 @@ router.get('/:id', (req, res) => {
 
 router.post('/', (req, res) => {
   try {
-    const { id, name, contactNumber, address, residentStatus } = req.body;
+    const { id, name, contactNumber, houseNumber, streetName, residentStatus } = req.body;
 
     if (!id || !name || !contactNumber) {
       return res.status(400).json({ error: 'Missing required fields: id, name, contactNumber' });
     }
+
+    const sn = typeof streetName === 'string' ? streetName.trim() : '';
+    if (!sn) {
+      return res.status(400).json({ error: 'Street name is required' });
+    }
+    if (!RESIDENT_STREET_SET.has(sn)) {
+      return res.status(400).json({ error: 'Invalid street name' });
+    }
+    const hn = typeof houseNumber === 'string' ? houseNumber.trim() : '';
+    const composedAddress = composeResidentAddress(hn, sn);
 
     const createdAt = new Date().toISOString();
     const status = normalizeResidentStatus(residentStatus);
@@ -72,9 +85,9 @@ router.post('/', (req, res) => {
     }
 
     db.prepare(`
-      INSERT INTO residents (id, name, contactNumber, address, createdAt, residentStatus)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(id, name, cleanedContact, address || null, createdAt, status);
+      INSERT INTO residents (id, name, contactNumber, address, houseNumber, streetName, createdAt, residentStatus)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, name, cleanedContact, composedAddress, hn || null, sn, createdAt, status);
 
     const created = db.prepare('SELECT * FROM residents WHERE id = ?').get(id);
     res.status(201).json({
@@ -92,7 +105,7 @@ router.post('/', (req, res) => {
 
 router.put('/:id', (req, res) => {
   try {
-    const { name, contactNumber, address, residentStatus } = req.body;
+    const { name, contactNumber, houseNumber, streetName, residentStatus } = req.body;
     const resident = db.prepare('SELECT * FROM residents WHERE id = ?').get(req.params.id);
 
     if (!resident) {
@@ -111,6 +124,24 @@ router.put('/:id', (req, res) => {
       }
     }
 
+    const nextH =
+      houseNumber !== undefined
+        ? (typeof houseNumber === 'string' ? houseNumber.trim() : '')
+        : (resident.houseNumber || '').trim();
+    const nextS =
+      streetName !== undefined
+        ? (typeof streetName === 'string' ? streetName.trim() : '')
+        : (resident.streetName || '').trim();
+
+    if (!nextS) {
+      return res.status(400).json({ error: 'Street name is required' });
+    }
+    if (!RESIDENT_STREET_SET.has(nextS)) {
+      return res.status(400).json({ error: 'Invalid street name' });
+    }
+
+    const composedAddress = composeResidentAddress(nextH, nextS);
+
     const nextStatus =
       residentStatus !== undefined
         ? normalizeResidentStatus(residentStatus)
@@ -118,12 +149,14 @@ router.put('/:id', (req, res) => {
 
     db.prepare(`
       UPDATE residents 
-      SET name = ?, contactNumber = ?, address = ?, residentStatus = ?
+      SET name = ?, contactNumber = ?, address = ?, houseNumber = ?, streetName = ?, residentStatus = ?
       WHERE id = ?
     `).run(
       name || resident.name,
       cleanedContact,
-      address !== undefined ? address : resident.address,
+      composedAddress,
+      nextH || null,
+      nextS,
       nextStatus,
       req.params.id
     );

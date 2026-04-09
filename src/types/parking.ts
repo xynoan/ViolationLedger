@@ -16,7 +16,10 @@ export interface Resident {
   id: string;
   name: string;
   contactNumber: string;
+  /** Composed from house number + street (kept for search and legacy rows). */
   address?: string;
+  houseNumber?: string;
+  streetName?: string;
   createdAt: Date;
   residentStatus?: ResidentStatus;
 }
