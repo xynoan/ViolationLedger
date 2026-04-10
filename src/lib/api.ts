@@ -241,6 +241,8 @@ export const violationsAPI = {
    */
   seedTestActiveWarning: () =>
     fetchAPI('/violations/test-seed-active-warning', { method: 'POST' }),
+  seedTestUnregisteredWarning: () =>
+    fetchAPI('/violations/test-seed-unregistered-warning', { method: 'POST' }),
 };
 
 // Detections API

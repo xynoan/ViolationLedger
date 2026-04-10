@@ -309,6 +309,10 @@ router.get('/', (req, res) => {
       const detectionKey = `${normalizePlateForMatch(violation.plateNumber)}-${violation.cameraLocationId}`;
       const detection = detectionsMap.get(detectionKey);
       const vehicle = vehiclesMap.get(violation.plateNumber);
+      const unregisteredUrgent =
+        violation.plateNumber !== 'NONE' &&
+        violation.plateNumber !== 'BLUR' &&
+        !vehicle;
       
       // Build message based on violation type
       let message = '';
@@ -335,6 +339,7 @@ router.get('/', (req, res) => {
         // Add detection details
         detectionId: detection ? detection.id : null,
         vehicleType: detection ? detection.class_name : null,
+        unregisteredUrgent,
         smsSentAt: smsSentMap.has(violation.id) ? new Date(smsSentMap.get(violation.id)) : null,
       };
     });
@@ -518,6 +523,128 @@ router.post('/test-seed-active-warning', (req, res) => {
       elapsedMinutesSinceDetection: elapsedMinutes,
       syntheticDetectionId: detectionId,
       note: 'Test data — no owner SMS sent from this endpoint',
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Insert a random UNREGISTERED active warning (immediate urgent / overdue).
+ * Disabled in production unless ALLOW_TEST_VIOLATION_SEED=true.
+ */
+router.post('/test-seed-unregistered-warning', (req, res) => {
+  try {
+    if (!isTestViolationSeedAllowed()) {
+      return res.status(403).json({
+        error: 'Test warning seed is disabled (production). Set ALLOW_TEST_VIOLATION_SEED=true to enable.',
+      });
+    }
+
+    const cameras = db
+      .prepare(
+        `SELECT id, locationId FROM cameras
+         WHERE locationId IS NOT NULL AND TRIM(locationId) != ''`,
+      )
+      .all();
+
+    let cameraLocationId = 'TEST-LOCATION-UNREG';
+    let cameraId = null;
+    if (cameras.length > 0) {
+      const cam = cameras[Math.floor(Math.random() * cameras.length)];
+      cameraLocationId = cam.locationId;
+      cameraId = cam.id;
+    }
+
+    const existingPlates = new Set(
+      db
+        .prepare(`SELECT plateNumber FROM vehicles WHERE plateNumber IS NOT NULL AND TRIM(plateNumber) != ''`)
+        .all()
+        .map((r) => normalizePlateForMatch(r.plateNumber)),
+    );
+
+    let plateNumber = '';
+    for (let i = 0; i < 30; i += 1) {
+      const raw = `TST-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
+      if (!existingPlates.has(normalizePlateForMatch(raw))) {
+        plateNumber = raw;
+        break;
+      }
+    }
+    if (!plateNumber) {
+      plateNumber = `UNR-${Date.now().toString().slice(-5)}`;
+    }
+
+    const hasActiveConflict = db.prepare(`
+      SELECT 1 FROM violations
+      WHERE plateNumber = ? AND cameraLocationId = ? AND status IN ('warning', 'pending')
+    `).get(plateNumber, cameraLocationId);
+
+    if (hasActiveConflict) {
+      return res.status(409).json({
+        error: 'Random unregistered plate already has an active warning at that location. Try again.',
+      });
+    }
+
+    const nowIso = new Date().toISOString();
+    const violationId = `VIOL-UNREG-TEST-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    db.prepare(`
+      INSERT INTO violations (id, ticketId, plateNumber, cameraLocationId, timeDetected, status, warningExpiresAt)
+      VALUES (?, NULL, ?, ?, ?, 'warning', ?)
+    `).run(violationId, plateNumber, cameraLocationId, nowIso, nowIso);
+
+    let detectionId = null;
+    if (cameraId) {
+      detectionId = `DET-UNREG-TEST-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      try {
+        db.prepare(`
+          INSERT INTO detections (id, cameraId, plateNumber, timestamp, confidence, imageUrl, bbox, class_name, imageBase64)
+          VALUES (?, ?, ?, ?, ?, NULL, NULL, 'car', NULL)
+        `).run(detectionId, cameraId, plateNumber, nowIso, 1.0);
+      } catch (detErr) {
+        console.warn('test-seed-unregistered-warning: could not insert synthetic detection:', detErr.message);
+        detectionId = null;
+      }
+    }
+
+    const notificationId = `NOTIF-UNREG-TEST-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    try {
+      db.prepare(`
+        INSERT INTO notifications (
+          id, type, title, message, cameraId, locationId,
+          incidentId, detectionId, imageUrl, imageBase64,
+          plateNumber, timeDetected, reason, timestamp, read
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        notificationId,
+        'unregistered_vehicle_urgent',
+        'URGENT: Unregistered Vehicle Detected (Test)',
+        `URGENT TEST: Vehicle with plate ${plateNumber} detected at ${cameraLocationId}. Immediate Barangay attention required.`,
+        cameraId,
+        cameraLocationId,
+        null,
+        detectionId,
+        null,
+        null,
+        plateNumber,
+        nowIso,
+        'Test unregistered urgent warning',
+        nowIso,
+        0,
+      );
+    } catch (notifErr) {
+      console.warn('test-seed-unregistered-warning: could not insert notification:', notifErr.message);
+    }
+
+    const violation = db.prepare('SELECT * FROM violations WHERE id = ?').get(violationId);
+    return res.status(201).json({
+      ...violation,
+      timeDetected: new Date(violation.timeDetected),
+      warningExpiresAt: violation.warningExpiresAt ? new Date(violation.warningExpiresAt) : null,
+      unregisteredUrgent: true,
+      syntheticDetectionId: detectionId,
+      note: 'Test data — unregistered urgent warning with immediate notification',
     });
   } catch (error) {
     res.status(500).json({ error: error.message });

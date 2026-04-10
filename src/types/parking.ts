@@ -67,6 +67,8 @@ export interface Violation {
   message?: string;
   detectionId?: string;
   vehicleType?: string;
+  /** True when plate has no registered vehicle and should be treated as immediate priority. */
+  unregisteredUrgent?: boolean;
   /** When an SMS was successfully logged for this violation (from sms_logs). */
   smsSentAt?: Date;
 }

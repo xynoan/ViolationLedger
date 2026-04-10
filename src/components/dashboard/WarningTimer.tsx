@@ -97,6 +97,7 @@ export function WarningTimer({ violation, onCancel, onIssueTicket, onSendSms }: 
   const smsSentAt = violation.smsSentAt;
   const canSendSms =
     Boolean(onSendSms) &&
+    !violation.unregisteredUrgent &&
     violation.plateNumber !== 'NONE' &&
     violation.plateNumber !== 'BLUR' &&
     Boolean(violation.plateNumber);
@@ -181,6 +182,11 @@ export function WarningTimer({ violation, onCancel, onIssueTicket, onSendSms }: 
                   {violation.vehicleType && violation.vehicleType !== 'none' && (
                     <Badge variant="outline" className="text-xs">
                       {violation.vehicleType}
+                    </Badge>
+                  )}
+                  {violation.unregisteredUrgent && (
+                    <Badge className="text-xs bg-red-600 text-white border-red-700">
+                      URGENT · UNREGISTERED
                     </Badge>
                   )}
                   {smsSentAt ? (

@@ -24,6 +24,7 @@ export default function Dashboard() {
   const [detectionEnabled, setDetectionEnabled] = useState(true);
   const [detectionToggleLoading, setDetectionToggleLoading] = useState(false);
   const [testSeedLoading, setTestSeedLoading] = useState(false);
+  const [testSeedUnregLoading, setTestSeedUnregLoading] = useState(false);
 
   const showTestWarningSeed =
     import.meta.env.DEV === true || import.meta.env.VITE_SHOW_TEST_WARNING_BUTTON === 'true';
@@ -183,7 +184,31 @@ export default function Dashboard() {
     }
   }, [loadData]);
 
-  const activeWarnings = violations.filter(v => v.status === 'warning');
+  const handleSeedUnregisteredWarning = useCallback(async () => {
+    setTestSeedUnregLoading(true);
+    try {
+      const result = await violationsAPI.seedTestUnregisteredWarning();
+      toast({
+        title: 'Test unregistered warning added',
+        description: `Plate ${result.plateNumber} at ${result.cameraLocationId} (urgent).`,
+      });
+      await loadData();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to add unregistered warning';
+      toast({ title: 'Test unregistered warning failed', description: message, variant: 'destructive' });
+    } finally {
+      setTestSeedUnregLoading(false);
+    }
+  }, [loadData]);
+
+  const activeWarnings = violations
+    .filter(v => v.status === 'warning')
+    .sort((a, b) => {
+      const aUrgent = a.unregisteredUrgent ? 1 : 0;
+      const bUrgent = b.unregisteredUrgent ? 1 : 0;
+      if (aUrgent !== bUrgent) return bUrgent - aUrgent;
+      return new Date(b.timeDetected).getTime() - new Date(a.timeDetected).getTime();
+    });
   const issuedTickets = violations.filter(v => v.status === 'issued');
   const clearedToday = violations.filter(v => v.status === 'cleared');
   const onlineCameras = cameras.filter(c => c.status === 'online');
@@ -301,18 +326,32 @@ export default function Dashboard() {
                     </span>
                   </h2>
                   {showTestWarningSeed && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="text-xs sm:text-sm"
-                      onClick={handleSeedTestWarning}
-                      disabled={testSeedLoading}
-                      title="Inserts a random registered vehicle as an active warning with a random elapsed time (dev / test only)"
-                    >
-                      <FlaskConical className="h-4 w-4 mr-1 shrink-0" />
-                      {testSeedLoading ? 'Adding…' : 'Add test warning'}
-                    </Button>
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="text-xs sm:text-sm"
+                        onClick={handleSeedTestWarning}
+                        disabled={testSeedLoading}
+                        title="Inserts a random registered vehicle as an active warning with a random elapsed time (dev / test only)"
+                      >
+                        <FlaskConical className="h-4 w-4 mr-1 shrink-0" />
+                        {testSeedLoading ? 'Adding…' : 'Add test warning'}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="text-xs sm:text-sm"
+                        onClick={handleSeedUnregisteredWarning}
+                        disabled={testSeedUnregLoading}
+                        title="Inserts a random unregistered urgent warning (dev / test only)"
+                      >
+                        <FlaskConical className="h-4 w-4 mr-1 shrink-0" />
+                        {testSeedUnregLoading ? 'Adding…' : 'Add test unregistered'}
+                      </Button>
+                    </div>
                   )}
                 </div>
 

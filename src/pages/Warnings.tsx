@@ -13,7 +13,15 @@ export default function Warnings() {
   const [violations, setViolations] = useState<Violation[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [testSeedLoading, setTestSeedLoading] = useState(false);
-  const activeWarnings = violations.filter(v => v.status === 'warning');
+  const [testSeedUnregLoading, setTestSeedUnregLoading] = useState(false);
+  const activeWarnings = violations
+    .filter(v => v.status === 'warning')
+    .sort((a, b) => {
+      const aUrgent = a.unregisteredUrgent ? 1 : 0;
+      const bUrgent = b.unregisteredUrgent ? 1 : 0;
+      if (aUrgent !== bUrgent) return bUrgent - aUrgent;
+      return new Date(b.timeDetected).getTime() - new Date(a.timeDetected).getTime();
+    });
 
   const showTestWarningSeed =
     import.meta.env.DEV === true || import.meta.env.VITE_SHOW_TEST_WARNING_BUTTON === 'true';
@@ -130,6 +138,26 @@ export default function Warnings() {
     }
   };
 
+  const handleSeedUnregisteredWarning = async () => {
+    setTestSeedUnregLoading(true);
+    try {
+      const result = await violationsAPI.seedTestUnregisteredWarning();
+      toast({
+        title: "Test unregistered warning added",
+        description: `Plate ${result.plateNumber} at ${result.cameraLocationId} (urgent).`,
+      });
+      await loadViolations();
+    } catch (error: any) {
+      toast({
+        title: "Test unregistered warning failed",
+        description: error?.message || "Failed to add unregistered warning",
+        variant: "destructive",
+      });
+    } finally {
+      setTestSeedUnregLoading(false);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="min-h-screen">
@@ -157,17 +185,30 @@ export default function Warnings() {
                 <span className="font-medium text-sm sm:text-base">{activeWarnings.length} active warnings</span>
               </div>
               {showTestWarningSeed && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={handleSeedTestWarning}
-                  disabled={testSeedLoading}
-                  title="Random registered vehicle, random elapsed time since detection (dev / test only)"
-                >
-                  <FlaskConical className="h-4 w-4 mr-1 shrink-0" />
-                  {testSeedLoading ? "Adding…" : "Add test warning"}
-                </Button>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleSeedTestWarning}
+                    disabled={testSeedLoading}
+                    title="Random registered vehicle, random elapsed time since detection (dev / test only)"
+                  >
+                    <FlaskConical className="h-4 w-4 mr-1 shrink-0" />
+                    {testSeedLoading ? "Adding…" : "Add test warning"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleSeedUnregisteredWarning}
+                    disabled={testSeedUnregLoading}
+                    title="Random unregistered urgent warning (dev / test only)"
+                  >
+                    <FlaskConical className="h-4 w-4 mr-1 shrink-0" />
+                    {testSeedUnregLoading ? "Adding…" : "Add test unregistered"}
+                  </Button>
+                </div>
               )}
             </div>
             <div className="space-y-3 sm:space-y-4">
@@ -188,16 +229,28 @@ export default function Warnings() {
             <h3 className="text-lg sm:text-xl font-semibold text-foreground mb-2">All Clear</h3>
             <p className="text-muted-foreground text-sm sm:text-base">No active parking warnings at this time</p>
             {showTestWarningSeed && (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={handleSeedTestWarning}
-                disabled={testSeedLoading}
-              >
-                <FlaskConical className="h-4 w-4 mr-1 shrink-0" />
-                {testSeedLoading ? "Adding…" : "Add test warning"}
-              </Button>
+              <div className="flex justify-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleSeedTestWarning}
+                  disabled={testSeedLoading}
+                >
+                  <FlaskConical className="h-4 w-4 mr-1 shrink-0" />
+                  {testSeedLoading ? "Adding…" : "Add test warning"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleSeedUnregisteredWarning}
+                  disabled={testSeedUnregLoading}
+                >
+                  <FlaskConical className="h-4 w-4 mr-1 shrink-0" />
+                  {testSeedUnregLoading ? "Adding…" : "Add test unregistered"}
+                </Button>
+              </div>
             )}
           </div>
         )}

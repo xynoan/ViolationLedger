@@ -273,7 +273,7 @@ router.post('/:cameraId', async (req, res) => {
                 try {
                   statements.createNotification.run(
                     notificationId,
-                    'vehicle_detected',
+                    'unregistered_vehicle_urgent',
                     notificationTitle,
                     notificationMessage,
                     detection.cameraId,
@@ -311,13 +311,18 @@ router.post('/:cameraId', async (req, res) => {
               let violationId;
               if (existingViolation) {
                 violationId = existingViolation.id;
+                // Keep unregistered warnings immediately urgent when re-detected.
+                db.prepare(`
+                  UPDATE violations
+                  SET warningExpiresAt = ?
+                  WHERE id = ?
+                `).run(new Date().toISOString(), violationId);
                 console.log(`ℹ️  Active violation already exists: ${violationId}`);
               } else {
-                // Create new violation for unregistered vehicle
+                // Create new urgent violation for unregistered vehicle (immediate attention)
                 violationId = `VIOL-${detection.plateNumber}-${Date.now()}`;
                 const timeDetected = new Date().toISOString();
-                const expiresDate = new Date();
-                expiresDate.setMinutes(expiresDate.getMinutes() + GRACE_PERIOD_MINUTES);
+                const immediateExpiry = new Date().toISOString();
                 
                 db.prepare(`
                   INSERT INTO violations (id, plateNumber, cameraLocationId, timeDetected, status, warningExpiresAt)
@@ -328,7 +333,7 @@ router.post('/:cameraId', async (req, res) => {
                   locationId,
                   timeDetected,
                   'warning',
-                  expiresDate.toISOString()
+                  immediateExpiry
                 );
                 violationsCreated.push(violationId);
                 console.log(`✅ Violation created for unregistered vehicle: ${violationId}`);
@@ -361,13 +366,13 @@ router.post('/:cameraId', async (req, res) => {
               
               if (userId) {
                 const notificationId = `NOTIF-${Date.now()}-${violationId}`;
-                const notificationTitle = 'Unregistered Vehicle Detected';
-                const notificationMessage = `Vehicle with plate ${detection.plateNumber} detected illegally parked at ${locationId}. Vehicle is not registered in the system. Immediate Barangay attention required.`;
+                const notificationTitle = 'URGENT: Unregistered Vehicle Detected';
+                const notificationMessage = `URGENT: Vehicle with plate ${detection.plateNumber} detected illegally parked at ${locationId}. Vehicle is not registered in the system. Immediate Barangay attention required.`;
                 
                 try {
                   statements.createNotification.run(
                     notificationId,
-                    'vehicle_detected',
+                    'unregistered_vehicle_urgent',
                     notificationTitle,
                     notificationMessage,
                     detection.cameraId,
