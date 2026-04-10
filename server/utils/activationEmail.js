@@ -30,17 +30,27 @@ function getAppUrl() {
   return (
     process.env.APP_URL ||
     process.env.FRONTEND_URL ||
-    'http://localhost:5173'
+    'http://localhost:3001'
   ).replace(/\/$/, '');
 }
 
-/**
- * HTML + plain-text activation email (admin-style dark theme).
- */
-function buildActivationEmail({ name, activateUrl }) {
+function getLoginUrl() {
+  const rawLoginUrl =
+    process.env.LOGIN_URL ||
+    process.env.APP_LOGIN_URL ||
+    '';
+
+  if (rawLoginUrl.trim()) {
+    return rawLoginUrl.trim().replace(/\/$/, '');
+  }
+
+  return `${getAppUrl()}/login`;
+}
+
+function buildLoginEmail({ name, loginUrl }) {
   const displayName = name?.trim() || 'there';
-  const subject = 'Activate your ViolationLedger account';
-  const text = `Hi ${displayName},\n\nYour account has been created. Open this link to activate (valid 24 hours):\n\n${activateUrl}\n\nIf you did not expect this email, you can ignore it.\n\n— ViolationLedger`;
+  const subject = 'Your ViolationLedger account is ready';
+  const text = `Hi ${displayName},\n\nYour account has been created and is ready to use.\n\nSign in here:\n\n${loginUrl}\n\nIf you did not expect this email, you can ignore it.\n\n- ViolationLedger`;
 
   const html = `<!DOCTYPE html>
 <html lang="en">
@@ -53,21 +63,21 @@ function buildActivationEmail({ name, activateUrl }) {
           <tr>
             <td style="padding:28px 28px 8px;">
               <p style="margin:0;font-size:13px;letter-spacing:0.06em;text-transform:uppercase;color:#94a3b8;">ViolationLedger</p>
-              <h1 style="margin:12px 0 0;font-size:22px;font-weight:600;color:#f8fafc;">Activate your account</h1>
+              <h1 style="margin:12px 0 0;font-size:22px;font-weight:600;color:#f8fafc;">Your account is ready</h1>
             </td>
           </tr>
           <tr>
             <td style="padding:8px 28px 24px;">
               <p style="margin:0;font-size:15px;line-height:1.6;color:#cbd5e1;">Hi ${escapeHtml(displayName)},</p>
-              <p style="margin:16px 0 0;font-size:15px;line-height:1.6;color:#cbd5e1;">Your administrator created an account for you. Click the button below to confirm your email and activate your account. This link expires in <strong style="color:#f8fafc;">24 hours</strong>.</p>
+              <p style="margin:16px 0 0;font-size:15px;line-height:1.6;color:#cbd5e1;">Your administrator created an account for you. Click the button below to sign in.</p>
               <table role="presentation" cellspacing="0" cellpadding="0" style="margin:28px 0;">
                 <tr>
                   <td style="border-radius:8px;background:#16a34a;">
-                    <a href="${escapeHtml(activateUrl)}" style="display:inline-block;padding:12px 24px;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;">Activate account</a>
+                    <a href="${escapeHtml(loginUrl)}" style="display:inline-block;padding:12px 24px;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;">Login</a>
                   </td>
                 </tr>
               </table>
-              <p style="margin:0;font-size:12px;line-height:1.5;color:#64748b;word-break:break-all;">Or paste this link into your browser:<br/><span style="color:#94a3b8;">${escapeHtml(activateUrl)}</span></p>
+              <p style="margin:0;font-size:12px;line-height:1.5;color:#64748b;word-break:break-all;">Or paste this link into your browser:<br/><span style="color:#94a3b8;">${escapeHtml(loginUrl)}</span></p>
             </td>
           </tr>
           <tr>
@@ -94,12 +104,11 @@ function escapeHtml(s) {
 }
 
 /**
- * Send account activation email with link ${APP_URL}/activate?token=...
+ * Send account login email with a sign-in link.
  */
-export async function sendAccountActivationEmail({ email, name, activationToken }) {
-  const appUrl = getAppUrl();
-  const activateUrl = `${appUrl}/activate?token=${encodeURIComponent(activationToken)}`;
-  const { subject, text, html } = buildActivationEmail({ name, activateUrl });
+export async function sendAccountLoginEmail({ email, name }) {
+  const loginUrl = getLoginUrl();
+  const { subject, text, html } = buildLoginEmail({ name, loginUrl });
   const mailFrom = process.env.MAIL_FROM || 'ViolationLedger <noreply@localhost>';
 
   if (transporter) {
@@ -110,10 +119,10 @@ export async function sendAccountActivationEmail({ email, name, activationToken 
       text,
       html,
     });
-    console.log('[mail] Activation email sent to', email);
+    console.log('[mail] Login email sent to', email);
   } else {
-    console.log('[mail] SMTP not configured — activation link (copy for user):');
+    console.log('[mail] SMTP not configured - login link (copy for user):');
     console.log('  To:', email);
-    console.log('  ', activateUrl);
+    console.log('  ', loginUrl);
   }
 }

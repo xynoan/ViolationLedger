@@ -16,7 +16,7 @@ interface VideoPlayerProps {
   isOnline: boolean;
   camera: Camera;
   detections: Detection[];
-  vehicleCount: number;
+  registeredPlates?: string[];
   fullscreen?: boolean;
   enablePlateRecognition?: boolean;
   onPlateMetaChange?: (meta: {
@@ -37,7 +37,7 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
   isOnline,
   camera,
   detections: apiDetections,
-  vehicleCount,
+  registeredPlates = [],
   fullscreen = false,
   enablePlateRecognition = false,
   onPlateMetaChange,
@@ -75,9 +75,11 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
   const detections = enablePlateRecognition
     ? plateDetections
     : apiDetections;
-  const count = enablePlateRecognition
-    ? plateCount
-    : vehicleCount;
+  const registeredPlateSet = new Set(
+    registeredPlates
+      .map((plate) => String(plate || '').replace(/\s+/g, '').toUpperCase())
+      .filter(Boolean)
+  );
 
   // Expose capture function via ref
   useImperativeHandle(ref, () => ({
@@ -181,7 +183,7 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         playsInline
         muted
         className={cn(
-          "w-full h-full object-cover",
+          "absolute inset-0 w-full h-full object-cover",
           !hasStream && "opacity-0" // Hide video visually when no stream, but keep element in DOM
         )}
       />
@@ -189,8 +191,8 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       {/* Placeholder overlay when stream is not yet available but camera is online */}
       {!hasStream && (
         <>
-          <div className="absolute inset-0 bg-gradient-to-t from-foreground/10 to-transparent" />
-          <div className="relative flex flex-col items-center gap-2 text-muted-foreground">
+          <div className="absolute inset-0 z-10 bg-gradient-to-t from-foreground/10 to-transparent" />
+          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 text-muted-foreground">
             <CameraIcon className={cn('opacity-30', fullscreen ? 'h-20 w-20' : 'h-12 w-12')} />
             <span className={cn(fullscreen ? 'text-lg' : 'text-sm')}>Connecting to camera...</span>
             <span className={cn('font-mono', fullscreen ? 'text-base' : 'text-xs')}>
@@ -207,97 +209,130 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       
       {/* Gradient overlay - always show when video is visible */}
       {hasStream && (
-        <div className="absolute inset-0 bg-gradient-to-t from-foreground/10 to-transparent pointer-events-none" />
+        <div className="absolute inset-0 z-10 bg-gradient-to-t from-foreground/10 to-transparent pointer-events-none" />
       )}
 
       {/* Detection Overlays */}
-      {detections.map((detection, idx) => {
-        if (!detection.bbox || detection.bbox.length !== 4) return null;
+      <div className="absolute inset-0 z-20 pointer-events-none">
+        {detections.map((detection, idx) => {
+          if (!detection.bbox || detection.bbox.length !== 4) return null;
 
-        const [x1, y1, x2, y2] = detection.bbox;
-        const videoElement = videoRef.current;
-        if (!videoElement || !videoElement.clientWidth || !videoElement.clientHeight) return null;
+          const [x1, y1, x2, y2] = detection.bbox;
+          const videoElement = videoRef.current;
+          const displayWidth =
+            videoElement?.clientWidth ||
+            videoElement?.parentElement?.clientWidth ||
+            0;
+          const displayHeight =
+            videoElement?.clientHeight ||
+            videoElement?.parentElement?.clientHeight ||
+            0;
 
-        const videoWidth = videoElement.videoWidth || 1920;
-        const videoHeight = videoElement.videoHeight || 1080;
-        const displayWidth = videoElement.clientWidth;
-        const displayHeight = videoElement.clientHeight;
+          if (!videoElement || !displayWidth || !displayHeight) return null;
 
-        const videoAspect = videoWidth / videoHeight;
-        const displayAspect = displayWidth / displayHeight;
+          const videoWidth = videoElement.videoWidth || 1920;
+          const videoHeight = videoElement.videoHeight || 1080;
 
-        let scaleX: number, scaleY: number, offsetX = 0, offsetY = 0;
+          const videoAspect = videoWidth / videoHeight;
+          const displayAspect = displayWidth / displayHeight;
 
-        if (videoAspect > displayAspect) {
-          scaleX = displayWidth / videoWidth;
-          scaleY = scaleX;
-          offsetY = (displayHeight - videoHeight * scaleY) / 2;
-        } else {
-          scaleY = displayHeight / videoHeight;
-          scaleX = scaleY;
-          offsetX = (displayWidth - videoWidth * scaleX) / 2;
-        }
+          let scaleX: number, scaleY: number, offsetX = 0, offsetY = 0;
 
-        const left = x1 * scaleX + offsetX;
-        const top = y1 * scaleY + offsetY;
-        const width = (x2 - x1) * scaleX;
-        const height = (y2 - y1) * scaleY;
+          if (videoAspect > displayAspect) {
+            scaleX = displayWidth / videoWidth;
+            scaleY = scaleX;
+            offsetY = (displayHeight - videoHeight * scaleY) / 2;
+          } else {
+            scaleY = displayHeight / videoHeight;
+            scaleX = scaleY;
+            offsetX = (displayWidth - videoWidth * scaleX) / 2;
+          }
 
-        const colorClass =
-          detection.class_name === 'plate'
-            ? 'border-violet-400 bg-violet-400/20'
-            : detection.class_name === 'face'
-              ? 'border-cyan-400 bg-cyan-400/20'
-              : detection.class_name === 'car'
-                ? 'border-blue-500 bg-blue-500/20'
-                : detection.class_name === 'motorcycle'
-                  ? 'border-yellow-500 bg-yellow-500/20'
-                  : detection.class_name === 'truck'
-                    ? 'border-red-500 bg-red-500/20'
-                    : detection.class_name === 'bus'
-                      ? 'border-green-500 bg-green-500/20'
-                      : 'border-orange-500 bg-orange-500/20';
-        const plateLabel = (detection as { plateNumber?: unknown }).plateNumber;
-        const label: string = typeof plateLabel === 'string' && plateLabel.trim().length > 0
-          ? plateLabel
-          : `${detection.class_name} ${(detection.confidence * 100).toFixed(0)}%`;
+          const left = x1 * scaleX + offsetX;
+          const top = y1 * scaleY + offsetY;
+          const width = (x2 - x1) * scaleX;
+          const height = (y2 - y1) * scaleY;
 
-        return (
-          <div
-            key={idx}
-            className={cn('absolute border-2 pointer-events-none', colorClass)}
-            style={{
-              left: `${left}px`,
-              top: `${top}px`,
-              width: `${width}px`,
-              height: `${height}px`,
-            }}
-          >
+          const colorClass =
+            detection.class_name === 'plate'
+              ? 'border-violet-400 bg-violet-400/20'
+              : detection.class_name === 'face'
+                ? 'border-cyan-400 bg-cyan-400/20'
+                : detection.class_name === 'car'
+                  ? 'border-blue-500 bg-blue-500/20'
+                  : detection.class_name === 'motorcycle'
+                    ? 'border-yellow-500 bg-yellow-500/20'
+                    : detection.class_name === 'truck'
+                      ? 'border-red-500 bg-red-500/20'
+                      : detection.class_name === 'bus'
+                        ? 'border-green-500 bg-green-500/20'
+                        : 'border-orange-500 bg-orange-500/20';
+          const plateLabel = (detection as { plateNumber?: unknown }).plateNumber;
+          const isVehicleClass =
+            detection.class_name === 'car' ||
+            detection.class_name === 'motorcycle' ||
+            detection.class_name === 'truck' ||
+            detection.class_name === 'bus' ||
+            detection.class_name === 'vehicle';
+          const normalizedPlate =
+            typeof plateLabel === 'string'
+              ? plateLabel.replace(/\s+/g, '').toUpperCase()
+              : '';
+          const hasReadablePlate =
+            typeof plateLabel === 'string' &&
+            plateLabel.trim().length > 0 &&
+            normalizedPlate !== 'NONE' &&
+            normalizedPlate !== 'BLUR';
+          const baseLabel = typeof plateLabel === 'string' && plateLabel.trim().length > 0
+            ? plateLabel
+            : `${detection.class_name} ${(detection.confidence * 100).toFixed(0)}%`;
+          const plateStatus =
+            registeredPlateSet.size > 0 && hasReadablePlate
+              ? registeredPlateSet.has(normalizedPlate)
+                ? 'Registered'
+                : 'Unregistered'
+              : null;
+          const label: string = isVehicleClass
+              ? `${baseLabel} Detected`
+              : baseLabel;
+
+          return (
             <div
-              className={cn(
-                'absolute -top-6 left-0 bg-black/80 text-white px-2 py-0.5 rounded whitespace-nowrap',
-                fullscreen ? 'text-xs' : 'text-[10px]'
-              )}
+              key={idx}
+              className={cn('absolute border-2 pointer-events-none', colorClass)}
+              style={{
+                left: `${left}px`,
+                top: `${top}px`,
+                width: `${width}px`,
+                height: `${height}px`,
+              }}
             >
-              {label}
+              {plateStatus && (
+                <div
+                  className={cn(
+                    'absolute -top-7 left-0 z-50 rounded-md border px-2 py-0.5 font-semibold shadow-lg backdrop-blur-sm',
+                    plateStatus === 'Registered'
+                      ? 'border-emerald-300 bg-emerald-600 text-white'
+                      : 'border-rose-300 bg-rose-600 text-white',
+                    fullscreen ? 'text-xs' : 'text-[10px]'
+                  )}
+                >
+                  {plateStatus}
+                </div>
+              )}
+              <div
+                className={cn(
+                  'absolute -top-6 left-0 bg-black/80 text-white px-2 py-0.5 rounded whitespace-nowrap',
+                  fullscreen ? 'text-xs' : 'text-[10px]'
+                )}
+              >
+                {label}
+              </div>
             </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
 
-      {/* Detection count badge (vehicles or plates) */}
-      {count > 0 && (
-        <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between">
-          <div className="flex items-center gap-2 bg-foreground/80 backdrop-blur-sm rounded-lg px-3 py-2">
-            <span className="status-indicator status-warning" />
-            <span className={cn('font-mono text-background', fullscreen ? 'text-sm' : 'text-xs')}>
-              {enablePlateRecognition
-                ? `${count} ${count === 1 ? 'Plate' : 'Plates'} detected`
-                : `${count} ${count === 1 ? 'Vehicle' : 'Vehicles'} detected`}
-            </span>
-          </div>
-        </div>
-      )}
     </>
   );
 }));

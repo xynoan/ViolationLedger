@@ -30,7 +30,7 @@ const transporter = hasSmtp
   : null;
 
 /**
- * Send activation email. Uses real SMTP if SMTP_HOST/USER/PASS are set;
+ * Send login email. Uses real SMTP if SMTP_HOST/USER/PASS are set;
  * otherwise logs to console (stub mode).
  */
 export async function sendActivationEmailStub(user, plainPassword) {
@@ -45,9 +45,9 @@ export async function sendActivationEmailStub(user, plainPassword) {
       subject,
       text,
     });
-    console.log('Activation email sent to', user.email);
+    console.log('Login email sent to', user.email);
   } else {
-    console.log('[email stub] Activation email (no SMTP configured):');
+    console.log('[email stub] Login email (no SMTP configured):');
     console.log('  To:', user.email);
     console.log('  Subject:', subject);
     console.log('  Body:', text);

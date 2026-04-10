@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Clock, AlertTriangle, X, Check, Camera } from 'lucide-react';
+import { Clock, AlertTriangle, Check, Camera, Ticket, ImageOff, MessageSquare } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Violation } from '@/types/parking';
@@ -8,43 +8,73 @@ import { cn } from '@/lib/utils';
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 const SERVER_BASE_URL = API_BASE_URL.replace('/api', '');
 
+const TWENTY_MIN = 20 * 60;
+const TEN_MIN = 10 * 60;
+const OUT_OF_VIEW_NOTE = 'not in the camera view anymore';
+
 interface WarningTimerProps {
   violation: Violation;
   onCancel?: (id: string) => void;
   onIssueTicket?: (id: string) => void;
+  /** Manual resend SMS to registered owner (same template as automatic warning SMS). */
+  onSendSms?: (id: string) => void | Promise<void>;
 }
 
-export function WarningTimer({ violation, onCancel, onIssueTicket }: WarningTimerProps) {
-  const [timeLeft, setTimeLeft] = useState<number>(0);
+/** Seconds until expiry; negative = overdue by that many seconds. */
+function computeDeltaSec(warningExpiresAt: Date | undefined): number | null {
+  if (!warningExpiresAt) return null;
+  const now = Date.now();
+  const expires = new Date(warningExpiresAt).getTime();
+  return Math.floor((expires - now) / 1000);
+}
+
+function formatHms(seconds: number): string {
+  const safe = Math.max(0, Math.floor(seconds));
+  const hours = Math.floor(safe / 3600);
+  const mins = Math.floor((safe % 3600) / 60);
+  const secs = safe % 60;
+  if (hours > 0) {
+    return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  }
+  return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+}
+
+function tierFromDelta(deltaSec: number | null): 'overdue' | 'urgent' | 'moderate' | 'calm' | 'unknown' {
+  if (deltaSec === null) return 'unknown';
+  if (deltaSec <= 0) return 'overdue';
+  if (deltaSec <= TEN_MIN) return 'urgent';
+  if (deltaSec <= TWENTY_MIN) return 'moderate';
+  return 'calm';
+}
+
+export function WarningTimer({ violation, onCancel, onIssueTicket, onSendSms }: WarningTimerProps) {
+  const [deltaSec, setDeltaSec] = useState<number | null>(() => computeDeltaSec(violation.warningExpiresAt));
+  const [sendingSms, setSendingSms] = useState(false);
 
   useEffect(() => {
-    if (!violation.warningExpiresAt) return;
-
-    const calculateTimeLeft = () => {
-      const now = new Date().getTime();
-      const expires = new Date(violation.warningExpiresAt!).getTime();
-      return Math.max(0, Math.floor((expires - now) / 1000));
+    const tick = () => {
+      setDeltaSec(computeDeltaSec(violation.warningExpiresAt));
     };
-
-    setTimeLeft(calculateTimeLeft());
-
-    const interval = setInterval(() => {
-      setTimeLeft(calculateTimeLeft());
-    }, 1000);
-
+    tick();
+    const interval = setInterval(tick, 1000);
     return () => clearInterval(interval);
   }, [violation.warningExpiresAt]);
 
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  };
+  const tier = tierFromDelta(deltaSec);
+  const isOverdue = deltaSec !== null && deltaSec <= 0;
+  const overdueSeconds = isOverdue && deltaSec !== null ? Math.abs(deltaSec) : 0;
+  const messageText = String(violation.message || '');
+  const isOutOfView = messageText.toLowerCase().includes(OUT_OF_VIEW_NOTE);
+  const canIssueTicket = deltaSec !== null && deltaSec <= 0;
 
-  const isExpired = timeLeft === 0;
-  const isUrgent = timeLeft > 0 && timeLeft <= 300; // 5 minutes
+  const borderClass = {
+    overdue: 'border-l-red-600',
+    urgent: 'border-l-orange-500',
+    moderate: 'border-l-amber-500',
+    calm: 'border-l-teal-500',
+    unknown: 'border-l-slate-500',
+  }[tier];
 
-  // Get image source
   const getImageSrc = (): string | null => {
     if (violation.imageBase64) {
       if (violation.imageBase64.startsWith('data:')) {
@@ -67,97 +97,195 @@ export function WarningTimer({ violation, onCancel, onIssueTicket }: WarningTime
         : `Vehicle with plate ${violation.plateNumber} detected illegally parked at ${violation.cameraLocationId}. Immediate action required.`
   );
 
-  return (
-    <div className={cn(
-      "glass-card rounded-xl p-4 border-l-4 animate-slide-up",
-      isExpired ? "border-l-destructive" : isUrgent ? "border-l-warning" : "border-l-primary"
-    )}>
-      <div className="flex flex-col gap-4">
-        {/* Header with plate, location, and timer */}
-        <div className="flex items-start justify-between">
-          <div className="flex items-start gap-3 flex-1">
-            <div className={cn(
-              "rounded-lg p-2",
-              isExpired ? "bg-destructive/10" : isUrgent ? "bg-warning/10" : "bg-primary/10"
-            )}>
-              <AlertTriangle className={cn(
-                "h-5 w-5",
-                isExpired ? "text-destructive" : isUrgent ? "text-warning" : "text-primary"
-              )} />
-            </div>
-            <div className="flex-1">
-            <div className="flex items-center gap-2 flex-wrap mb-2">
-              {violation.plateNumber === 'NONE' ? (
-                <span className="font-semibold text-foreground">Plate Not Visible</span>
-              ) : violation.plateNumber === 'BLUR' ? (
-                <span className="font-semibold text-foreground">Unclear or Blur Plate Number Detected</span>
-              ) : (
-                <span className="font-mono font-semibold text-foreground">{violation.plateNumber}</span>
-              )}
-                <Badge variant={isExpired ? "destructive" : isUrgent ? "warning" : "secondary"}>
-                  <Camera className="h-3 w-3 mr-1" />
-                  Location: {violation.cameraLocationId}
-                </Badge>
-                {violation.vehicleType && violation.vehicleType !== 'none' && (
-                  <Badge variant="outline" className="text-xs">
-                    {violation.vehicleType}
-                  </Badge>
-                )}
-              </div>
-              <p className="text-sm text-foreground mb-2">{displayMessage}</p>
-              <p className="text-xs text-muted-foreground">
-                Detected at {new Date(violation.timeDetected).toLocaleString()}
-              </p>
-            </div>
-          </div>
+  const smsSentAt = violation.smsSentAt;
+  const canSendSms =
+    Boolean(onSendSms) &&
+    !violation.unregisteredUrgent &&
+    violation.plateNumber !== 'NONE' &&
+    violation.plateNumber !== 'BLUR' &&
+    Boolean(violation.plateNumber);
 
-          <div className="text-right flex-shrink-0 ml-4">
-            <div className="flex items-center gap-2 text-muted-foreground mb-2">
-              <Clock className="h-4 w-4" />
-              <span className={cn(
-                "font-mono text-xl font-bold",
-                isExpired ? "text-destructive" : isUrgent ? "text-warning animate-pulse" : "text-foreground"
-              )}>
-                {isExpired ? "EXPIRED" : formatTime(timeLeft)}
-              </span>
-            </div>
-            <div className="flex gap-2 justify-end">
-              <Button 
-                variant="ghost" 
-                size="sm" 
-                onClick={() => onCancel?.(violation.id)}
-                className="text-muted-foreground hover:text-success"
-              >
-                <Check className="h-4 w-4 mr-1" />
-                Clear
-              </Button>
-              {isExpired && (
-                <Button 
-                  variant="destructive" 
-                  size="sm" 
-                  onClick={() => onIssueTicket?.(violation.id)}
-                >
-                  <X className="h-4 w-4 mr-1" />
-                  Issue Ticket
-                </Button>
-              )}
-            </div>
+  const handleSendSmsClick = async () => {
+    if (!onSendSms || !canSendSms || sendingSms) return;
+    setSendingSms(true);
+    try {
+      await onSendSms(violation.id);
+    } finally {
+      setSendingSms(false);
+    }
+  };
+
+  return (
+    <div
+      className={cn(
+        'glass-card rounded-xl border border-border overflow-hidden animate-slide-up',
+        'border-l-4',
+        borderClass,
+      )}
+    >
+      <div className="flex flex-col gap-0 sm:flex-row sm:items-stretch">
+        {/* Reserved 1:1 detection thumbnail */}
+        <div className="w-full shrink-0 sm:w-36 md:w-40">
+          <div className="relative aspect-square w-full bg-muted sm:min-h-[9rem]">
+            {imageSrc ? (
+              <img
+                src={imageSrc}
+                alt={`Detection at ${violation.cameraLocationId}`}
+                className="absolute inset-0 h-full w-full object-cover"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).style.display = 'none';
+                }}
+              />
+            ) : (
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-muted-foreground p-2">
+                <ImageOff className="h-8 w-8 opacity-50" aria-hidden />
+                <span className="text-[10px] uppercase tracking-wide text-center">No thumbnail</span>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Captured Image */}
-        {imageSrc && (
-          <div className="mt-2 border border-border rounded-lg overflow-hidden">
-            <img 
-              src={imageSrc} 
-              alt={`Illegal parking violation at ${violation.cameraLocationId}`}
-              className="w-full h-auto max-h-64 object-cover"
-              onError={(e) => {
-                (e.target as HTMLImageElement).style.display = 'none';
-              }}
-            />
+        <div className="flex min-w-0 flex-1 flex-col gap-3 p-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div className="flex min-w-0 flex-1 items-start gap-3">
+              <div
+                className={cn(
+                  'rounded-lg p-2 shrink-0',
+                  tier === 'overdue' && 'bg-red-500/10',
+                  tier === 'urgent' && 'bg-orange-500/10',
+                  tier === 'moderate' && 'bg-amber-500/10',
+                  tier === 'calm' && 'bg-teal-500/10',
+                  tier === 'unknown' && 'bg-muted',
+                )}
+              >
+                <AlertTriangle
+                  className={cn(
+                    'h-5 w-5',
+                    tier === 'overdue' && 'text-red-600',
+                    tier === 'urgent' && 'text-orange-500',
+                    tier === 'moderate' && 'text-amber-600',
+                    tier === 'calm' && 'text-teal-600',
+                    tier === 'unknown' && 'text-muted-foreground',
+                  )}
+                />
+              </div>
+              <div className="min-w-0 flex-1 space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  {violation.plateNumber === 'NONE' ? (
+                    <span className="font-semibold text-foreground">Plate Not Visible</span>
+                  ) : violation.plateNumber === 'BLUR' ? (
+                    <span className="font-semibold text-foreground">Unclear or Blur Plate Number Detected</span>
+                  ) : (
+                    <span className="font-mono font-semibold text-foreground">{violation.plateNumber}</span>
+                  )}
+                  <Badge variant="secondary" className="text-xs">
+                    <Camera className="h-3 w-3 mr-1" />
+                    {violation.cameraLocationId}
+                  </Badge>
+                  {violation.vehicleType && violation.vehicleType !== 'none' && (
+                    <Badge variant="outline" className="text-xs">
+                      {violation.vehicleType}
+                    </Badge>
+                  )}
+                  {violation.unregisteredUrgent && (
+                    <Badge className="text-xs bg-red-600 text-white border-red-700">
+                      URGENT · UNREGISTERED
+                    </Badge>
+                  )}
+                  {smsSentAt ? (
+                    <Badge
+                      variant="outline"
+                      className="border-green-600/40 bg-green-500/10 text-green-800 dark:text-green-300 text-xs"
+                    >
+                      Text sent · {smsSentAt.toLocaleString()}
+                    </Badge>
+                  ) : (
+                    <Badge variant="secondary" className="text-xs text-muted-foreground font-normal">
+                      No text sent
+                    </Badge>
+                  )}
+                </div>
+                <p className="text-sm text-foreground">{displayMessage}</p>
+                <p className="text-xs text-muted-foreground">
+                  Detected at {new Date(violation.timeDetected).toLocaleString()}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex shrink-0 flex-col items-stretch gap-2 sm:items-end lg:ml-4 lg:min-w-[11rem]">
+              <div className="flex items-center justify-end gap-2 text-muted-foreground">
+                <Clock className="h-4 w-4 shrink-0" />
+                {isOutOfView ? (
+                  <div className="text-right">
+                    <div className="font-mono text-lg font-bold text-muted-foreground">PAUSED</div>
+                    <div className="text-[10px] text-muted-foreground">vehicle out of camera view</div>
+                  </div>
+                ) : isOverdue ? (
+                  <div className="text-right">
+                    <div className="font-mono text-lg font-bold text-red-600">OVERDUE</div>
+                    <div className="font-mono text-sm font-semibold text-red-600 tabular-nums">
+                      +{formatHms(overdueSeconds)}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground">since grace ended</div>
+                  </div>
+                ) : deltaSec !== null ? (
+                  <span
+                    className={cn(
+                      'font-mono text-xl font-bold tabular-nums',
+                      tier === 'urgent' && 'text-orange-500 animate-pulse',
+                      tier === 'moderate' && 'text-amber-600',
+                      tier === 'calm' && 'text-teal-700 dark:text-teal-300',
+                      tier === 'unknown' && 'text-foreground',
+                    )}
+                  >
+                    {formatHms(deltaSec)}
+                  </span>
+                ) : (
+                  <span className="text-sm text-muted-foreground">—</span>
+                )}
+              </div>
+            </div>
           </div>
-        )}
+
+          <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border/60 pt-3">
+            {onSendSms && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!canSendSms || sendingSms}
+                onClick={handleSendSmsClick}
+                className="disabled:opacity-40 disabled:pointer-events-none"
+                title={
+                  canSendSms
+                    ? 'Send SMS reminder to the registered owner'
+                    : 'SMS requires a readable plate and registered vehicle'
+                }
+              >
+                <MessageSquare className="h-4 w-4 mr-1" />
+                {sendingSms ? 'Sending…' : 'Send SMS'}
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onCancel?.(violation.id)}
+              className="text-muted-foreground hover:text-emerald-600"
+            >
+              <Check className="h-4 w-4 mr-1" />
+              Clear
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={!canIssueTicket}
+              onClick={() => onIssueTicket?.(violation.id)}
+              className="disabled:opacity-40 disabled:pointer-events-none"
+            >
+              <Ticket className="h-4 w-4 mr-1" />
+              Issue Ticket
+            </Button>
+          </div>
+        </div>
       </div>
     </div>
   );

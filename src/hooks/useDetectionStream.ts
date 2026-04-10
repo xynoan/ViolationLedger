@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 
 // Streams should be on by default; disable only when explicitly set to "true".
-const WS_DISABLED = (import.meta.env as any).VITE_DISABLE_WS === 'true';
+const WS_DISABLED = import.meta.env.VITE_DISABLE_WS === 'true';
 
 export interface Detection {
   bbox: number[];
@@ -24,10 +24,12 @@ export function useDetectionStream(
   plateCount: number;
   isConnected: boolean;
   lastError: string | null;
+  workerStatus: string | null;
 } {
   const [detections, setDetections] = useState<Detection[]>([]);
   const [isConnected, setIsConnected] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
+  const [workerStatus, setWorkerStatus] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
 
@@ -36,6 +38,7 @@ export function useDetectionStream(
       setDetections([]);
       setIsConnected(false);
       setLastError(null);
+      setWorkerStatus(null);
       return;
     }
 
@@ -43,6 +46,7 @@ export function useDetectionStream(
       setDetections([]);
       setIsConnected(false);
       setLastError(null);
+      setWorkerStatus(null);
       return;
     }
 
@@ -82,8 +86,12 @@ export function useDetectionStream(
               ];
               setDetections(next);
               setLastError(msg.error ? String(msg.error) : null);
+            } else if (msg.type === 'status' && msg.cameraId === cameraId) {
+              setWorkerStatus(typeof msg.detail === 'string' ? msg.detail : null);
             }
-          } catch (_) {}
+          } catch {
+            // Ignore malformed worker messages and keep the stream alive.
+          }
         };
 
         ws.onclose = () => {
@@ -127,6 +135,7 @@ export function useDetectionStream(
     plateCount,
     isConnected,
     lastError,
+    workerStatus,
   };
 }
 

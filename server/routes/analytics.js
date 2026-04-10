@@ -2,24 +2,63 @@ import express from 'express';
 import db from '../database.js';
 
 const router = express.Router();
+const REPEAT_OFFENDER_THRESHOLD = 3;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function buildPreviousMonthWindow(currentStart, currentEndExclusive) {
+  const prevStart = new Date(currentStart);
+  prevStart.setMonth(prevStart.getMonth() - 1);
+
+  const prevEndExclusive = new Date(currentEndExclusive);
+  prevEndExclusive.setMonth(prevEndExclusive.getMonth() - 1);
+
+  // Keep comparison range length identical even around month boundaries.
+  const durationMs = currentEndExclusive.getTime() - currentStart.getTime();
+  if (prevEndExclusive.getTime() - prevStart.getTime() !== durationMs) {
+    prevEndExclusive.setTime(prevStart.getTime() + durationMs);
+  }
+
+  return {
+    startIso: prevStart.toISOString(),
+    endIso: prevEndExclusive.toISOString()
+  };
+}
+
+function buildPreviousWindow(currentStart, currentEndExclusive) {
+  const durationMs = Math.max(currentEndExclusive.getTime() - currentStart.getTime(), 0);
+  const previousEndExclusive = new Date(currentStart);
+  const previousStart = new Date(previousEndExclusive.getTime() - durationMs);
+  return {
+    startIso: previousStart.toISOString(),
+    endIso: previousEndExclusive.toISOString()
+  };
+}
+
+function computeTrend(currentTotal, previousTotal) {
+  const delta = currentTotal - previousTotal;
+  const deltaPct = previousTotal > 0
+    ? Number(((delta / previousTotal) * 100).toFixed(2))
+    : (currentTotal > 0 ? 100 : 0);
+  return { currentTotal, previousTotal, delta, deltaPct };
+}
 
 router.get('/', async (req, res) => {
   try {
     const { startDate, endDate, locationId } = req.query;
     
-    // Build date filter
+    // Build violation date filter (violations table uses timeDetected, not timestamp)
     let dateFilter = '';
     const params = [];
     
     if (startDate) {
-      dateFilter += ' AND timestamp >= ?';
+      dateFilter += ' AND timeDetected >= ?';
       params.push(startDate);
     }
     
     if (endDate) {
       const endDateObj = new Date(endDate);
       endDateObj.setDate(endDateObj.getDate() + 1);
-      dateFilter += ' AND timestamp < ?';
+      dateFilter += ' AND timeDetected < ?';
       params.push(endDateObj.toISOString());
     }
     
@@ -95,6 +134,121 @@ router.get('/', async (req, res) => {
       GROUP BY hour
       ORDER BY hour
     `).all(...violationParams);
+
+    const hourCountMap = violationsByHour.reduce((acc, item) => {
+      acc[item.hour] = item.count;
+      return acc;
+    }, {});
+    const hourHeatmap = Array.from({ length: 24 }, (_, hour) => ({
+      hour,
+      count: hourCountMap[hour] || 0
+    }));
+
+    const avgInfractionDuration = db.prepare(`
+      SELECT AVG((julianday(warningExpiresAt) - julianday(timeDetected)) * 24 * 60) as avgMinutes
+      FROM violations
+      ${violationWhere}
+      AND warningExpiresAt IS NOT NULL
+      AND timeDetected IS NOT NULL
+      AND warningExpiresAt > timeDetected
+    `).get(...violationParams);
+    const avgInfractionDurationMinutes = avgInfractionDuration?.avgMinutes != null
+      ? Number(avgInfractionDuration.avgMinutes.toFixed(2))
+      : null;
+
+    const avgIssuanceDuration = db.prepare(`
+      SELECT AVG((julianday(COALESCE(timeIssued, warningExpiresAt)) - julianday(timeDetected)) * 24 * 60) as avgMinutes
+      FROM violations
+      ${violationWhere}
+      AND timeDetected IS NOT NULL
+      AND COALESCE(timeIssued, warningExpiresAt) IS NOT NULL
+      AND COALESCE(timeIssued, warningExpiresAt) > timeDetected
+    `).get(...violationParams);
+    const avgInfractionToActionMinutes = avgIssuanceDuration?.avgMinutes != null
+      ? Number(avgIssuanceDuration.avgMinutes.toFixed(2))
+      : null;
+    const avgInfractionToActionLabel = 'Average time from first detection to issuance (fallback: warning expiry when issuance is unavailable)';
+
+    const vehicleTotals = db.prepare(`
+      SELECT
+        COUNT(DISTINCT plateNumber) as uniqueVehicles,
+        SUM(CASE WHEN violationCount >= ? THEN 1 ELSE 0 END) as recurringVehicles
+      FROM (
+        SELECT plateNumber, COUNT(*) as violationCount
+        FROM violations
+        ${violationWhere}
+        AND plateNumber IS NOT NULL
+        AND TRIM(plateNumber) != ''
+        GROUP BY plateNumber
+      )
+    `).get(REPEAT_OFFENDER_THRESHOLD, ...violationParams);
+    const uniqueVehicles = Number(vehicleTotals?.uniqueVehicles || 0);
+    const recurringVehicles = Number(vehicleTotals?.recurringVehicles || 0);
+    const recurringPct = uniqueVehicles > 0
+      ? Number(((recurringVehicles / uniqueVehicles) * 100).toFixed(2))
+      : 0;
+
+    const now = new Date();
+    const currentEndExclusive = endDate
+      ? (() => {
+          const endDateObj = new Date(endDate);
+          endDateObj.setDate(endDateObj.getDate() + 1);
+          return endDateObj;
+        })()
+      : now;
+    const currentStart = startDate
+      ? new Date(startDate)
+      : new Date(currentEndExclusive.getTime() - (30 * 24 * 60 * 60 * 1000));
+
+    const previousWindow = buildPreviousMonthWindow(currentStart, currentEndExclusive);
+    const previousParams = [previousWindow.startIso, previousWindow.endIso];
+    if (locationId) {
+      previousParams.push(locationId);
+    }
+    const previousLocationFilter = locationId ? ' AND cameraLocationId = ?' : '';
+    const previousTotalViolations = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM violations
+      WHERE timeDetected >= ?
+      AND timeDetected < ?
+      ${previousLocationFilter}
+    `).get(...previousParams);
+    const previousTotal = Number(previousTotalViolations?.count || 0);
+    const currentTotal = Number(totalViolations.count || 0);
+    const delta = currentTotal - previousTotal;
+    const deltaPct = previousTotal > 0
+      ? Number(((delta / previousTotal) * 100).toFixed(2))
+      : (currentTotal > 0 ? 100 : 0);
+
+    const trendCurrentStartCandidate = new Date(currentEndExclusive.getTime() - (7 * DAY_MS));
+    const trendCurrentStart = startDate
+      ? new Date(Math.max(new Date(startDate).getTime(), trendCurrentStartCandidate.getTime()))
+      : trendCurrentStartCandidate;
+    const trendWindow = buildPreviousWindow(trendCurrentStart, currentEndExclusive);
+    const trendParamsBase = [trendCurrentStart.toISOString(), currentEndExclusive.toISOString()];
+    const previousTrendParamsBase = [trendWindow.startIso, trendWindow.endIso];
+    const trendLocationFilter = locationId ? ' AND cameraLocationId = ?' : '';
+    const trendParams = locationId ? [...trendParamsBase, locationId] : trendParamsBase;
+    const previousTrendParams = locationId ? [...previousTrendParamsBase, locationId] : previousTrendParamsBase;
+
+    const currentTrendViolations = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM violations
+      WHERE timeDetected >= ?
+      AND timeDetected < ?
+      ${trendLocationFilter}
+    `).get(...trendParams);
+    const previousTrendViolations = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM violations
+      WHERE timeDetected >= ?
+      AND timeDetected < ?
+      ${trendLocationFilter}
+    `).get(...previousTrendParams);
+    const violationsTrend = computeTrend(
+      Number(currentTrendViolations?.count || 0),
+      Number(previousTrendViolations?.count || 0)
+    );
     
     // 4. WARNING ANALYTICS
     const totalWarnings = db.prepare(`
@@ -118,6 +272,27 @@ router.get('/', async (req, res) => {
       FROM violations 
       ${violationWhere} AND status IN ('issued', 'cleared')
     `).get(...violationParams);
+
+    const currentTrendWarnings = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM violations
+      WHERE timeDetected >= ?
+      AND timeDetected < ?
+      AND status = 'warning'
+      ${trendLocationFilter}
+    `).get(...trendParams);
+    const previousTrendWarnings = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM violations
+      WHERE timeDetected >= ?
+      AND timeDetected < ?
+      AND status = 'warning'
+      ${trendLocationFilter}
+    `).get(...previousTrendParams);
+    const warningsTrend = computeTrend(
+      Number(currentTrendWarnings?.count || 0),
+      Number(previousTrendWarnings?.count || 0)
+    );
     
     // 5. DETECTION ANALYTICS
     let detectionWhere = `WHERE 1=1`;
@@ -251,7 +426,30 @@ router.get('/', async (req, res) => {
         }, {}),
         byLocation: violationsByLocation,
         overTime: violationsOverTime,
-        byHour: violationsByHour
+        byHour: violationsByHour,
+        descriptive: {
+          hourHeatmap,
+          avgInfractionDurationMinutes,
+          avgInfractionToActionMinutes,
+          avgInfractionToActionLabel,
+          repeatOffenders: {
+            uniqueVehicles,
+            recurringVehicles,
+            recurringPct,
+            threshold: REPEAT_OFFENDER_THRESHOLD
+          },
+          sevenDayComparison: {
+            ...violationsTrend,
+            basis: 'previous_7_day_period'
+          },
+          periodComparison: {
+            currentTotal,
+            previousTotal,
+            delta,
+            deltaPct,
+            basis: 'previous_month_same_span'
+          }
+        }
       },
       warnings: {
         total: totalWarnings.count,
@@ -259,7 +457,11 @@ router.get('/', async (req, res) => {
         converted: warningsConverted.count,
         conversionRate: totalWarnings.count > 0 
           ? ((warningsConverted.count / totalWarnings.count) * 100).toFixed(2)
-          : '0.00'
+          : '0.00',
+        sevenDayComparison: {
+          ...warningsTrend,
+          basis: 'previous_7_day_period'
+        }
       },
       detections: {
         total: totalDetections.count,

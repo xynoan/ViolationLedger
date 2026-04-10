@@ -207,9 +207,6 @@ router.post('/:cameraId', async (req, res) => {
     const notificationsCreated = [];
     const violationsCreated = [];
     
-    // Track detected plates by location for real-time vehicle removal check
-    const detectedPlatesByLocation = new Map();
-    
     for (const detection of detections) {
       try {
         // Save detection
@@ -241,14 +238,6 @@ router.post('/:cameraId', async (req, res) => {
         );
         const plateIsBlurry = detection.plateNumber === 'BLUR';
         const isRealVehicle = detection.class_name && detection.class_name.toLowerCase() !== 'none';
-        
-        // Only track real vehicles with visible plates for removal detection
-        if (isRealVehicle && !plateNotVisible && detection.plateNumber) {
-          if (!detectedPlatesByLocation.has(locationId)) {
-            detectedPlatesByLocation.set(locationId, []);
-          }
-          detectedPlatesByLocation.get(locationId).push(detection.plateNumber);
-        }
         
         // Case 1: Real vehicle with visible plate - automatically create violation
         if (isRealVehicle && !plateNotVisible) {
@@ -284,7 +273,7 @@ router.post('/:cameraId', async (req, res) => {
                 try {
                   statements.createNotification.run(
                     notificationId,
-                    'vehicle_detected',
+                    'unregistered_vehicle_urgent',
                     notificationTitle,
                     notificationMessage,
                     detection.cameraId,
@@ -322,13 +311,18 @@ router.post('/:cameraId', async (req, res) => {
               let violationId;
               if (existingViolation) {
                 violationId = existingViolation.id;
+                // Keep unregistered warnings immediately urgent when re-detected.
+                db.prepare(`
+                  UPDATE violations
+                  SET warningExpiresAt = ?
+                  WHERE id = ?
+                `).run(new Date().toISOString(), violationId);
                 console.log(`ℹ️  Active violation already exists: ${violationId}`);
               } else {
-                // Create new violation for unregistered vehicle
+                // Create new urgent violation for unregistered vehicle (immediate attention)
                 violationId = `VIOL-${detection.plateNumber}-${Date.now()}`;
                 const timeDetected = new Date().toISOString();
-                const expiresDate = new Date();
-                expiresDate.setMinutes(expiresDate.getMinutes() + GRACE_PERIOD_MINUTES);
+                const immediateExpiry = new Date().toISOString();
                 
                 db.prepare(`
                   INSERT INTO violations (id, plateNumber, cameraLocationId, timeDetected, status, warningExpiresAt)
@@ -339,7 +333,7 @@ router.post('/:cameraId', async (req, res) => {
                   locationId,
                   timeDetected,
                   'warning',
-                  expiresDate.toISOString()
+                  immediateExpiry
                 );
                 violationsCreated.push(violationId);
                 console.log(`✅ Violation created for unregistered vehicle: ${violationId}`);
@@ -372,13 +366,13 @@ router.post('/:cameraId', async (req, res) => {
               
               if (userId) {
                 const notificationId = `NOTIF-${Date.now()}-${violationId}`;
-                const notificationTitle = 'Unregistered Vehicle Detected';
-                const notificationMessage = `Vehicle with plate ${detection.plateNumber} detected illegally parked at ${locationId}. Vehicle is not registered in the system. Immediate Barangay attention required.`;
+                const notificationTitle = 'URGENT: Unregistered Vehicle Detected';
+                const notificationMessage = `URGENT: Vehicle with plate ${detection.plateNumber} detected illegally parked at ${locationId}. Vehicle is not registered in the system. Immediate Barangay attention required.`;
                 
                 try {
                   statements.createNotification.run(
                     notificationId,
-                    'vehicle_detected',
+                    'unregistered_vehicle_urgent',
                     notificationTitle,
                     notificationMessage,
                     detection.cameraId,
@@ -560,6 +554,15 @@ router.post('/:cameraId', async (req, res) => {
       }
     }
 
+    let violationsResolvedFromDeparture = 0;
+    if (locationId && locationId !== 'UNKNOWN') {
+      try {
+        violationsResolvedFromDeparture = monitoringService.resolveWarningsWhenVehicleDeparted(locationId);
+      } catch (depErr) {
+        console.error('Departure resolution after capture failed:', depErr);
+      }
+    }
+
     // Ensure all processing is complete before sending response
     const totalProcessingTime = Date.now() - aiProcessingStartTime;
     console.log(`✅ Capture processing complete (${totalProcessingTime}ms) - AI: ${aiProcessingComplete ? 'Done' : 'Skipped'}, Vehicles: ${detections.filter(d => d.class_name !== 'none').length}, Violations: ${violationsCreated.length}`);
@@ -572,7 +575,7 @@ router.post('/:cameraId', async (req, res) => {
       vehicleCount: detections.filter(d => d.class_name !== 'none').length,
       violationsCreated: violationsCreated.length,
       violations: violationsCreated,
-      violationsResolved: 0,
+      violationsResolved: violationsResolvedFromDeparture,
       incidentsCreated: incidentsCreated.length,
       notificationsCreated: notificationsCreated.length,
       aiProcessingComplete: aiProcessingComplete,

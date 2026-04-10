@@ -26,7 +26,8 @@ const ACTION_LABELS: Record<string, string> = {
 const ROUTE_LABELS: Record<string, string> = {
   '/': 'Dashboard',
   '/vehicles': 'Vehicle Registry',
-  '/hosts': 'Hosts Registry',
+  '/hosts': 'Residents Registry',
+  '/residents': 'Residents Registry',
   '/cameras': 'Cameras',
   '/warnings': 'Warnings',
   '/tickets': 'Tickets',
@@ -43,6 +44,7 @@ const RESOURCE_LABELS: Record<string, string> = {
   root: 'Dashboard',
   camera: 'Cameras',
   vehicle: 'Vehicle Registry',
+  resident: 'Residents Registry',
   violation: 'Violations',
   detection: 'Detections',
   incident: 'Incidents',
@@ -77,7 +79,8 @@ export function friendlyPathLabel(path: string): string {
   const first = segments[0] || '';
   const segmentMap: Record<string, string> = {
     vehicles: 'Vehicle Registry',
-    hosts: 'Hosts Registry',
+    hosts: 'Residents Registry',
+    residents: 'Residents Registry',
     cameras: 'Cameras',
     violations: 'Violations',
     detections: 'Detections',

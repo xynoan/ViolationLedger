@@ -5,7 +5,9 @@
   "scripts": {
     "dev": "node --watch server.js",
     "start": "node server.js",
-    "clean:images": "node clear_captured_images.js"
+    "clean:images": "node clear_captured_images.js",
+    "seed:core": "node scripts/seed-core-mock-data.js",
+    "seed:core:reset": "node scripts/seed-core-mock-data.js --reset"
   },
   "dependencies": {
     "cors": "^2.8.5",

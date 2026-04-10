@@ -28,7 +28,7 @@ import healthRouter from './routes/health.js';
 import analyticsRouter from './routes/analytics.js';
 import usersRouter from './routes/users.js';
 import auditLogsRouter from './routes/audit_logs.js';
-import hostsRouter from './routes/hosts.js';
+import residentsRouter from './routes/residents.js';
 import ocrRouter from './routes/ocr.js';
 import detectRouter from './routes/detect.js';
 import { auditLog } from './middleware/audit.js';
@@ -90,7 +90,7 @@ app.use('/api/health', healthRouter);
 app.use('/api/analytics', analyticsRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/audit-logs', auditLogsRouter);
-app.use('/api/hosts', hostsRouter);
+app.use('/api/residents', residentsRouter);
 app.use('/api/ocr', ocrRouter);
 app.use('/api/detect', detectRouter);
 

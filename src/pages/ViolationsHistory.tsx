@@ -1,5 +1,20 @@
-import { useState, useEffect } from 'react';
-import { FileText, Search, Filter, Download, Calendar, MapPin, BarChart3, TrendingUp, CheckCircle } from 'lucide-react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useSearchParams, useLocation } from 'react-router-dom';
+import { cn } from '@/lib/utils';
+import { SearchNoMatchesEmpty } from '@/components/search/SearchNoMatchesEmpty';
+import {
+  FileText,
+  Search,
+  Filter,
+  Download,
+  Calendar,
+  MapPin,
+  BarChart3,
+  TrendingUp,
+  CheckCircle,
+  Info,
+  Home,
+} from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
 import { trackAction } from '@/lib/auditTracking';
@@ -7,7 +22,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Violation, ViolationStatus } from '@/types/parking';
-import { violationsAPI, camerasAPI } from '@/lib/api';
+import { violationsAPI, camerasAPI, residentsAPI } from '@/lib/api';
 import { toast } from '@/hooks/use-toast';
 import {
   Table,
@@ -43,12 +58,29 @@ interface ViolationStats {
   byDate: Array<{ date: string; count: number }>;
 }
 
+type ViolationListFilters = {
+  status?: string;
+  locationId?: string;
+  startDate?: string;
+  endDate?: string;
+  plateNumber?: string;
+  residentId?: string;
+};
+
+function errMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
+}
+
 export default function ViolationsHistory() {
   usePageTracking();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const location = useLocation();
+  const appliedPlatePresetRef = useRef(false);
   const [violations, setViolations] = useState<Violation[]>([]);
   const [cameras, setCameras] = useState<Camera[]>([]);
   const [stats, setStats] = useState<ViolationStats | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [isLoadingStats, setIsLoadingStats] = useState(true);
   
   // Filters
@@ -57,18 +89,60 @@ export default function ViolationsHistory() {
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState<string>('');
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState<string>('');
+  const [registryHasViolations, setRegistryHasViolations] = useState(false);
   const [clearingId, setClearingId] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadCameras();
-    loadViolations();
-    loadStats();
-  }, []);
+  const multiPlateContext = useMemo(() => {
+    const plates = (location.state as { relatedPlates?: string[] } | null)?.relatedPlates;
+    if (!Array.isArray(plates) || plates.length < 2) return null;
+    return plates;
+  }, [location.state]);
+
+  const highlightViolationId = searchParams.get('violationId')?.trim() ?? '';
+  const residentFilterId = searchParams.get('residentId')?.trim() ?? '';
+  const [residentFilterLabel, setResidentFilterLabel] = useState<string | null>(null);
 
   useEffect(() => {
-    loadViolations();
-    loadStats();
-  }, [statusFilter, locationFilter, startDate, endDate, searchTerm]);
+    if (!residentFilterId) {
+      setResidentFilterLabel(null);
+      return;
+    }
+    let cancelled = false;
+    residentsAPI
+      .getById(residentFilterId)
+      .then((r: { name: string }) => {
+        if (!cancelled) setResidentFilterLabel(r.name);
+      })
+      .catch(() => {
+        if (!cancelled) setResidentFilterLabel(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [residentFilterId]);
+
+  useEffect(() => {
+    if (appliedPlatePresetRef.current) return;
+    const fromQuery = searchParams.get('plate')?.trim();
+    const fromState = (location.state as { presetPlate?: string } | null)?.presetPlate?.trim();
+    const plate = fromQuery || fromState;
+    if (plate) {
+      setSearchTerm(plate);
+      appliedPlatePresetRef.current = true;
+    }
+  }, [searchParams, location.state]);
+
+  useEffect(() => {
+    if (!highlightViolationId || violations.length === 0 || isRefreshing) return;
+    const t = window.setTimeout(() => {
+      document.getElementById(`violation-row-${highlightViolationId}`)?.scrollIntoView({
+        block: 'center',
+        behavior: 'smooth',
+      });
+    }, 120);
+    return () => clearTimeout(t);
+  }, [highlightViolationId, violations, isRefreshing]);
 
   const loadCameras = async () => {
     try {
@@ -79,11 +153,15 @@ export default function ViolationsHistory() {
     }
   };
 
-  const loadViolations = async () => {
+  const loadViolations = useCallback(async (initial = false) => {
     try {
-      setIsLoading(true);
-      const filters: any = {};
-      
+      if (initial) {
+        setIsInitialLoading(true);
+      } else {
+        setIsRefreshing(true);
+      }
+      const filters: ViolationListFilters = {};
+
       if (statusFilter !== 'all') {
         filters.status = statusFilter;
       }
@@ -96,12 +174,15 @@ export default function ViolationsHistory() {
       if (endDate) {
         filters.endDate = new Date(endDate).toISOString();
       }
-      if (searchTerm) {
-        filters.plateNumber = searchTerm;
+      if (debouncedSearchTerm) {
+        filters.plateNumber = debouncedSearchTerm;
+      }
+      if (residentFilterId) {
+        filters.residentId = residentFilterId;
       }
 
-      const data = await violationsAPI.getAll(filters);
-      const processedViolations = data.map((v: any) => ({
+      const data = (await violationsAPI.getAll(filters)) as Violation[];
+      const processedViolations = data.map((v) => ({
         ...v,
         timeDetected: new Date(v.timeDetected),
         timeIssued: v.timeIssued ? new Date(v.timeIssued) : undefined,
@@ -116,14 +197,18 @@ export default function ViolationsHistory() {
         variant: "destructive",
       });
     } finally {
-      setIsLoading(false);
+      if (initial) {
+        setIsInitialLoading(false);
+      } else {
+        setIsRefreshing(false);
+      }
     }
-  };
+  }, [statusFilter, locationFilter, startDate, endDate, debouncedSearchTerm, residentFilterId]);
 
-  const loadStats = async () => {
+  const loadStats = useCallback(async () => {
     try {
       setIsLoadingStats(true);
-      const filters: any = {};
+      const filters: { startDate?: string; endDate?: string; locationId?: string } = {};
       
       if (startDate) {
         filters.startDate = new Date(startDate).toISOString();
@@ -142,7 +227,51 @@ export default function ViolationsHistory() {
     } finally {
       setIsLoadingStats(false);
     }
-  };
+  }, [startDate, endDate, locationFilter]);
+
+  useEffect(() => {
+    loadCameras();
+    loadViolations(true);
+    loadStats();
+    // Initial page bootstrap should run once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      setDebouncedSearchTerm(searchTerm);
+    }, 250);
+    return () => clearTimeout(timeout);
+  }, [searchTerm]);
+
+  useEffect(() => {
+    const broadest =
+      statusFilter === 'all' &&
+      locationFilter === 'all' &&
+      !startDate &&
+      !endDate &&
+      debouncedSearchTerm.trim() === '' &&
+      !residentFilterId;
+    if (broadest) {
+      setRegistryHasViolations(violations.length > 0);
+    }
+  }, [violations, statusFilter, locationFilter, startDate, endDate, debouncedSearchTerm, residentFilterId]);
+
+  useEffect(() => {
+    if (isInitialLoading) return;
+    loadViolations(false);
+    loadStats();
+  }, [
+    isInitialLoading,
+    loadStats,
+    loadViolations,
+    statusFilter,
+    locationFilter,
+    startDate,
+    endDate,
+    debouncedSearchTerm,
+    residentFilterId,
+  ]);
 
   const handleClearViolation = async (id: string) => {
     try {
@@ -154,10 +283,10 @@ export default function ViolationsHistory() {
       });
       await loadViolations();
       await loadStats();
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Error",
-        description: error.message || "Failed to clear violation",
+        description: errMessage(error, "Failed to clear violation"),
         variant: "destructive",
       });
     } finally {
@@ -221,11 +350,32 @@ export default function ViolationsHistory() {
     setStartDate('');
     setEndDate('');
     setSearchTerm('');
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete('plate');
+        next.delete('violationId');
+        next.delete('residentId');
+        return next;
+      },
+      { replace: true },
+    );
   };
+
+  const clearResidentFilter = useCallback(() => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete('residentId');
+        return next;
+      },
+      { replace: true },
+    );
+  }, [setSearchParams]);
 
   const uniqueLocations = Array.from(new Set(cameras.map(c => c.locationId))).sort();
 
-  if (isLoading) {
+  if (isInitialLoading) {
     return (
       <div className="min-h-screen">
         <Header title="Violations History" subtitle="View and manage all parking violations" />
@@ -244,8 +394,41 @@ export default function ViolationsHistory() {
       />
 
       <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
+        {residentFilterId && (
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between rounded-lg border border-primary/25 bg-primary/5 px-3 py-2.5 text-sm">
+            <div className="flex items-start gap-2 text-muted-foreground">
+              <Home className="h-4 w-4 text-primary shrink-0 mt-0.5" />
+              <p>
+                Showing violations linked to{' '}
+                <span className="font-medium text-foreground">
+                  {residentFilterLabel ?? 'resident'}
+                </span>
+                {residentFilterLabel ? null : ' (loading name…)'}
+              </p>
+            </div>
+            <Button type="button" variant="outline" size="sm" className="shrink-0" onClick={clearResidentFilter}>
+              Show all violations
+            </Button>
+          </div>
+        )}
+        {multiPlateContext && !residentFilterId && (
+          <div
+            className="flex gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2.5 text-sm text-muted-foreground"
+            role="status"
+          >
+            <Info className="h-4 w-4 shrink-0 text-primary mt-0.5" />
+            <p className="leading-relaxed">
+              Showing violations for plate{' '}
+              <span className="font-mono font-medium text-foreground">{multiPlateContext[0]}</span>. This resident has{' '}
+              {multiPlateContext.length} linked plates — use Search Plate for others:{' '}
+              <span className="font-mono text-foreground">
+                {multiPlateContext.slice(1).join(', ')}
+              </span>
+            </p>
+          </div>
+        )}
         {/* Statistics Cards */}
-        {stats && !isLoadingStats && (
+        {stats && !isLoadingStats && !residentFilterId && (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="glass-card rounded-xl p-4">
               <div className="flex items-center justify-between">
@@ -367,9 +550,9 @@ export default function ViolationsHistory() {
         </div>
 
         {/* Violations Table */}
-        {isLoading ? (
+        {isRefreshing ? (
           <div className="glass-card rounded-xl p-8 sm:p-12 text-center">
-            <p className="text-muted-foreground">Loading violations...</p>
+            <p className="text-muted-foreground">Refreshing violations...</p>
           </div>
         ) : violations.length > 0 ? (
           <div className="glass-card rounded-xl overflow-hidden">
@@ -395,7 +578,14 @@ export default function ViolationsHistory() {
                 </TableHeader>
                 <TableBody>
                   {violations.map((violation) => (
-                    <TableRow key={violation.id} className="border-border">
+                    <TableRow
+                      key={violation.id}
+                      id={`violation-row-${violation.id}`}
+                      className={cn(
+                        'border-border',
+                        highlightViolationId === violation.id && 'bg-primary/10 ring-2 ring-inset ring-primary/35',
+                      )}
+                    >
                       <TableCell className="font-mono font-medium">{violation.plateNumber}</TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
@@ -441,14 +631,22 @@ export default function ViolationsHistory() {
               </Table>
             </div>
           </div>
+        ) : registryHasViolations && debouncedSearchTerm.trim() ? (
+          <SearchNoMatchesEmpty
+            searchTerm={debouncedSearchTerm}
+            onClear={() => setSearchTerm('')}
+            hint="Check your spelling or try searching for a different plate number."
+          />
         ) : (
           <div className="glass-card rounded-xl p-8 sm:p-12 text-center">
             <FileText className="h-12 w-12 sm:h-16 sm:w-16 text-muted-foreground mx-auto mb-4" />
             <h3 className="text-lg font-semibold text-foreground mb-2">No Violations Found</h3>
             <p className="text-muted-foreground">
-              {searchTerm || statusFilter !== 'all' || locationFilter !== 'all' || startDate || endDate
-                ? 'Try adjusting your filters'
-                : 'No violations recorded yet'}
+              {residentFilterId
+                ? `No violations on file for vehicles linked to ${residentFilterLabel ?? 'this resident'}.`
+                : searchTerm || statusFilter !== 'all' || locationFilter !== 'all' || startDate || endDate
+                  ? 'Try adjusting your filters'
+                  : 'No violations recorded yet'}
             </p>
           </div>
         )}

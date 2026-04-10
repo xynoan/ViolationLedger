@@ -212,9 +212,9 @@ def main() -> int:
                                                 "confidence": round(score, 3),
                                             })
                                     if plates_out:
-                                        print(f"[PlateRecognizer] Plates detected: {[p['plateNumber'] for p in plates_out]}", file=sys.stderr)
+                                        print(f"[Worker {args.camera_id}] Plates detected: {[p['plateNumber'] for p in plates_out]}", file=sys.stderr)
                             except Exception as e:
-                                print(f"[PlateRecognizer] Error: {e}", file=sys.stderr)
+                                print(f"[Worker {args.camera_id}] Plate detection error: {e}", file=sys.stderr)
 
                         # Fallback: local OCR-only ALPR pipeline (ocr_only.run_ocr)
                         if not plates_out:

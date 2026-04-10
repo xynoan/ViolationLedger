@@ -6,47 +6,10 @@ import { sendSmsMessage } from '../utils/smsService.js';
 
 const router = express.Router();
 
-// GET /api/auth/activate?token= — public, email activation link
+// GET /api/auth/activate
+// Legacy route kept for old links. Redirect users to the sign-in page.
 router.get('/activate', (req, res) => {
-  try {
-    const token = String(req.query.token || '').trim();
-    if (!token) {
-      return res.status(400).json({ error: 'Activation token is required.' });
-    }
-
-    const row = db.prepare('SELECT * FROM users WHERE activationToken = ?').get(token);
-    if (!row) {
-      return res.status(400).json({ error: 'Invalid or expired activation link.' });
-    }
-
-    const expires = row.activationExpires ? new Date(row.activationExpires) : null;
-    if (expires && Number.isFinite(expires.getTime()) && Date.now() > expires.getTime()) {
-      return res.status(400).json({
-        error:
-          'This activation link has expired. Please ask an administrator to send a new invitation.',
-      });
-    }
-
-    if (row.isActivated === 1) {
-      return res.json({
-        success: true,
-        message: 'Your account is already activated. You can sign in.',
-        alreadyActivated: true,
-      });
-    }
-
-    db.prepare(
-      `UPDATE users SET isActivated = 1, activationToken = NULL, activationExpires = NULL WHERE id = ?`
-    ).run(row.id);
-
-    return res.json({
-      success: true,
-      message: 'Your account has been activated. You can sign in now.',
-    });
-  } catch (err) {
-    console.error('Activation error:', err);
-    return res.status(500).json({ error: 'Activation failed. Please try again later.' });
-  }
+  return res.redirect(302, '/login');
 });
 
 const TOKEN_EXPIRY_24H = 24 * 60 * 60 * 1000;
@@ -123,13 +86,6 @@ router.post('/login', async (req, res) => {
     // Block inactive users from logging in
     if (user.status && user.status !== 'active') {
       return res.status(403).json({ error: 'Account is deactivated. Please contact an administrator.' });
-    }
-
-    // Email activation required for new accounts
-    if (user.isActivated === 0) {
-      return res.status(403).json({
-        error: 'Your account is not yet activated. Please check your email.',
-      });
     }
 
     const contactNumber = (user.contactNumber || '').trim();
@@ -258,12 +214,6 @@ router.post('/verify-2fa', (req, res) => {
     }
     if (!user) {
       return res.status(401).json({ error: 'User not found' });
-    }
-
-    if (user.isActivated === 0) {
-      return res.status(403).json({
-        error: 'Your account is not yet activated. Please check your email.',
-      });
     }
 
     const token = generateToken(user.id, { trustDevice: !!trustDevice });

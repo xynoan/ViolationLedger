@@ -3,7 +3,7 @@ import db from '../database.js';
 import crypto from 'crypto';
 import { authenticateToken, requireRole } from '../middleware/auth.js';
 import { auditLog } from '../middleware/audit.js';
-import { sendAccountActivationEmail } from '../utils/activationEmail.js';
+import { sendAccountLoginEmail } from '../utils/activationEmail.js';
 
 const router = express.Router();
 
@@ -117,12 +117,11 @@ router.post('/', requireRole('admin'), async (req, res) => {
 
     // Don't block API response on SMTP/network latency.
     // This prevents frontend request timeout while still attempting email delivery.
-    sendAccountActivationEmail({
+    sendAccountLoginEmail({
       email: newUser.email,
       name: newUser.name,
-      activationToken,
     }).catch((emailError) => {
-      console.error('Error sending activation email:', emailError);
+      console.error('Error sending login email:', emailError);
     });
   } catch (error) {
     console.error('Error creating user:', error);

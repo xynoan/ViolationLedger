@@ -1,30 +1,17 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Car, AlertTriangle, CheckCircle, Camera, Plus, RefreshCw, Pause, Play, ScanSearch } from 'lucide-react';
+import { Car, AlertTriangle, CheckCircle, Camera, Plus, RefreshCw, Pause, Play, FlaskConical } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
 import { StatCard } from '@/components/dashboard/StatCard';
 import { CameraFeed } from '@/components/dashboard/CameraFeed';
 import { CaptureResults } from '@/components/dashboard/CaptureResults';
+import { WarningTimer } from '@/components/dashboard/WarningTimer';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Vehicle, Camera as CameraType, Violation } from '@/types/parking';
 import { vehiclesAPI, camerasAPI, violationsAPI, detectionsAPI, detectionAPI } from '@/lib/api';
 import { toast } from '@/hooks/use-toast';
-
-/** Plate text was read successfully (stored confidence reflects recognizer / pipeline score). */
-function isReadablePlate(pn: unknown): boolean {
-  if (pn == null || typeof pn !== 'string') return false;
-  const u = pn.trim().toUpperCase();
-  return u !== '' && u !== 'NONE' && u !== 'BLUR';
-}
-
-/** Stored values are typically 0–1; tolerate 0–100. */
-function normalizeConfidence(c: unknown): number {
-  const n = Number(c);
-  if (!Number.isFinite(n)) return 0;
-  return n > 1 ? n / 100 : n;
-}
 
 export default function Dashboard() {
   usePageTracking();
@@ -33,12 +20,14 @@ export default function Dashboard() {
   const [cameras, setCameras] = useState<CameraType[]>([]);
   const [violations, setViolations] = useState<Violation[]>([]);
   const [allCaptures, setAllCaptures] = useState(0);
-  /** Average model confidence when a plate string was read (not ground-truth accuracy). */
-  const [plateConfidenceAvg, setPlateConfidenceAvg] = useState<number | null>(null);
-  const [plateReadCount, setPlateReadCount] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [detectionEnabled, setDetectionEnabled] = useState(true);
   const [detectionToggleLoading, setDetectionToggleLoading] = useState(false);
+  const [testSeedLoading, setTestSeedLoading] = useState(false);
+  const [testSeedUnregLoading, setTestSeedUnregLoading] = useState(false);
+
+  const showTestWarningSeed =
+    import.meta.env.DEV === true || import.meta.env.VITE_SHOW_TEST_WARNING_BUTTON === 'true';
 
   // Load detection enabled state on mount
   useEffect(() => {
@@ -90,31 +79,22 @@ export default function Dashboard() {
       
       setVehicles(vehiclesData);
       setCameras(camerasWithDeviceId);
-      setViolations(violationsData);
+      setViolations(
+        (violationsData || []).map((v: any) => ({
+          ...v,
+          timeDetected: new Date(v.timeDetected),
+          timeIssued: v.timeIssued ? new Date(v.timeIssued) : undefined,
+          warningExpiresAt: v.warningExpiresAt ? new Date(v.warningExpiresAt) : undefined,
+          smsSentAt: v.smsSentAt ? new Date(v.smsSentAt) : undefined,
+        })),
+      );
       // Count all detections (captures) - filter out "none" detections
       const validDetections = Array.isArray(detectionsData) 
         ? detectionsData.filter((d: any) => d.class_name && d.class_name.toLowerCase() !== 'none')
         : [];
       setAllCaptures(validDetections.length);
-
-      const withReadablePlate = Array.isArray(detectionsData)
-        ? detectionsData.filter((d: any) => isReadablePlate(d.plateNumber))
-        : [];
-      if (withReadablePlate.length > 0) {
-        const sum = withReadablePlate.reduce(
-          (s, d: any) => s + normalizeConfidence(d.confidence),
-          0
-        );
-        setPlateConfidenceAvg(sum / withReadablePlate.length);
-        setPlateReadCount(withReadablePlate.length);
-      } else {
-        setPlateConfidenceAvg(null);
-        setPlateReadCount(0);
-      }
     } catch (error) {
       console.error('Error loading dashboard data:', error);
-      setPlateConfidenceAvg(null);
-      setPlateReadCount(0);
       const errorMessage = error instanceof Error ? error.message : 'Failed to load dashboard data';
       toast({
         title: "Connection Error",
@@ -133,32 +113,107 @@ export default function Dashboard() {
   const handleMarkTicketed = useCallback(
     async (violationId: string) => {
       try {
+        const ticketId = `TICKET-${Date.now()}`;
         await violationsAPI.update(violationId, {
           status: 'issued',
           timeIssued: new Date().toISOString(),
+          ticketId,
         });
         toast({
-          title: 'Violation ticketed',
-          description: 'The violation has been marked as ticketed.',
+          title: 'Ticket issued',
+          description: `Ticket ${ticketId} has been recorded.`,
         });
         await loadData();
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to update violation status';
         toast({
-          title: 'Failed to mark as ticketed',
+          title: 'Failed to issue ticket',
           description: message,
           variant: 'destructive',
         });
       }
     },
-    [loadData]
+    [loadData],
   );
 
-  const activeWarnings = violations.filter(v => v.status === 'warning');
+  const handleClearWarning = useCallback(
+    async (violationId: string) => {
+      try {
+        await violationsAPI.update(violationId, { status: 'cleared' });
+        toast({ title: 'Warning cleared', description: 'The warning has been cleared.' });
+        await loadData();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to clear warning';
+        toast({ title: 'Error', description: message, variant: 'destructive' });
+      }
+    },
+    [loadData],
+  );
+
+  const handleSendSms = useCallback(
+    async (violationId: string) => {
+      try {
+        await violationsAPI.sendSms(violationId);
+        toast({
+          title: 'SMS sent',
+          description: 'Reminder sent to the registered vehicle owner.',
+        });
+        await loadData();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to send SMS';
+        toast({ title: 'SMS failed', description: message, variant: 'destructive' });
+      }
+    },
+    [loadData],
+  );
+
+  const handleSeedTestWarning = useCallback(async () => {
+    setTestSeedLoading(true);
+    try {
+      const result = await violationsAPI.seedTestActiveWarning();
+      toast({
+        title: 'Test warning added',
+        description: `Plate ${result.plateNumber} at ${result.cameraLocationId} (~${result.elapsedMinutesSinceDetection} min since detection).`,
+      });
+      await loadData();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to add test warning';
+      toast({ title: 'Test warning failed', description: message, variant: 'destructive' });
+    } finally {
+      setTestSeedLoading(false);
+    }
+  }, [loadData]);
+
+  const handleSeedUnregisteredWarning = useCallback(async () => {
+    setTestSeedUnregLoading(true);
+    try {
+      const result = await violationsAPI.seedTestUnregisteredWarning();
+      toast({
+        title: 'Test unregistered warning added',
+        description: `Plate ${result.plateNumber} at ${result.cameraLocationId} (urgent).`,
+      });
+      await loadData();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to add unregistered warning';
+      toast({ title: 'Test unregistered warning failed', description: message, variant: 'destructive' });
+    } finally {
+      setTestSeedUnregLoading(false);
+    }
+  }, [loadData]);
+
+  const activeWarnings = violations
+    .filter(v => v.status === 'warning')
+    .sort((a, b) => {
+      const aUrgent = a.unregisteredUrgent ? 1 : 0;
+      const bUrgent = b.unregisteredUrgent ? 1 : 0;
+      if (aUrgent !== bUrgent) return bUrgent - aUrgent;
+      return new Date(b.timeDetected).getTime() - new Date(a.timeDetected).getTime();
+    });
   const issuedTickets = violations.filter(v => v.status === 'issued');
   const clearedToday = violations.filter(v => v.status === 'cleared');
   const onlineCameras = cameras.filter(c => c.status === 'online');
   const firstOnlineCamera = onlineCameras[0];
+  const registeredPlates = vehicles.map((vehicle) => vehicle.plateNumber);
 
   const hasData = vehicles.length > 0 || cameras.length > 0 || violations.length > 0;
 
@@ -178,6 +233,7 @@ export default function Dashboard() {
       <Header 
         title="Dashboard" 
         subtitle="Monitor parking violations in real-time"
+        autoRefreshNotifications={false}
       />
 
       <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
@@ -210,7 +266,7 @@ export default function Dashboard() {
         </div>
 
         {/* Stats Grid */}
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
           <StatCard
             title="Registered Vehicles"
             value={vehicles.length}
@@ -233,17 +289,6 @@ export default function Dashboard() {
             value={clearedToday.length}
             icon={CheckCircle}
             variant="success"
-          />
-          <StatCard
-            title="Plate recognition"
-            value={plateConfidenceAvg !== null ? `${Math.round(plateConfidenceAvg * 100)}%` : '—'}
-            subtitle={
-              plateReadCount > 0
-                ? `Avg. confidence · ${plateReadCount} plate read${plateReadCount === 1 ? '' : 's'}`
-                : 'No successful plate reads yet'
-            }
-            icon={ScanSearch}
-            variant="default"
           />
         </div>
 
@@ -272,13 +317,43 @@ export default function Dashboard() {
             {/* Active Warnings */}
             <div className="lg:col-span-2 space-y-4 sm:space-y-6">
               <div className="space-y-4">
-                <h2 className="text-base sm:text-lg font-semibold text-foreground flex items-center gap-2">
-                  <AlertTriangle className="h-4 w-4 sm:h-5 sm:w-5 text-warning" />
-                  Active Warnings
-                  <span className="ml-2 px-2 py-0.5 rounded-full bg-warning/10 text-warning text-xs sm:text-sm">
-                    {activeWarnings.length}
-                  </span>
-                </h2>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h2 className="text-base sm:text-lg font-semibold text-foreground flex items-center gap-2">
+                    <AlertTriangle className="h-4 w-4 sm:h-5 sm:w-5 text-warning" />
+                    Active Warnings
+                    <span className="ml-2 px-2 py-0.5 rounded-full bg-warning/10 text-warning text-xs sm:text-sm">
+                      {activeWarnings.length}
+                    </span>
+                  </h2>
+                  {showTestWarningSeed && (
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="text-xs sm:text-sm"
+                        onClick={handleSeedTestWarning}
+                        disabled={testSeedLoading}
+                        title="Inserts a random registered vehicle as an active warning with a random elapsed time (dev / test only)"
+                      >
+                        <FlaskConical className="h-4 w-4 mr-1 shrink-0" />
+                        {testSeedLoading ? 'Adding…' : 'Add test warning'}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="text-xs sm:text-sm"
+                        onClick={handleSeedUnregisteredWarning}
+                        disabled={testSeedUnregLoading}
+                        title="Inserts a random unregistered urgent warning (dev / test only)"
+                      >
+                        <FlaskConical className="h-4 w-4 mr-1 shrink-0" />
+                        {testSeedUnregLoading ? 'Adding…' : 'Add test unregistered'}
+                      </Button>
+                    </div>
+                  )}
+                </div>
 
                 {activeWarnings.length === 0 ? (
                   <div className="glass-card rounded-xl p-6 sm:p-8 text-center">
@@ -287,63 +362,15 @@ export default function Dashboard() {
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    {activeWarnings.slice(0, 5).map((warning) => {
-                      const expiresAt =
-                        warning.warningExpiresAt instanceof Date
-                          ? warning.warningExpiresAt
-                          : warning.warningExpiresAt
-                          ? new Date(warning.warningExpiresAt)
-                          : null;
-                      const now = new Date();
-                      const msLeft = expiresAt ? expiresAt.getTime() - now.getTime() : 0;
-                      const secondsLeft = Math.max(0, Math.floor(msLeft / 1000));
-                      const label =
-                        secondsLeft > 0
-                          ? `${secondsLeft}s remaining`
-                          : 'Grace period ended';
-
-                      return (
-                        <div
-                          key={warning.id}
-                          className="glass-card rounded-xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border border-warning/30"
-                        >
-                          <div>
-                            <div className="flex items-center gap-2 mb-1">
-                              <Badge variant="outline" className="border-warning/50 text-warning text-xs sm:text-sm">
-                                {warning.plateNumber || 'UNKNOWN PLATE'}
-                              </Badge>
-                              <span className="text-xs sm:text-sm text-muted-foreground">
-                                {warning.cameraLocationId}
-                              </span>
-                            </div>
-                            <p className="text-xs sm:text-sm text-muted-foreground">
-                              Detected at{' '}
-                              {new Date(warning.timeDetected).toLocaleTimeString(undefined, {
-                                hour: '2-digit',
-                                minute: '2-digit',
-                              })}
-                            </p>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Badge
-                              variant={secondsLeft > 0 ? 'warning' : 'destructive'}
-                              className="text-xs sm:text-sm"
-                            >
-                              {label}
-                            </Badge>
-                            {secondsLeft === 0 && (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => handleMarkTicketed(warning.id)}
-                              >
-                                Ticketed
-                              </Button>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
+                    {activeWarnings.slice(0, 5).map((warning) => (
+                      <WarningTimer
+                        key={warning.id}
+                        violation={warning}
+                        onCancel={handleClearWarning}
+                        onIssueTicket={handleMarkTicketed}
+                        onSendSms={handleSendSms}
+                      />
+                    ))}
                   </div>
                 )}
               </div>
@@ -364,6 +391,7 @@ export default function Dashboard() {
               {firstOnlineCamera ? (
                 <CameraFeed 
                   camera={firstOnlineCamera}
+                  registeredPlates={registeredPlates}
                   onRefresh={() => {
                     // Reload cameras when refresh is called
                     camerasAPI.getAll().then((data) => {

@@ -168,37 +168,47 @@ export const vehiclesAPI = {
   }),
 };
 
-// Hosts API
-export const hostsAPI = {
+// Residents API
+export const residentsAPI = {
   getAll: (search?: string) => {
     const query = search ? `?search=${encodeURIComponent(search)}` : '';
-    return fetchAPI(`/hosts${query}`);
+    return fetchAPI(`/residents${query}`);
   },
-  getById: (id: string) => fetchAPI(`/hosts/${id}`),
-  create: (data: any) => fetchAPI('/hosts', {
+  getById: (id: string) => fetchAPI(`/residents/${id}`),
+  create: (data: any) => fetchAPI('/residents', {
     method: 'POST',
     body: JSON.stringify(data),
   }),
-  update: (id: string, data: any) => fetchAPI(`/hosts/${id}`, {
+  update: (id: string, data: any) => fetchAPI(`/residents/${id}`, {
     method: 'PUT',
     body: JSON.stringify(data),
   }),
-  delete: (id: string) => fetchAPI(`/hosts/${id}`, {
+  delete: (id: string) => fetchAPI(`/residents/${id}`, {
     method: 'DELETE',
   }),
 };
 
 // Violations API
 export const violationsAPI = {
-  getAll: (filters?: { status?: string; locationId?: string; startDate?: string; endDate?: string; plateNumber?: string }) => {
+  getAll: (filters?: {
+    status?: string;
+    locationId?: string;
+    startDate?: string;
+    endDate?: string;
+    plateNumber?: string;
+    residentId?: string;
+    limit?: number;
+  }) => {
     const params = new URLSearchParams();
     if (filters?.status) params.append('status', filters.status);
     if (filters?.locationId) params.append('locationId', filters.locationId);
     if (filters?.startDate) params.append('startDate', filters.startDate);
     if (filters?.endDate) params.append('endDate', filters.endDate);
     if (filters?.plateNumber) params.append('plateNumber', filters.plateNumber);
+    if (filters?.residentId) params.append('residentId', filters.residentId);
+    if (filters?.limit != null) params.append('limit', String(filters.limit));
     const query = params.toString();
-    return fetchAPI(`/violations${query ? `?${query}` : ''}`);
+    return fetchAPI(`/violations${query ? `?${query}` : ''}`, { cache: false });
   },
   getStats: (filters?: { startDate?: string; endDate?: string; locationId?: string }) => {
     const params = new URLSearchParams();
@@ -220,6 +230,19 @@ export const violationsAPI = {
   delete: (id: string) => fetchAPI(`/violations/${id}`, {
     method: 'DELETE',
   }),
+  /** Resend owner reminder SMS for an active warning; may take up to ~30s for the provider. */
+  sendSms: (id: string) =>
+    fetchAPI(`/violations/${encodeURIComponent(id)}/send-sms`, {
+      method: 'POST',
+      timeout: 35000,
+    }),
+  /**
+   * Dev / ALLOW_TEST_VIOLATION_SEED: inserts a random warning with random elapsed time since detection.
+   */
+  seedTestActiveWarning: () =>
+    fetchAPI('/violations/test-seed-active-warning', { method: 'POST' }),
+  seedTestUnregisteredWarning: () =>
+    fetchAPI('/violations/test-seed-unregistered-warning', { method: 'POST' }),
 };
 
 // Detections API
@@ -306,6 +329,86 @@ export const healthAPI = {
 };
 
 // Analytics API
+export interface AnalyticsResponse {
+  users: {
+    total: number;
+    byRole: Record<string, number>;
+  };
+  vehicles: {
+    total: number;
+    bySource: Record<string, number>;
+    registrationTrends: Array<{ date: string; count: number }>;
+  };
+  violations: {
+    total: number;
+    byStatus: Record<string, number>;
+    byLocation: Array<{ cameraLocationId: string; count: number }>;
+    overTime: Array<{ date: string; count: number }>;
+    byHour: Array<{ hour: number; count: number }>;
+    descriptive: {
+      hourHeatmap: Array<{ hour: number; count: number }>;
+      avgInfractionDurationMinutes: number | null;
+      avgInfractionToActionMinutes: number | null;
+      avgInfractionToActionLabel: string;
+      repeatOffenders: {
+        uniqueVehicles: number;
+        recurringVehicles: number;
+        recurringPct: number;
+        threshold: number;
+      };
+      sevenDayComparison: {
+        currentTotal: number;
+        previousTotal: number;
+        delta: number;
+        deltaPct: number;
+        basis: 'previous_7_day_period';
+      };
+      periodComparison: {
+        currentTotal: number;
+        previousTotal: number;
+        delta: number;
+        deltaPct: number;
+        basis: 'previous_month_same_span';
+      };
+    };
+  };
+  warnings: {
+    total: number;
+    overTime: Array<{ date: string; count: number }>;
+    converted: number;
+    conversionRate: string;
+    sevenDayComparison: {
+      currentTotal: number;
+      previousTotal: number;
+      delta: number;
+      deltaPct: number;
+      basis: 'previous_7_day_period';
+    };
+  };
+  detections: {
+    total: number;
+    byClass: Record<string, number>;
+    overTime: Array<{ date: string; count: number }>;
+  };
+  sms: {
+    total: number;
+    byStatus: Record<string, number>;
+  };
+  incidents: {
+    total: number;
+    byStatus: Record<string, number>;
+  };
+  cameras: {
+    total: number;
+    byStatus: Record<string, number>;
+  };
+  recent: {
+    violations: number;
+    vehicles: number;
+    detections: number;
+  };
+}
+
 export const analyticsAPI = {
   getAll: (filters?: { startDate?: string; endDate?: string; locationId?: string }) => {
     const params = new URLSearchParams();
@@ -313,7 +416,7 @@ export const analyticsAPI = {
     if (filters?.endDate) params.append('endDate', filters.endDate);
     if (filters?.locationId) params.append('locationId', filters.locationId);
     const query = params.toString();
-    return fetchAPI(`/analytics${query ? `?${query}` : ''}`, { cache: false });
+    return fetchAPI(`/analytics${query ? `?${query}` : ''}`, { cache: false }) as Promise<AnalyticsResponse>;
   },
 };
 

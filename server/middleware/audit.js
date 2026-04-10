@@ -105,7 +105,11 @@ function getActionFromRequest(req) {
 function getResourceFromRequest(req) {
   // Get the original URL to check full path
   const originalUrl = req.originalUrl || req.url || '';
-  const path = originalUrl.toLowerCase();
+  const urlLower = originalUrl.toLowerCase();
+  if (urlLower.includes('/residents') || urlLower.includes('/hosts')) {
+    return 'resident';
+  }
+  const path = urlLower;
   
   // Also check req.path which is relative to route
   const routePath = (req.path || '').toLowerCase();
@@ -122,6 +126,8 @@ function getResourceFromRequest(req) {
   const resourceMap = {
     'cameras': 'camera',
     'vehicles': 'vehicle',
+    'residents': 'resident',
+    'hosts': 'resident',
     'violations': 'violation',
     'detections': 'detection',
     'incidents': 'incident',

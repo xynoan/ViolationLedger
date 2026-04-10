@@ -1,12 +1,19 @@
 import initSqlJs from 'sql.js';
 import fs from 'fs-extra';
+import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
+import { dirname, isAbsolute, join, resolve } from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const dbPath = join(__dirname, 'parking.db');
+// So CLI tools (e.g. seed) use the same DB_PATH as the server when .env is present.
+dotenv.config({ path: join(__dirname, '.env') });
+
+const rawDbPath = String(process.env.DB_PATH || '').trim();
+const dbPath = rawDbPath
+  ? (isAbsolute(rawDbPath) ? rawDbPath : resolve(__dirname, rawDbPath))
+  : join(__dirname, 'parking.db');
 
 let db = null;
 let SQL = null;
@@ -45,17 +52,108 @@ async function initDatabase() {
   db.run('PRAGMA synchronous = NORMAL'); // Balance between safety and performance
   db.run('PRAGMA cache_size = -64000'); // 64MB cache
   db.run('PRAGMA temp_store = MEMORY'); // Store temp tables in memory
-  
-  // Create hosts table
+
+  // Legacy rename: hosts → residents, vehicles.hostId → residentId (before CREATE IF NOT EXISTS)
+  // Uses raw sql.js Statement API (step / getAsObject), not dbWrapper helpers.
+  const legacyTableExists = (tableName) => {
+    const stmt = db.prepare(
+      "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+    );
+    stmt.bind([tableName]);
+    const exists = stmt.step();
+    stmt.free();
+    return exists;
+  };
+  const legacyVehicleColumnNames = () => {
+    const stmt = db.prepare('PRAGMA table_info(vehicles)');
+    const names = [];
+    while (stmt.step()) {
+      const row = stmt.getAsObject();
+      if (row.name) names.push(String(row.name));
+    }
+    stmt.free();
+    return names;
+  };
+  try {
+    if (legacyTableExists('hosts') && !legacyTableExists('residents')) {
+      db.run('ALTER TABLE hosts RENAME TO residents');
+    }
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    console.log('Note: hosts→residents migration:', errorMsg);
+  }
+  try {
+    if (legacyTableExists('vehicles')) {
+      const names = legacyVehicleColumnNames();
+      if (names.includes('hostId') && !names.includes('residentId')) {
+        db.run('ALTER TABLE vehicles RENAME COLUMN hostId TO residentId');
+      }
+    }
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('no such column') && !errorMsg.includes('duplicate column name')) {
+      console.log('Note: hostId→residentId migration:', errorMsg);
+    }
+  }
+
+  // Create residents table
   db.run(`
-    CREATE TABLE IF NOT EXISTS hosts (
+    CREATE TABLE IF NOT EXISTS residents (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       contactNumber TEXT NOT NULL,
       address TEXT,
-      createdAt TEXT NOT NULL
+      createdAt TEXT NOT NULL,
+      residentStatus TEXT NOT NULL DEFAULT 'verified'
     )
   `);
+
+  try {
+    db.run(`ALTER TABLE residents ADD COLUMN residentStatus TEXT NOT NULL DEFAULT 'verified'`);
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: residentStatus column migration:', errorMsg);
+    }
+  }
+  try {
+    db.run(`UPDATE residents SET residentStatus = 'verified' WHERE residentStatus IS NULL OR residentStatus = ''`);
+  } catch {
+    /* ignore */
+  }
+
+  try {
+    db.run(`ALTER TABLE residents ADD COLUMN houseNumber TEXT`);
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: residents.houseNumber migration:', errorMsg);
+    }
+  }
+  try {
+    db.run(`ALTER TABLE residents ADD COLUMN streetName TEXT`);
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: residents.streetName migration:', errorMsg);
+    }
+  }
+
+  try {
+    db.run(`ALTER TABLE residents ADD COLUMN residentType TEXT DEFAULT 'homeowner'`);
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: residents.residentType migration:', errorMsg);
+    }
+  }
+  try {
+    db.run(
+      `UPDATE residents SET residentType = 'homeowner' WHERE residentType IS NULL OR residentType = ''`,
+    );
+  } catch {
+    /* ignore */
+  }
 
   // Create tables
   db.run(`
@@ -66,10 +164,10 @@ async function initDatabase() {
       contactNumber TEXT NOT NULL,
       registeredAt TEXT NOT NULL,
       dataSource TEXT NOT NULL DEFAULT 'barangay',
-      hostId TEXT,
+      residentId TEXT,
       rented TEXT,
       purposeOfVisit TEXT,
-      FOREIGN KEY (hostId) REFERENCES hosts(id) ON DELETE SET NULL
+      FOREIGN KEY (residentId) REFERENCES residents(id) ON DELETE SET NULL
     )
   `);
   
@@ -91,13 +189,13 @@ async function initDatabase() {
     // Ignore errors
   }
 
-  // Migrate existing vehicles table to add hostId, rented, and purposeOfVisit columns if needed
+  // Migrate existing vehicles table to add residentId, rented, and purposeOfVisit columns if needed
   try {
-    db.run('ALTER TABLE vehicles ADD COLUMN hostId TEXT');
+    db.run('ALTER TABLE vehicles ADD COLUMN residentId TEXT');
   } catch (error) {
     const errorMsg = error?.message || String(error);
     if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
-      console.log('Note: hostId column migration:', errorMsg);
+      console.log('Note: residentId column migration:', errorMsg);
     }
   }
 
@@ -116,6 +214,44 @@ async function initDatabase() {
     const errorMsg = error?.message || String(error);
     if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
       console.log('Note: purposeOfVisit column migration:', errorMsg);
+    }
+  }
+
+  try {
+    db.run(`ALTER TABLE vehicles ADD COLUMN vehicleType TEXT NOT NULL DEFAULT 'car'`);
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: vehicleType column migration:', errorMsg);
+    }
+  }
+
+  try {
+    db.run('ALTER TABLE vehicles ADD COLUMN visitorCategory TEXT');
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: visitorCategory column migration:', errorMsg);
+    }
+  }
+
+  try {
+    db.run(`
+      UPDATE vehicles SET visitorCategory = NULL
+      WHERE residentId IS NOT NULL AND TRIM(IFNULL(residentId, '')) != ''
+    `);
+    db.run(`
+      UPDATE vehicles SET visitorCategory = CASE
+        WHEN IFNULL(TRIM(rented), '') != '' THEN 'rental'
+        WHEN LOWER(IFNULL(purposeOfVisit, '')) LIKE '%deliver%' THEN 'delivery'
+        ELSE 'guest'
+      END
+      WHERE residentId IS NULL OR TRIM(IFNULL(residentId, '')) = ''
+    `);
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('no such column') && !errorMsg.includes('no such table')) {
+      console.log('Note: visitorCategory backfill:', errorMsg);
     }
   }
   
