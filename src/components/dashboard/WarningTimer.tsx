@@ -10,6 +10,7 @@ const SERVER_BASE_URL = API_BASE_URL.replace('/api', '');
 
 const TWENTY_MIN = 20 * 60;
 const TEN_MIN = 10 * 60;
+const OUT_OF_VIEW_NOTE = 'not in the camera view anymore';
 
 interface WarningTimerProps {
   violation: Violation;
@@ -62,6 +63,8 @@ export function WarningTimer({ violation, onCancel, onIssueTicket, onSendSms }: 
   const tier = tierFromDelta(deltaSec);
   const isOverdue = deltaSec !== null && deltaSec <= 0;
   const overdueSeconds = isOverdue && deltaSec !== null ? Math.abs(deltaSec) : 0;
+  const messageText = String(violation.message || '');
+  const isOutOfView = messageText.toLowerCase().includes(OUT_OF_VIEW_NOTE);
   const canIssueTicket = deltaSec !== null && deltaSec <= 0;
 
   const borderClass = {
@@ -212,7 +215,12 @@ export function WarningTimer({ violation, onCancel, onIssueTicket, onSendSms }: 
             <div className="flex shrink-0 flex-col items-stretch gap-2 sm:items-end lg:ml-4 lg:min-w-[11rem]">
               <div className="flex items-center justify-end gap-2 text-muted-foreground">
                 <Clock className="h-4 w-4 shrink-0" />
-                {isOverdue ? (
+                {isOutOfView ? (
+                  <div className="text-right">
+                    <div className="font-mono text-lg font-bold text-muted-foreground">PAUSED</div>
+                    <div className="text-[10px] text-muted-foreground">vehicle out of camera view</div>
+                  </div>
+                ) : isOverdue ? (
                   <div className="text-right">
                     <div className="font-mono text-lg font-bold text-red-600">OVERDUE</div>
                     <div className="font-mono text-sm font-semibold text-red-600 tabular-nums">

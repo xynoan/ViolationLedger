@@ -17,10 +17,12 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Camera } from '@/types/parking';
 import { toast } from '@/hooks/use-toast';
 import { camerasAPI } from '@/lib/api';
 import { useAuth } from '@/hooks/useAuth';
+import { RESIDENT_STREET_OPTIONS } from '@/lib/residentStreets';
 
 export default function Cameras() {
   usePageTracking();
@@ -108,18 +110,16 @@ export default function Cameras() {
     if (!newCamera.locationId.trim()) {
       toast({
         title: "Validation Error",
-        description: "Please enter a location/zone ID. You can select a device to auto-generate this field.",
+        description: "Please select a street/zone for this camera.",
         variant: "destructive",
       });
       return;
     }
     
-    // Validate location ID format (should be uppercase alphanumeric with optional hyphens)
-    const locationIdPattern = /^[A-Z0-9-]+$/;
-    if (!locationIdPattern.test(newCamera.locationId.trim().toUpperCase())) {
+    if (!RESIDENT_STREET_OPTIONS.includes(newCamera.locationId.trim() as any)) {
       toast({
         title: "Validation Error",
-        description: "Location ID should only contain uppercase letters, numbers, and hyphens (e.g., ZONE-A, ENTRANCE-01)",
+        description: "Please choose a valid street/zone from the list.",
         variant: "destructive",
       });
       return;
@@ -155,7 +155,7 @@ export default function Cameras() {
       const cameraData = {
         id: cameraId,
         name: newCamera.name.trim(),
-        locationId: newCamera.locationId.trim().toUpperCase(),
+        locationId: newCamera.locationId.trim(),
         status: cameraStatus,
         deviceId: deviceIdValue,
         isFixed: newCamera.isFixed,
@@ -260,12 +260,21 @@ export default function Cameras() {
                   <div className="flex items-center justify-between">
                     <Label htmlFor="locationId">Zone / Location ID</Label>
                   </div>
-                  <Input
-                    id="locationId"
-                    placeholder="e.g., ZONE-A"
+                  <Select
                     value={newCamera.locationId}
-                    onChange={(e) => setNewCamera((prev) => ({ ...prev, locationId: e.target.value.toUpperCase() }))}
-                  />
+                    onValueChange={(value) => setNewCamera((prev) => ({ ...prev, locationId: value }))}
+                  >
+                    <SelectTrigger id="locationId">
+                      <SelectValue placeholder="Select a street/zone" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {RESIDENT_STREET_OPTIONS.map((street) => (
+                        <SelectItem key={street} value={street}>
+                          {street}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="grid gap-2">
                   <div className="flex items-center justify-between">

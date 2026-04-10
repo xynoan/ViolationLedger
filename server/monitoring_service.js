@@ -97,8 +97,7 @@ class MonitoringService {
   }
 
   /**
-   * After a capture batch, resolve warnings at this location when the plate has not been
-   * seen at that location within PRESENCE_LOOKBACK_MS (same rules as the periodic check).
+   * After a capture batch, mark warnings as out-of-view when the plate is no longer seen.
    * @param {string} [locationId] — if omitted, evaluates all active warnings (monitoring tick).
    * @param {string[]} [_detectedPlates] — reserved for future use; detections are already in DB.
    */
@@ -106,14 +105,14 @@ class MonitoringService {
     if (!locationId || locationId === 'UNKNOWN') {
       return 0;
     }
-    return this.resolveWarningsWhenVehicleDeparted(locationId);
+    return this.updateWarningVisibilityState(locationId);
   }
 
   /**
-   * Mark warnings as resolved when no recent detection matches plate + location (and manual-upload path).
+   * Keep warnings active; toggle an out-of-view note based on recent detections.
    * @param {string} [locationId] — limit to warnings at this location (e.g. after POST /captures/:cameraId).
    */
-  resolveWarningsWhenVehicleDeparted(locationId = null) {
+  updateWarningVisibilityState(locationId = null) {
     const warningsQuery = locationId
       ? `SELECT * FROM violations WHERE status = 'warning' AND cameraLocationId = ?`
       : `SELECT * FROM violations WHERE status = 'warning'`;
@@ -158,10 +157,8 @@ class MonitoringService {
       }
     }
 
-    let resolvedCount = 0;
-    const updateStmt = db.prepare(`
-      UPDATE violations SET status = 'resolved' WHERE id = ? AND status = 'warning'
-    `);
+    let markedOutOfViewCount = 0;
+    let restoredInViewCount = 0;
 
     for (const warning of activeWarnings) {
       const key = `${normalizePlateForMatch(warning.plateNumber)}-${warning.cameraLocationId}`;
@@ -170,23 +167,23 @@ class MonitoringService {
         continue;
       }
       if (presenceMap.has(key)) {
+        restoredInViewCount += 1;
         continue;
       }
-      const result = updateStmt.run(warning.id);
-      if (result.changes > 0) {
-        resolvedCount += 1;
-        console.log(
-          `✅ Auto-resolved warning ${warning.id}: plate ${warning.plateNumber} no longer at ${warning.cameraLocationId} (no detection in last ${PRESENCE_LOOKBACK_MINUTES}m).`
-        );
-      }
+      markedOutOfViewCount += 1;
+      console.log(
+        `⏸️  Warning ${warning.id} currently out-of-view: plate ${warning.plateNumber} not detected at ${warning.cameraLocationId} in last ${PRESENCE_LOOKBACK_MINUTES}m.`
+      );
     }
 
-    return resolvedCount;
+    return { markedOutOfViewCount, restoredInViewCount };
   }
 
   async checkAndUpdate() {
     try {
-      const resolvedDeparted = this.resolveWarningsWhenVehicleDeparted();
+      const visibilityUpdate = this.updateWarningVisibilityState();
+      const markedOutOfViewCount = visibilityUpdate.markedOutOfViewCount || 0;
+      const restoredInViewCount = visibilityUpdate.restoredInViewCount || 0;
 
       // Get all active warnings (refresh after departures)
       const activeWarnings = db.prepare(`
@@ -195,8 +192,10 @@ class MonitoringService {
       `).all();
 
       if (activeWarnings.length === 0) {
-        if (resolvedDeparted > 0) {
-          console.log(`ℹ️  Monitoring check: no active warnings left (${resolvedDeparted} auto-resolved).`);
+        if (markedOutOfViewCount > 0 || restoredInViewCount > 0) {
+          console.log(
+            `ℹ️  Monitoring check: no active warnings left (${markedOutOfViewCount} marked out-of-view, ${restoredInViewCount} restored in-view).`
+          );
         } else {
           console.log('ℹ️  Monitoring check: no active warnings found.');
         }
@@ -429,9 +428,9 @@ class MonitoringService {
         }
       }
 
-      if (notifiedCount > 0 || resolvedDeparted > 0 || warningsTransitionedToPending > 0) {
+      if (notifiedCount > 0 || markedOutOfViewCount > 0 || restoredInViewCount > 0 || warningsTransitionedToPending > 0) {
         console.log(
-          `✅ Monitoring check complete: ${resolvedDeparted} auto-resolved (departed), ${notifiedCount} notified, ${warningsTransitionedToPending} moved to pending`
+          `✅ Monitoring check complete: ${markedOutOfViewCount} marked out-of-view, ${restoredInViewCount} restored in-view, ${notifiedCount} notified, ${warningsTransitionedToPending} moved to pending`
         );
       } else {
         console.log(`✅ Monitoring check complete: No updates needed`);

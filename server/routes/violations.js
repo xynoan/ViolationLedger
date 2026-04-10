@@ -8,6 +8,7 @@ const router = express.Router();
  * Grace period in minutes before a warning elapses (timer on Warnings UI; monitoring uses the same window).
  */
 export const GRACE_PERIOD_MINUTES = 30;
+const OUT_OF_VIEW_NOTE = 'Vehicle is not in the camera view anymore.';
 
 export function normalizePlateForMatch(plateNumber) {
   if (!plateNumber) return '';
@@ -324,6 +325,9 @@ router.get('/', (req, res) => {
         message = `Vehicle with plate ${violation.plateNumber} detected illegally parked at ${violation.cameraLocationId}. ${vehicle.ownerName ? `Owner: ${vehicle.ownerName}.` : ''} Immediate action required.`;
       } else {
         message = `Vehicle with plate ${violation.plateNumber} detected illegally parked at ${violation.cameraLocationId}. Vehicle is not registered in the system. Immediate Barangay attention required.`;
+      }
+      if (violation.status === 'warning' && !detection) {
+        message = `${message} ${OUT_OF_VIEW_NOTE}`;
       }
       
       return {

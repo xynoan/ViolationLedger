@@ -156,6 +156,14 @@ export default function Visitors() {
     () => nonResidentVehicles.filter((v) => deriveVisitorCategory(v) === activeTab),
     [nonResidentVehicles, activeTab],
   );
+  const categoryCounts = useMemo(
+    () => ({
+      guest: nonResidentVehicles.filter((v) => deriveVisitorCategory(v) === 'guest').length,
+      delivery: nonResidentVehicles.filter((v) => deriveVisitorCategory(v) === 'delivery').length,
+      rental: nonResidentVehicles.filter((v) => deriveVisitorCategory(v) === 'rental').length,
+    }),
+    [nonResidentVehicles],
+  );
 
   const displayedRows = useMemo(() => {
     const q = searchTerm.trim().toLowerCase();
@@ -167,6 +175,8 @@ export default function Visitors() {
   }, [tabFiltered, searchTerm]);
 
   const registryHasRows = nonResidentVehicles.length > 0;
+  const activeCategoryLabel =
+    activeTab === 'guest' ? 'Active Guests' : activeTab === 'delivery' ? 'Deliveries' : 'Short-term Rentals';
 
   const resetForm = (category: VisitorTab) => {
     const purposes = purposeOptionsForCategory(category);
@@ -372,16 +382,25 @@ export default function Visitors() {
         >
           <TabsList className="flex w-full flex-wrap h-auto gap-1 sm:inline-flex sm:w-auto p-1">
             <TabsTrigger value="guest" className="flex-1 sm:flex-initial">
-              Active Guests
+              Active Guests ({categoryCounts.guest})
             </TabsTrigger>
             <TabsTrigger value="delivery" className="flex-1 sm:flex-initial">
-              Deliveries
+              Deliveries ({categoryCounts.delivery})
             </TabsTrigger>
             <TabsTrigger value="rental" className="flex-1 sm:flex-initial">
-              Short-term Rentals
+              Short-term Rentals ({categoryCounts.rental})
             </TabsTrigger>
           </TabsList>
         </Tabs>
+
+        <div className="glass-card rounded-xl p-4">
+          <p className="text-sm text-muted-foreground">
+            Currently viewing: <span className="font-semibold text-foreground">{activeCategoryLabel}</span>
+          </p>
+          <p className="text-xs text-muted-foreground mt-1">
+            {tabFiltered.length} record{tabFiltered.length === 1 ? '' : 's'} in this category
+          </p>
+        </div>
 
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 sm:gap-4">
           <div className="relative flex-1 sm:max-w-md">
@@ -579,7 +598,6 @@ export default function Visitors() {
                   <div className="font-mono font-medium text-lg">{vehicle.plateNumber}</div>
                   <div className="text-sm text-muted-foreground">{formatVehicleTypeLabel(vehicle.vehicleType)}</div>
                   <div className="text-sm font-medium">{vehicle.ownerName}</div>
-                  <div className="text-sm text-muted-foreground">{vehicle.purposeOfVisit || '—'}</div>
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <Phone className="h-4 w-4 shrink-0" />
                     {vehicle.contactNumber}
@@ -619,7 +637,6 @@ export default function Visitors() {
                       <TableHead className="text-muted-foreground">Plate</TableHead>
                       <TableHead className="text-muted-foreground">Vehicle Type</TableHead>
                       <TableHead className="text-muted-foreground">Owner</TableHead>
-                      <TableHead className="text-muted-foreground">Purpose</TableHead>
                       <TableHead className="text-muted-foreground">Contact</TableHead>
                       {activeTab === 'rental' ? (
                         <TableHead className="text-muted-foreground">Rented</TableHead>
@@ -634,9 +651,6 @@ export default function Visitors() {
                         <TableCell className="font-mono font-medium">{vehicle.plateNumber}</TableCell>
                         <TableCell>{formatVehicleTypeLabel(vehicle.vehicleType)}</TableCell>
                         <TableCell>{vehicle.ownerName}</TableCell>
-                        <TableCell className="max-w-[10rem] truncate" title={vehicle.purposeOfVisit || ''}>
-                          {vehicle.purposeOfVisit || '—'}
-                        </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-2 text-muted-foreground text-sm">
                             <Phone className="h-4 w-4 shrink-0" />
