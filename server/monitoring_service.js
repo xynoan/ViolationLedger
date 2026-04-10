@@ -1,12 +1,18 @@
 import db from './database.js';
 import { shouldCreateNotification } from './routes/notifications.js';
-import { GRACE_PERIOD_MINUTES } from './routes/violations.js';
+import { GRACE_PERIOD_MINUTES, normalizePlateForMatch } from './routes/violations.js';
+
+/** No plate+location match in this window ⇒ treat vehicle as departed; clears Active Warnings. */
+const PRESENCE_LOOKBACK_MINUTES = 3;
+const PRESENCE_LOOKBACK_MS = PRESENCE_LOOKBACK_MINUTES * 60 * 1000;
+/** Avoid clearing a warning before the next capture / OCR can confirm presence. */
+const MIN_WARNING_AGE_MS = 90 * 1000;
 import { sendSmsMessage } from './utils/smsService.js';
 import { analyzeVideoStream, processVideoDetectionResults } from './ai_detection_service.js';
 
 /**
  * Monitoring service that runs every 15 seconds to:
- * 1. Check if vehicles in warnings have been removed (mark as resolved)
+ * 1. Resolve Active Warnings when the vehicle is no longer detected at that location (short lookback)
  * 2. Check if warnings have expired and vehicle is still present (notify Barangay)
  */
 class MonitoringService {
@@ -91,26 +97,109 @@ class MonitoringService {
   }
 
   /**
-   * Real-time vehicle removal check (disabled).
-   * Violation status is now only updated manually (e.g. when ticketed),
-   * so this method no longer clears violations automatically.
-   * It is kept for compatibility and always returns 0.
+   * After a capture batch, resolve warnings at this location when the plate has not been
+   * seen at that location within PRESENCE_LOOKBACK_MS (same rules as the periodic check).
+   * @param {string} [locationId] — if omitted, evaluates all active warnings (monitoring tick).
+   * @param {string[]} [_detectedPlates] — reserved for future use; detections are already in DB.
    */
-  checkVehicleRemovalRealTime(locationId, detectedPlates) {
-    // Auto-clear behavior removed by design.
-    return 0;
+  checkVehicleRemovalRealTime(locationId, _detectedPlates) {
+    if (!locationId || locationId === 'UNKNOWN') {
+      return 0;
+    }
+    return this.resolveWarningsWhenVehicleDeparted(locationId);
+  }
+
+  /**
+   * Mark warnings as resolved when no recent detection matches plate + location (and manual-upload path).
+   * @param {string} [locationId] — limit to warnings at this location (e.g. after POST /captures/:cameraId).
+   */
+  resolveWarningsWhenVehicleDeparted(locationId = null) {
+    const warningsQuery = locationId
+      ? `SELECT * FROM violations WHERE status = 'warning' AND cameraLocationId = ?`
+      : `SELECT * FROM violations WHERE status = 'warning'`;
+    const activeWarnings = locationId
+      ? db.prepare(warningsQuery).all(locationId)
+      : db.prepare(warningsQuery).all();
+
+    if (activeWarnings.length === 0) {
+      return 0;
+    }
+
+    const cutoffIso = new Date(Date.now() - PRESENCE_LOOKBACK_MS).toISOString();
+
+    const recentRows = db.prepare(`
+      SELECT DISTINCT d.plateNumber, c.locationId
+      FROM detections d
+      JOIN cameras c ON d.cameraId = c.id
+      WHERE d.timestamp > ?
+      AND d.plateNumber != 'NONE'
+      AND d.plateNumber != 'BLUR'
+      AND d.class_name != 'none'
+      AND c.locationId IS NOT NULL
+    `).all(cutoffIso);
+
+    const presenceMap = new Map();
+    for (const row of recentRows) {
+      const key = `${normalizePlateForMatch(row.plateNumber)}-${row.locationId}`;
+      presenceMap.set(key, true);
+    }
+
+    for (const warning of activeWarnings) {
+      const hasManual = db.prepare(`
+        SELECT 1 FROM detections
+        WHERE cameraId = 'MANUAL-UPLOAD-CAM'
+        AND plateNumber = ?
+        AND timestamp > ?
+        AND plateNumber NOT IN ('NONE', 'BLUR')
+      `).get(warning.plateNumber, cutoffIso);
+      if (hasManual) {
+        const key = `${normalizePlateForMatch(warning.plateNumber)}-${warning.cameraLocationId}`;
+        presenceMap.set(key, true);
+      }
+    }
+
+    let resolvedCount = 0;
+    const updateStmt = db.prepare(`
+      UPDATE violations SET status = 'resolved' WHERE id = ? AND status = 'warning'
+    `);
+
+    for (const warning of activeWarnings) {
+      const key = `${normalizePlateForMatch(warning.plateNumber)}-${warning.cameraLocationId}`;
+      const age = Date.now() - new Date(warning.timeDetected).getTime();
+      if (age < MIN_WARNING_AGE_MS) {
+        continue;
+      }
+      if (presenceMap.has(key)) {
+        continue;
+      }
+      const result = updateStmt.run(warning.id);
+      if (result.changes > 0) {
+        resolvedCount += 1;
+        console.log(
+          `✅ Auto-resolved warning ${warning.id}: plate ${warning.plateNumber} no longer at ${warning.cameraLocationId} (no detection in last ${PRESENCE_LOOKBACK_MINUTES}m).`
+        );
+      }
+    }
+
+    return resolvedCount;
   }
 
   async checkAndUpdate() {
     try {
-      // Get all active warnings
+      const resolvedDeparted = this.resolveWarningsWhenVehicleDeparted();
+
+      // Get all active warnings (refresh after departures)
       const activeWarnings = db.prepare(`
         SELECT * FROM violations 
         WHERE status = 'warning'
       `).all();
 
       if (activeWarnings.length === 0) {
-        console.log('ℹ️  Monitoring check: no active warnings found.');
+        if (resolvedDeparted > 0) {
+          console.log(`ℹ️  Monitoring check: no active warnings left (${resolvedDeparted} auto-resolved).`);
+        } else {
+          console.log('ℹ️  Monitoring check: no active warnings found.');
+        }
         return;
       }
 
@@ -340,10 +429,12 @@ class MonitoringService {
         }
       }
 
-      if (notifiedCount > 0) {
-        console.log(`✅ Monitoring check complete: 0 resolved, ${notifiedCount} notified, ${warningsTransitionedToPending} moved to pending`);
+      if (notifiedCount > 0 || resolvedDeparted > 0 || warningsTransitionedToPending > 0) {
+        console.log(
+          `✅ Monitoring check complete: ${resolvedDeparted} auto-resolved (departed), ${notifiedCount} notified, ${warningsTransitionedToPending} moved to pending`
+        );
       } else {
-        console.log(`✅ Monitoring check complete: No updates needed, ${warningsTransitionedToPending} moved to pending`);
+        console.log(`✅ Monitoring check complete: No updates needed`);
       }
     } catch (error) {
       console.error('❌ Error in monitoring check:', error);

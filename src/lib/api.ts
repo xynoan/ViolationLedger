@@ -230,6 +230,17 @@ export const violationsAPI = {
   delete: (id: string) => fetchAPI(`/violations/${id}`, {
     method: 'DELETE',
   }),
+  /** Resend owner reminder SMS for an active warning; may take up to ~30s for the provider. */
+  sendSms: (id: string) =>
+    fetchAPI(`/violations/${encodeURIComponent(id)}/send-sms`, {
+      method: 'POST',
+      timeout: 35000,
+    }),
+  /**
+   * Dev / ALLOW_TEST_VIOLATION_SEED: inserts a random warning with random elapsed time since detection.
+   */
+  seedTestActiveWarning: () =>
+    fetchAPI('/violations/test-seed-active-warning', { method: 'POST' }),
 };
 
 // Detections API

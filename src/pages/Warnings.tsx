@@ -1,17 +1,22 @@
 import { useState, useEffect } from 'react';
-import { AlertTriangle, CheckCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle, FlaskConical } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
 import { WarningTimer } from '@/components/dashboard/WarningTimer';
 import { Violation } from '@/types/parking';
 import { violationsAPI } from '@/lib/api';
 import { toast } from '@/hooks/use-toast';
+import { Button } from '@/components/ui/button';
 
 export default function Warnings() {
   usePageTracking();
   const [violations, setViolations] = useState<Violation[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [testSeedLoading, setTestSeedLoading] = useState(false);
   const activeWarnings = violations.filter(v => v.status === 'warning');
+
+  const showTestWarningSeed =
+    import.meta.env.DEV === true || import.meta.env.VITE_SHOW_TEST_WARNING_BUTTON === 'true';
 
   useEffect(() => {
     loadViolations();
@@ -88,6 +93,43 @@ export default function Warnings() {
     }
   };
 
+  const handleSendSms = async (violationId: string) => {
+    try {
+      await violationsAPI.sendSms(violationId);
+      toast({
+        title: "SMS sent",
+        description: "Reminder sent to the registered vehicle owner.",
+      });
+      await loadViolations();
+    } catch (error: any) {
+      toast({
+        title: "SMS failed",
+        description: error?.message || "Failed to send SMS",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleSeedTestWarning = async () => {
+    setTestSeedLoading(true);
+    try {
+      const result = await violationsAPI.seedTestActiveWarning();
+      toast({
+        title: "Test warning added",
+        description: `Plate ${result.plateNumber} at ${result.cameraLocationId} (~${result.elapsedMinutesSinceDetection} min since detection).`,
+      });
+      await loadViolations();
+    } catch (error: any) {
+      toast({
+        title: "Test warning failed",
+        description: error?.message || "Failed to add test warning",
+        variant: "destructive",
+      });
+    } finally {
+      setTestSeedLoading(false);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="min-h-screen">
@@ -109,9 +151,24 @@ export default function Warnings() {
       <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
         {activeWarnings.length > 0 ? (
           <>
-            <div className="flex items-center gap-2 text-warning">
-              <AlertTriangle className="h-4 w-4 sm:h-5 sm:w-5" />
-              <span className="font-medium text-sm sm:text-base">{activeWarnings.length} active warnings</span>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-warning">
+                <AlertTriangle className="h-4 w-4 sm:h-5 sm:w-5" />
+                <span className="font-medium text-sm sm:text-base">{activeWarnings.length} active warnings</span>
+              </div>
+              {showTestWarningSeed && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleSeedTestWarning}
+                  disabled={testSeedLoading}
+                  title="Random registered vehicle, random elapsed time since detection (dev / test only)"
+                >
+                  <FlaskConical className="h-4 w-4 mr-1 shrink-0" />
+                  {testSeedLoading ? "Adding…" : "Add test warning"}
+                </Button>
+              )}
             </div>
             <div className="space-y-3 sm:space-y-4">
               {activeWarnings.map((violation) => (
@@ -120,15 +177,28 @@ export default function Warnings() {
                   violation={violation}
                   onCancel={handleCancelWarning}
                   onIssueTicket={handleIssueTicket}
+                  onSendSms={handleSendSms}
                 />
               ))}
             </div>
           </>
         ) : (
-          <div className="glass-card rounded-xl p-8 sm:p-12 text-center">
+          <div className="glass-card rounded-xl p-8 sm:p-12 text-center space-y-4">
             <CheckCircle className="h-12 w-12 sm:h-16 sm:w-16 text-muted-foreground mx-auto mb-4" />
             <h3 className="text-lg sm:text-xl font-semibold text-foreground mb-2">All Clear</h3>
             <p className="text-muted-foreground text-sm sm:text-base">No active parking warnings at this time</p>
+            {showTestWarningSeed && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleSeedTestWarning}
+                disabled={testSeedLoading}
+              >
+                <FlaskConical className="h-4 w-4 mr-1 shrink-0" />
+                {testSeedLoading ? "Adding…" : "Add test warning"}
+              </Button>
+            )}
           </div>
         )}
       </div>

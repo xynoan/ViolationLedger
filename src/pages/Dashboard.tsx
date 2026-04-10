@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Car, AlertTriangle, CheckCircle, Camera, Plus, RefreshCw, Pause, Play } from 'lucide-react';
+import { Car, AlertTriangle, CheckCircle, Camera, Plus, RefreshCw, Pause, Play, FlaskConical } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
@@ -23,6 +23,10 @@ export default function Dashboard() {
   const [isLoading, setIsLoading] = useState(true);
   const [detectionEnabled, setDetectionEnabled] = useState(true);
   const [detectionToggleLoading, setDetectionToggleLoading] = useState(false);
+  const [testSeedLoading, setTestSeedLoading] = useState(false);
+
+  const showTestWarningSeed =
+    import.meta.env.DEV === true || import.meta.env.VITE_SHOW_TEST_WARNING_BUTTON === 'true';
 
   // Load detection enabled state on mount
   useEffect(() => {
@@ -145,6 +149,40 @@ export default function Dashboard() {
     [loadData],
   );
 
+  const handleSendSms = useCallback(
+    async (violationId: string) => {
+      try {
+        await violationsAPI.sendSms(violationId);
+        toast({
+          title: 'SMS sent',
+          description: 'Reminder sent to the registered vehicle owner.',
+        });
+        await loadData();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to send SMS';
+        toast({ title: 'SMS failed', description: message, variant: 'destructive' });
+      }
+    },
+    [loadData],
+  );
+
+  const handleSeedTestWarning = useCallback(async () => {
+    setTestSeedLoading(true);
+    try {
+      const result = await violationsAPI.seedTestActiveWarning();
+      toast({
+        title: 'Test warning added',
+        description: `Plate ${result.plateNumber} at ${result.cameraLocationId} (~${result.elapsedMinutesSinceDetection} min since detection).`,
+      });
+      await loadData();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to add test warning';
+      toast({ title: 'Test warning failed', description: message, variant: 'destructive' });
+    } finally {
+      setTestSeedLoading(false);
+    }
+  }, [loadData]);
+
   const activeWarnings = violations.filter(v => v.status === 'warning');
   const issuedTickets = violations.filter(v => v.status === 'issued');
   const clearedToday = violations.filter(v => v.status === 'cleared');
@@ -254,13 +292,29 @@ export default function Dashboard() {
             {/* Active Warnings */}
             <div className="lg:col-span-2 space-y-4 sm:space-y-6">
               <div className="space-y-4">
-                <h2 className="text-base sm:text-lg font-semibold text-foreground flex items-center gap-2">
-                  <AlertTriangle className="h-4 w-4 sm:h-5 sm:w-5 text-warning" />
-                  Active Warnings
-                  <span className="ml-2 px-2 py-0.5 rounded-full bg-warning/10 text-warning text-xs sm:text-sm">
-                    {activeWarnings.length}
-                  </span>
-                </h2>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h2 className="text-base sm:text-lg font-semibold text-foreground flex items-center gap-2">
+                    <AlertTriangle className="h-4 w-4 sm:h-5 sm:w-5 text-warning" />
+                    Active Warnings
+                    <span className="ml-2 px-2 py-0.5 rounded-full bg-warning/10 text-warning text-xs sm:text-sm">
+                      {activeWarnings.length}
+                    </span>
+                  </h2>
+                  {showTestWarningSeed && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="text-xs sm:text-sm"
+                      onClick={handleSeedTestWarning}
+                      disabled={testSeedLoading}
+                      title="Inserts a random registered vehicle as an active warning with a random elapsed time (dev / test only)"
+                    >
+                      <FlaskConical className="h-4 w-4 mr-1 shrink-0" />
+                      {testSeedLoading ? 'Adding…' : 'Add test warning'}
+                    </Button>
+                  )}
+                </div>
 
                 {activeWarnings.length === 0 ? (
                   <div className="glass-card rounded-xl p-6 sm:p-8 text-center">
@@ -275,6 +329,7 @@ export default function Dashboard() {
                         violation={warning}
                         onCancel={handleClearWarning}
                         onIssueTicket={handleMarkTicketed}
+                        onSendSms={handleSendSms}
                       />
                     ))}
                   </div>

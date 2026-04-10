@@ -9,9 +9,15 @@ const router = express.Router();
  */
 export const GRACE_PERIOD_MINUTES = 30;
 
-function normalizePlateForMatch(plateNumber) {
+export function normalizePlateForMatch(plateNumber) {
   if (!plateNumber) return '';
   return String(plateNumber).replace(/\s+/g, '').toUpperCase();
+}
+
+/** Dev / explicit-flag only: POST /test-seed-active-warning */
+function isTestViolationSeedAllowed() {
+  if (process.env.ALLOW_TEST_VIOLATION_SEED === 'true') return true;
+  return process.env.NODE_ENV !== 'production';
 }
 
 /** Warnings never extend beyond grace after detection (fixes legacy / bad seed rows without mutating DB). */
@@ -401,6 +407,162 @@ router.get('/stats', (req, res) => {
       }, {}),
       byLocation: byLocation,
       byDate: byDate
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Insert a random active warning with timeDetected in the past (random elapsed time since detection).
+ * Adds a recent synthetic detection when a camera exists so auto-departure does not clear it immediately.
+ * Disabled in production unless ALLOW_TEST_VIOLATION_SEED=true.
+ */
+router.post('/test-seed-active-warning', (req, res) => {
+  try {
+    if (!isTestViolationSeedAllowed()) {
+      return res.status(403).json({
+        error: 'Test warning seed is disabled (production). Set ALLOW_TEST_VIOLATION_SEED=true to enable.',
+      });
+    }
+
+    const vehicles = db.prepare('SELECT plateNumber FROM vehicles').all();
+    if (!vehicles.length) {
+      return res.status(400).json({ error: 'No registered vehicles in the database' });
+    }
+
+    const cameras = db
+      .prepare(
+        `SELECT id, locationId FROM cameras 
+ WHERE locationId IS NOT NULL AND TRIM(locationId) != ''`,
+      )
+      .all();
+
+    const hasActiveConflict = db.prepare(`
+      SELECT 1 FROM violations 
+      WHERE plateNumber = ? AND cameraLocationId = ? AND status IN ('warning', 'pending')
+    `);
+
+    let plateNumber;
+    let cameraLocationId;
+    let cameraId = null;
+    let attempts = 0;
+    let picked = false;
+
+    while (attempts < 50 && !picked) {
+      attempts += 1;
+      plateNumber = vehicles[Math.floor(Math.random() * vehicles.length)].plateNumber;
+      if (cameras.length > 0) {
+        const cam = cameras[Math.floor(Math.random() * cameras.length)];
+        cameraLocationId = cam.locationId;
+        cameraId = cam.id;
+      } else {
+        const locRows = db
+          .prepare(
+            `SELECT DISTINCT cameraLocationId as loc FROM violations 
+             WHERE cameraLocationId IS NOT NULL AND TRIM(cameraLocationId) != '' LIMIT 100`,
+          )
+          .all();
+        const locs = locRows.map((r) => r.loc).filter(Boolean);
+        cameraLocationId =
+          locs.length > 0 ? locs[Math.floor(Math.random() * locs.length)] : 'TEST-LOCATION-1';
+        cameraId = null;
+      }
+      if (!hasActiveConflict.get(plateNumber, cameraLocationId)) {
+        picked = true;
+      }
+    }
+
+    if (!picked) {
+      return res.status(409).json({
+        error:
+          'Could not pick a vehicle/location pair without an active warning; clear one or add vehicles.',
+      });
+    }
+
+    const elapsedMinutes = Math.floor(Math.random() * 88) + 3;
+    const now = Date.now();
+    const timeDetected = new Date(now - elapsedMinutes * 60 * 1000).toISOString();
+    const warningExpiresAt = new Date(
+      new Date(timeDetected).getTime() + GRACE_PERIOD_MINUTES * 60 * 1000,
+    ).toISOString();
+
+    const violationId = `VIOL-TEST-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+    db.prepare(`
+      INSERT INTO violations (id, ticketId, plateNumber, cameraLocationId, timeDetected, status, warningExpiresAt)
+      VALUES (?, NULL, ?, ?, ?, 'warning', ?)
+    `).run(violationId, plateNumber, cameraLocationId, timeDetected, warningExpiresAt);
+
+    let detectionId = null;
+    if (cameraId) {
+      detectionId = `DET-TEST-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const detTs = new Date(now - 60 * 1000).toISOString();
+      try {
+        db.prepare(`
+          INSERT INTO detections (id, cameraId, plateNumber, timestamp, confidence, imageUrl, bbox, class_name, imageBase64)
+          VALUES (?, ?, ?, ?, ?, NULL, NULL, 'car', NULL)
+        `).run(detectionId, cameraId, plateNumber, detTs, 1.0);
+      } catch (detErr) {
+        console.warn('test-seed-active-warning: could not insert synthetic detection:', detErr.message);
+        detectionId = null;
+      }
+    }
+
+    const violation = db.prepare('SELECT * FROM violations WHERE id = ?').get(violationId);
+
+    return res.status(201).json({
+      ...violation,
+      timeDetected: new Date(violation.timeDetected),
+      warningExpiresAt: violation.warningExpiresAt ? new Date(violation.warningExpiresAt) : null,
+      elapsedMinutesSinceDetection: elapsedMinutes,
+      syntheticDetectionId: detectionId,
+      note: 'Test data — no owner SMS sent from this endpoint',
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Manually resend the owner SMS for an active warning (same template as automatic send).
+ */
+router.post('/:id/send-sms', async (req, res) => {
+  try {
+    const violation = db.prepare('SELECT * FROM violations WHERE id = ?').get(req.params.id);
+    if (!violation) {
+      return res.status(404).json({ error: 'Violation not found' });
+    }
+    if (violation.status !== 'warning') {
+      return res.status(400).json({ error: 'SMS can only be sent for active warnings' });
+    }
+    const plate = violation.plateNumber;
+    if (!plate || String(plate).toUpperCase() === 'NONE' || String(plate).toUpperCase() === 'BLUR') {
+      return res.status(400).json({
+        error: 'Cannot send SMS: license plate is missing or unreadable for this warning',
+      });
+    }
+
+    const smsResult = await sendViolationSms(plate, violation.cameraLocationId, violation.id);
+
+    const smsRow = db
+      .prepare(
+        `SELECT MAX(sentAt) as smsSentAt FROM sms_logs WHERE violationId = ? AND status = 'sent'`,
+      )
+      .get(violation.id);
+
+    if (smsResult.success) {
+      return res.json({
+        success: true,
+        messageLogId: smsResult.messageLogId || null,
+        smsSentAt: smsRow?.smsSentAt || new Date().toISOString(),
+      });
+    }
+
+    return res.status(502).json({
+      success: false,
+      error: smsResult.error || 'SMS send failed',
+      messageLogId: smsResult.messageLogId || null,
     });
   } catch (error) {
     res.status(500).json({ error: error.message });

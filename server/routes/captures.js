@@ -207,9 +207,6 @@ router.post('/:cameraId', async (req, res) => {
     const notificationsCreated = [];
     const violationsCreated = [];
     
-    // Track detected plates by location for real-time vehicle removal check
-    const detectedPlatesByLocation = new Map();
-    
     for (const detection of detections) {
       try {
         // Save detection
@@ -241,14 +238,6 @@ router.post('/:cameraId', async (req, res) => {
         );
         const plateIsBlurry = detection.plateNumber === 'BLUR';
         const isRealVehicle = detection.class_name && detection.class_name.toLowerCase() !== 'none';
-        
-        // Only track real vehicles with visible plates for removal detection
-        if (isRealVehicle && !plateNotVisible && detection.plateNumber) {
-          if (!detectedPlatesByLocation.has(locationId)) {
-            detectedPlatesByLocation.set(locationId, []);
-          }
-          detectedPlatesByLocation.get(locationId).push(detection.plateNumber);
-        }
         
         // Case 1: Real vehicle with visible plate - automatically create violation
         if (isRealVehicle && !plateNotVisible) {
@@ -560,6 +549,15 @@ router.post('/:cameraId', async (req, res) => {
       }
     }
 
+    let violationsResolvedFromDeparture = 0;
+    if (locationId && locationId !== 'UNKNOWN') {
+      try {
+        violationsResolvedFromDeparture = monitoringService.resolveWarningsWhenVehicleDeparted(locationId);
+      } catch (depErr) {
+        console.error('Departure resolution after capture failed:', depErr);
+      }
+    }
+
     // Ensure all processing is complete before sending response
     const totalProcessingTime = Date.now() - aiProcessingStartTime;
     console.log(`✅ Capture processing complete (${totalProcessingTime}ms) - AI: ${aiProcessingComplete ? 'Done' : 'Skipped'}, Vehicles: ${detections.filter(d => d.class_name !== 'none').length}, Violations: ${violationsCreated.length}`);
@@ -572,7 +570,7 @@ router.post('/:cameraId', async (req, res) => {
       vehicleCount: detections.filter(d => d.class_name !== 'none').length,
       violationsCreated: violationsCreated.length,
       violations: violationsCreated,
-      violationsResolved: 0,
+      violationsResolved: violationsResolvedFromDeparture,
       incidentsCreated: incidentsCreated.length,
       notificationsCreated: notificationsCreated.length,
       aiProcessingComplete: aiProcessingComplete,

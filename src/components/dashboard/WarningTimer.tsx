@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Clock, AlertTriangle, Check, Camera, Ticket, ImageOff } from 'lucide-react';
+import { Clock, AlertTriangle, Check, Camera, Ticket, ImageOff, MessageSquare } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Violation } from '@/types/parking';
@@ -15,6 +15,8 @@ interface WarningTimerProps {
   violation: Violation;
   onCancel?: (id: string) => void;
   onIssueTicket?: (id: string) => void;
+  /** Manual resend SMS to registered owner (same template as automatic warning SMS). */
+  onSendSms?: (id: string) => void | Promise<void>;
 }
 
 /** Seconds until expiry; negative = overdue by that many seconds. */
@@ -44,8 +46,9 @@ function tierFromDelta(deltaSec: number | null): 'overdue' | 'urgent' | 'moderat
   return 'calm';
 }
 
-export function WarningTimer({ violation, onCancel, onIssueTicket }: WarningTimerProps) {
+export function WarningTimer({ violation, onCancel, onIssueTicket, onSendSms }: WarningTimerProps) {
   const [deltaSec, setDeltaSec] = useState<number | null>(() => computeDeltaSec(violation.warningExpiresAt));
+  const [sendingSms, setSendingSms] = useState(false);
 
   useEffect(() => {
     const tick = () => {
@@ -92,6 +95,21 @@ export function WarningTimer({ violation, onCancel, onIssueTicket }: WarningTime
   );
 
   const smsSentAt = violation.smsSentAt;
+  const canSendSms =
+    Boolean(onSendSms) &&
+    violation.plateNumber !== 'NONE' &&
+    violation.plateNumber !== 'BLUR' &&
+    Boolean(violation.plateNumber);
+
+  const handleSendSmsClick = async () => {
+    if (!onSendSms || !canSendSms || sendingSms) return;
+    setSendingSms(true);
+    try {
+      await onSendSms(violation.id);
+    } finally {
+      setSendingSms(false);
+    }
+  };
 
   return (
     <div
@@ -216,6 +234,23 @@ export function WarningTimer({ violation, onCancel, onIssueTicket }: WarningTime
           </div>
 
           <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border/60 pt-3">
+            {onSendSms && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!canSendSms || sendingSms}
+                onClick={handleSendSmsClick}
+                className="disabled:opacity-40 disabled:pointer-events-none"
+                title={
+                  canSendSms
+                    ? 'Send SMS reminder to the registered owner'
+                    : 'SMS requires a readable plate and registered vehicle'
+                }
+              >
+                <MessageSquare className="h-4 w-4 mr-1" />
+                {sendingSms ? 'Sending…' : 'Send SMS'}
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="sm"
