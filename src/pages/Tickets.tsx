@@ -413,7 +413,7 @@ export default function Tickets() {
             <Input
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Search Location ID (e.g., LOC-001)"
+              placeholder="Search location (e.g., Twin Peaks Drive)"
               className="pl-9"
             />
           </div>
