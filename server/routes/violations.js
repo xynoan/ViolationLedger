@@ -5,14 +5,26 @@ import { sendViolationSms } from '../utils/smsService.js';
 const router = express.Router();
 
 /**
- * Grace period in minutes before a warning becomes a ticket.
- * Set to 1 minute for testing; adjust here for production.
+ * Grace period in minutes before a warning elapses (timer on Warnings UI; monitoring uses the same window).
  */
-export const GRACE_PERIOD_MINUTES = 1;
+export const GRACE_PERIOD_MINUTES = 30;
 
 function normalizePlateForMatch(plateNumber) {
   if (!plateNumber) return '';
   return String(plateNumber).replace(/\s+/g, '').toUpperCase();
+}
+
+/** Warnings never extend beyond grace after detection (fixes legacy / bad seed rows without mutating DB). */
+function clampWarningExpiresAtForResponse(violation) {
+  if (violation.status !== 'warning' || !violation.warningExpiresAt) {
+    return violation.warningExpiresAt ? new Date(violation.warningExpiresAt) : null;
+  }
+  const detectedAt = new Date(violation.timeDetected);
+  const cap = new Date(detectedAt.getTime() + GRACE_PERIOD_MINUTES * 60 * 1000);
+  let w = new Date(violation.warningExpiresAt);
+  if (w.getTime() > cap.getTime()) w = cap;
+  if (w.getTime() < detectedAt.getTime()) w = cap;
+  return w;
 }
 
 export async function createViolationFromDetection(plateNumber, cameraLocationId, detectionId = null) {
@@ -244,6 +256,20 @@ router.get('/', (req, res) => {
         vehiclesMap.set(vehicle.plateNumber, vehicle);
       });
     }
+
+    const violationIds = [...new Set(violations.map((v) => v.id))];
+    const smsSentMap = new Map();
+    if (violationIds.length > 0) {
+      const ph = violationIds.map(() => '?').join(',');
+      const smsRows = db
+        .prepare(
+          `SELECT violationId, MAX(sentAt) as smsSentAt FROM sms_logs WHERE status = 'sent' AND violationId IN (${ph}) GROUP BY violationId`,
+        )
+        .all(...violationIds);
+      smsRows.forEach((row) => {
+        if (row.smsSentAt) smsSentMap.set(row.violationId, row.smsSentAt);
+      });
+    }
     
     // Batch fetch recent detections (last grace period for all violations)
     const detectionsMap = new Map();
@@ -294,7 +320,7 @@ router.get('/', (req, res) => {
         ...violation,
         timeDetected: new Date(violation.timeDetected),
         timeIssued: violation.timeIssued ? new Date(violation.timeIssued) : null,
-        warningExpiresAt: violation.warningExpiresAt ? new Date(violation.warningExpiresAt) : null,
+        warningExpiresAt: clampWarningExpiresAtForResponse(violation),
         // Add detection image data
         imageUrl: detection ? detection.imageUrl : null,
         imageBase64: detection ? detection.imageBase64 : null,
@@ -302,7 +328,8 @@ router.get('/', (req, res) => {
         message: message,
         // Add detection details
         detectionId: detection ? detection.id : null,
-        vehicleType: detection ? detection.class_name : null
+        vehicleType: detection ? detection.class_name : null,
+        smsSentAt: smsSentMap.has(violation.id) ? new Date(smsSentMap.get(violation.id)) : null,
       };
     });
     
@@ -386,11 +413,17 @@ router.get('/:id', (req, res) => {
     if (!violation) {
       return res.status(404).json({ error: 'Violation not found' });
     }
+    const smsRow = db
+      .prepare(
+        `SELECT MAX(sentAt) as smsSentAt FROM sms_logs WHERE violationId = ? AND status = 'sent'`,
+      )
+      .get(req.params.id);
     res.json({
       ...violation,
       timeDetected: new Date(violation.timeDetected),
       timeIssued: violation.timeIssued ? new Date(violation.timeIssued) : null,
-      warningExpiresAt: violation.warningExpiresAt ? new Date(violation.warningExpiresAt) : null
+      warningExpiresAt: clampWarningExpiresAtForResponse(violation),
+      smsSentAt: smsRow?.smsSentAt ? new Date(smsRow.smsSentAt) : null,
     });
   } catch (error) {
     res.status(500).json({ error: error.message });

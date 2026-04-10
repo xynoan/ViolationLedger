@@ -6,6 +6,7 @@ import { usePageTracking } from '@/hooks/usePageTracking';
 import { StatCard } from '@/components/dashboard/StatCard';
 import { CameraFeed } from '@/components/dashboard/CameraFeed';
 import { CaptureResults } from '@/components/dashboard/CaptureResults';
+import { WarningTimer } from '@/components/dashboard/WarningTimer';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Vehicle, Camera as CameraType, Violation } from '@/types/parking';
@@ -22,7 +23,6 @@ export default function Dashboard() {
   const [isLoading, setIsLoading] = useState(true);
   const [detectionEnabled, setDetectionEnabled] = useState(true);
   const [detectionToggleLoading, setDetectionToggleLoading] = useState(false);
-  const [nowMs, setNowMs] = useState(Date.now());
 
   // Load detection enabled state on mount
   useEffect(() => {
@@ -74,7 +74,15 @@ export default function Dashboard() {
       
       setVehicles(vehiclesData);
       setCameras(camerasWithDeviceId);
-      setViolations(violationsData);
+      setViolations(
+        (violationsData || []).map((v: any) => ({
+          ...v,
+          timeDetected: new Date(v.timeDetected),
+          timeIssued: v.timeIssued ? new Date(v.timeIssued) : undefined,
+          warningExpiresAt: v.warningExpiresAt ? new Date(v.warningExpiresAt) : undefined,
+          smsSentAt: v.smsSentAt ? new Date(v.smsSentAt) : undefined,
+        })),
+      );
       // Count all detections (captures) - filter out "none" detections
       const validDetections = Array.isArray(detectionsData) 
         ? detectionsData.filter((d: any) => d.class_name && d.class_name.toLowerCase() !== 'none')
@@ -97,48 +105,44 @@ export default function Dashboard() {
     loadData();
   }, [loadData]);
 
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setNowMs(Date.now());
-    }, 1000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const formatCountdown = (seconds: number) => {
-    const safeSeconds = Math.max(0, seconds);
-    const hours = Math.floor(safeSeconds / 3600);
-    const mins = Math.floor((safeSeconds % 3600) / 60);
-    const secs = safeSeconds % 60;
-    if (hours > 0) {
-      return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs
-        .toString()
-        .padStart(2, '0')}`;
-    }
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  };
-
   const handleMarkTicketed = useCallback(
     async (violationId: string) => {
       try {
+        const ticketId = `TICKET-${Date.now()}`;
         await violationsAPI.update(violationId, {
           status: 'issued',
           timeIssued: new Date().toISOString(),
+          ticketId,
         });
         toast({
-          title: 'Violation ticketed',
-          description: 'The violation has been marked as ticketed.',
+          title: 'Ticket issued',
+          description: `Ticket ${ticketId} has been recorded.`,
         });
         await loadData();
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to update violation status';
         toast({
-          title: 'Failed to mark as ticketed',
+          title: 'Failed to issue ticket',
           description: message,
           variant: 'destructive',
         });
       }
     },
-    [loadData]
+    [loadData],
+  );
+
+  const handleClearWarning = useCallback(
+    async (violationId: string) => {
+      try {
+        await violationsAPI.update(violationId, { status: 'cleared' });
+        toast({ title: 'Warning cleared', description: 'The warning has been cleared.' });
+        await loadData();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to clear warning';
+        toast({ title: 'Error', description: message, variant: 'destructive' });
+      }
+    },
+    [loadData],
   );
 
   const activeWarnings = violations.filter(v => v.status === 'warning');
@@ -265,62 +269,14 @@ export default function Dashboard() {
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    {activeWarnings.slice(0, 5).map((warning) => {
-                      const expiresAt =
-                        warning.warningExpiresAt instanceof Date
-                          ? warning.warningExpiresAt
-                          : warning.warningExpiresAt
-                          ? new Date(warning.warningExpiresAt)
-                          : null;
-                      const msLeft = expiresAt ? expiresAt.getTime() - nowMs : 0;
-                      const secondsLeft = Math.max(0, Math.floor(msLeft / 1000));
-                      const label =
-                        secondsLeft > 0
-                          ? `${formatCountdown(secondsLeft)} remaining`
-                          : 'Grace period ended';
-
-                      return (
-                        <div
-                          key={warning.id}
-                          className="glass-card rounded-xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border border-warning/30"
-                        >
-                          <div>
-                            <div className="flex items-center gap-2 mb-1">
-                              <Badge variant="outline" className="border-warning/50 text-warning text-xs sm:text-sm">
-                                {warning.plateNumber || 'UNKNOWN PLATE'}
-                              </Badge>
-                              <span className="text-xs sm:text-sm text-muted-foreground">
-                                {warning.cameraLocationId}
-                              </span>
-                            </div>
-                            <p className="text-xs sm:text-sm text-muted-foreground">
-                              Detected at{' '}
-                              {new Date(warning.timeDetected).toLocaleTimeString(undefined, {
-                                hour: '2-digit',
-                                minute: '2-digit',
-                              })}
-                            </p>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Badge
-                              variant={secondsLeft > 0 ? 'warning' : 'destructive'}
-                              className="text-xs sm:text-sm"
-                            >
-                              {label}
-                            </Badge>
-                            {secondsLeft === 0 && (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => handleMarkTicketed(warning.id)}
-                              >
-                                Ticketed
-                              </Button>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
+                    {activeWarnings.slice(0, 5).map((warning) => (
+                      <WarningTimer
+                        key={warning.id}
+                        violation={warning}
+                        onCancel={handleClearWarning}
+                        onIssueTicket={handleMarkTicketed}
+                      />
+                    ))}
                   </div>
                 )}
               </div>

@@ -67,6 +67,8 @@ export interface Violation {
   message?: string;
   detectionId?: string;
   vehicleType?: string;
+  /** When an SMS was successfully logged for this violation (from sms_logs). */
+  smsSentAt?: Date;
 }
 
 export type ViolationStatus = Violation['status'];

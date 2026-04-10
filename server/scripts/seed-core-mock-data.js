@@ -1,6 +1,7 @@
 import db from '../database.js';
 import { pathToFileURL } from 'url';
 import { RESIDENT_STREET_OPTIONS, composeResidentAddress } from '../residentStreets.js';
+import { GRACE_PERIOD_MINUTES } from '../routes/violations.js';
 
 const RESET_MODE = process.argv.includes('--reset');
 
@@ -470,11 +471,15 @@ function run() {
     violations.push({ ...row, id: id('VIO', vioSeq) });
   };
 
+  const graceMs = GRACE_PERIOD_MINUTES * 60 * 1000;
   for (const plate of platesWithActiveWarning) {
     const loc = cameras[randInt(rng, 0, numCameras - 1)].locationId;
-    const minutesLeft = 8 + rng() * 115;
-    const expires = isoMs(Date.now() + minutesLeft * 60 * 1000);
-    const detected = isoMs(Date.now() - rng() * 25 * 60 * 1000);
+    // warningExpiresAt is exactly timeDetected + grace (same as createViolationFromDetection). Age within
+    // [0, grace−1min] so the UI always shows between ~1 and GRACE_PERIOD_MINUTES minutes remaining.
+    const ageMs = rng() * Math.max(60 * 1000, graceMs - 60 * 1000);
+    const detectedMs = Date.now() - ageMs;
+    const detected = isoMs(detectedMs);
+    const expires = isoMs(detectedMs + graceMs);
     pushViolation({
       ticketId: null,
       plateNumber: plate,
@@ -505,11 +510,11 @@ function run() {
       const loc = cameras[randInt(rng, 0, numCameras - 1)].locationId;
       const st = pickWeighted(rng, statusHistoryWeights);
       const hoursBack = 30 + rng() * 24 * 90 + h * 20;
-      const detected = isoMs(Date.now() - hoursBack * 60 * 60 * 1000);
+      const detectedMs = Date.now() - hoursBack * 60 * 60 * 1000;
+      const detected = isoMs(detectedMs);
       const isWarning = st === 'warning';
-      const expires = isWarning
-        ? isoMs(Date.now() - rng() * 48 * 60 * 60 * 1000)
-        : null;
+      // Past warnings: expiry is still exactly grace after detection (always in the past here because hoursBack is large).
+      const expires = isWarning ? isoMs(detectedMs + GRACE_PERIOD_MINUTES * 60 * 1000) : null;
       pushViolation({
         ticketId: st === 'issued' ? `TCK-${100000 + vioSeq}` : null,
         plateNumber: plate,

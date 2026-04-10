@@ -30,6 +30,7 @@ export default function Warnings() {
         timeDetected: new Date(v.timeDetected),
         timeIssued: v.timeIssued ? new Date(v.timeIssued) : undefined,
         warningExpiresAt: v.warningExpiresAt ? new Date(v.warningExpiresAt) : undefined,
+        smsSentAt: v.smsSentAt ? new Date(v.smsSentAt) : undefined,
       }));
       setViolations(processedViolations);
     } catch (error) {
