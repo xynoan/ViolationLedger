@@ -21,6 +21,8 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
 import { CameraFeed } from '@/components/dashboard/CameraFeed';
+import { RangeSnapshotCard } from '@/components/dashboard/RangeSnapshotCard';
+import { InsightTooltipShell, formatDeltaComparison } from '@/components/dashboard/InsightChartTooltip';
 import { WarningTimer } from '@/components/dashboard/WarningTimer';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -30,24 +32,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import {
   ChartContainer,
   ChartTooltip,
-  ChartTooltipContent,
 } from '@/components/ui/chart';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import {
-  BarChart,
-  Bar,
-  LineChart,
-  Line,
-  PieChart,
-  Pie,
-  Cell,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  ReferenceLine,
-  Legend,
-} from 'recharts';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, ReferenceDot, Legend } from 'recharts';
 import { Vehicle, Camera as CameraType, Violation } from '@/types/parking';
 import {
   vehiclesAPI,
@@ -60,13 +48,46 @@ import {
 import { toast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 
-/** Pie slices — neutral zinc scale (reserve red/amber for live triage UI only) */
-const INSIGHT_COLORS = ['#52525b', '#71717a', '#a1a1aa', '#d4d4d8', '#3f3f46', '#78716c'];
+/** Violations vs detections — consistent analytics palette */
+const CHART_VIOLATIONS = 'hsl(var(--destructive))';
+const CHART_DETECTIONS = 'hsl(221 83% 53%)';
 
-const CHART_LINE_A = '#52525b';
-const CHART_LINE_B = '#a1a1aa';
-const CHART_BAR = '#71717a';
-const CHART_REF = '#a3a3a3';
+/** Pie + location ranking — semantic status hues (not gray-only) */
+function statusSliceColor(statusName: string): string {
+  const key = statusName.toLowerCase();
+  if (key.includes('warning')) return 'hsl(var(--warning))';
+  if (key.includes('issued')) return 'hsl(var(--destructive))';
+  if (key.includes('pending')) return 'hsl(25 95% 53%)';
+  if (key.includes('resolved')) return 'hsl(var(--success))';
+  if (key.includes('cleared')) return 'hsl(199 89% 48%)';
+  if (key.includes('cancel')) return 'hsl(var(--muted-foreground))';
+  return 'hsl(221 83% 53%)';
+}
+
+function topOffenderStatusBadge(
+  plate: string,
+  count: number,
+  registeredPlates: Set<string>,
+): { label: string; className: string } {
+  const normalized = plate.trim().toUpperCase();
+  if (!registeredPlates.has(normalized)) {
+    return {
+      label: 'Unregistered visitor',
+      className:
+        'border-amber-500/50 bg-amber-50/90 text-amber-950 dark:border-amber-600/50 dark:bg-amber-950/40 dark:text-amber-50',
+    };
+  }
+  if (count >= 3) {
+    return {
+      label: `${count}× repeat`,
+      className: 'border-red-500/40 bg-red-50/90 text-red-900 dark:border-red-500/45 dark:bg-red-950/40 dark:text-red-50',
+    };
+  }
+  if (count === 2) {
+    return { label: '2× repeat', className: 'border-border bg-muted/40 text-foreground' };
+  }
+  return { label: 'Single incident', className: 'border-border text-muted-foreground' };
+}
 
 type TrendData = { currentTotal: number; previousTotal: number; delta: number; deltaPct: number };
 
@@ -212,6 +233,40 @@ function topLocationFromViolations(violations: Violation[]): string | null {
 
 const THIRTY_MIN_MS = 30 * 60 * 1000;
 
+function weekdayLong(d: Date): string {
+  return d.toLocaleDateString('en-US', { weekday: 'long' });
+}
+
+function averageViolationsAtLocationOnWeekday(
+  violations: Violation[],
+  locationId: string,
+  weekday: number,
+): { average: number; sampleDays: number } {
+  const perDay = new Map<string, number>();
+  for (const v of violations) {
+    const loc = v.cameraLocationId || 'Unknown';
+    if (loc !== locationId) continue;
+    const d = new Date(v.timeDetected);
+    if (d.getDay() !== weekday) continue;
+    const key = localDateKey(d);
+    perDay.set(key, (perDay.get(key) || 0) + 1);
+  }
+  if (perDay.size === 0) return { average: 0, sampleDays: 0 };
+  let sum = 0;
+  for (const c of perDay.values()) sum += c;
+  return { average: sum / perDay.size, sampleDays: perDay.size };
+}
+
+function violationsAtLocationOnDate(violations: Violation[], locationId: string, dateKey: string): number {
+  let n = 0;
+  for (const v of violations) {
+    const loc = v.cameraLocationId || 'Unknown';
+    if (loc !== locationId) continue;
+    if (localDateKey(new Date(v.timeDetected)) === dateKey) n += 1;
+  }
+  return n;
+}
+
 function buildDailyBriefingLines(
   violations: Violation[],
   analytics: AnalyticsResponse | null,
@@ -219,6 +274,9 @@ function buildDailyBriefingLines(
   filtersActive: boolean,
 ): string[] {
   const scope = filtersActive ? 'For the selected insight filters, ' : '';
+  const now = new Date();
+  const todayKey = localDateKey(now);
+  const dow = now.getDay();
 
   const fromAnalyticsHour = analytics ? peakHourFromByHour(analytics.violations.byHour || []) : null;
   const fromViolationsHour = peakHourFromViolations(violations);
@@ -235,17 +293,25 @@ function buildDailyBriefingLines(
   const timeLabel = peak ? formatHourLabel(peak.hour) : null;
 
   let line1: string;
-  if (timeLabel && topLocation) {
-    line1 = `${scope}Traffic is peaking around ${timeLabel}, with most violations occurring at ${topLocation}.`;
+  if (topLocation) {
+    const { average, sampleDays } = averageViolationsAtLocationOnWeekday(violations, topLocation, dow);
+    const todayLoc = violationsAtLocationOnDate(violations, topLocation, todayKey);
+    if (sampleDays >= 2 && average > 0 && todayLoc > average * 1.05) {
+      const pct = Math.round(((todayLoc - average) / average) * 100);
+      line1 = `${scope}Action required: Traffic at ${topLocation} is ${pct}% higher than average for a ${weekdayLong(now)}.`;
+    } else if (sampleDays >= 2 && average > 0 && todayLoc < average * 0.95) {
+      const pct = Math.round(((average - todayLoc) / average) * 100);
+      line1 = `${scope}Lighter load: Violations at ${topLocation} are about ${pct}% below your usual ${weekdayLong(now)} average.`;
+    } else if (timeLabel) {
+      line1 = `${scope}Action required: Staff ${topLocation} most closely around ${timeLabel} on ${weekdayLong(now)} — that is the peak risk window in your data.`;
+    } else {
+      line1 = `${scope}Highest recorded volume is at ${topLocation}; refine date filters to expose time-of-day peaks.`;
+    }
   } else if (timeLabel) {
-    line1 = `${scope}Traffic is peaking around ${timeLabel} based on recorded violations.`;
-  } else if (topLocation) {
-    line1 = `${scope}The highest volume of violations is recorded at ${topLocation}.`;
+    line1 = `${scope}Action required: ${weekdayLong(now)} enforcement peaks around ${timeLabel} from recorded violations.`;
   } else {
     line1 = 'Not enough violation history yet to highlight a peak hour or primary location.';
   }
-
-  const now = new Date();
   const yesterday = new Date(now);
   yesterday.setDate(yesterday.getDate() - 1);
   const dayBefore = new Date(yesterday);
@@ -282,7 +348,6 @@ function buildDailyBriefingLines(
     }
   }
 
-  const todayKey = localDateKey(now);
   let todayCount = 0;
   for (const v of violations) {
     if (localDateKey(new Date(v.timeDetected)) === todayKey) todayCount += 1;
@@ -500,53 +565,87 @@ export default function Dashboard() {
     [cameras],
   );
 
-  const violationsOverTimeData = useMemo(
-    () =>
-      analytics?.violations.overTime
-        .map((item) => ({
-          date: new Date(item.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-          violations: item.count,
-        }))
-        .reverse() || [],
-    [analytics],
-  );
+  const violationsOverTimeData = useMemo(() => {
+    const raw = analytics?.violations.overTime ?? [];
+    if (raw.length === 0) return [];
+    const sorted = [...raw].sort((a, b) => a.date.localeCompare(b.date));
+    const countByDate = new Map(sorted.map((x) => [x.date, x.count]));
+    return sorted.map((item) => {
+      const d = new Date(item.date + 'T12:00:00');
+      const prev = new Date(item.date + 'T12:00:00');
+      prev.setDate(prev.getDate() - 1);
+      const pKey = localDateKey(prev);
+      const priorDayCount = countByDate.has(pKey) ? countByDate.get(pKey)! : null;
+      return {
+        dateShort: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        dateContext: d.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' }),
+        dateIso: item.date,
+        violations: item.count,
+        priorDayCount,
+      };
+    });
+  }, [analytics]);
 
-  const violationsByLocationData = useMemo(
-    () => analytics?.violations.byLocation.slice(0, 10) || [],
-    [analytics],
-  );
-
-  const violationsByStatusData = useMemo(
-    () =>
-      Object.entries(analytics?.violations.byStatus || {}).map(([status, count]) => ({
-        name: status.charAt(0).toUpperCase() + status.slice(1),
-        value: count,
-      })),
-    [analytics],
-  );
-
-  const descriptive = analytics?.violations.descriptive;
-  const peakHoursData = useMemo(() => {
-    const byHourMap = new Map((analytics?.violations.byHour || []).map((item) => [item.hour, item.count]));
-    return Array.from({ length: 24 }, (_, hour) => ({
-      hourLabel: `${hour.toString().padStart(2, '0')}:00`,
-      count: byHourMap.get(hour) || 0,
+  const violationsByLocationData = useMemo(() => {
+    const raw = analytics?.violations.byLocation.slice(0, 10) || [];
+    return raw.map((row, i) => ({
+      ...row,
+      nextRankCount: i < raw.length - 1 ? raw[i + 1].count : null,
+      rank: i + 1,
     }));
   }, [analytics]);
 
-  const hasPeakHoursData = peakHoursData.some((item) => item.count > 0);
+  const violationsByStatusData = useMemo(() => {
+    const entries = Object.entries(analytics?.violations.byStatus || {});
+    const total = entries.reduce((s, [, c]) => s + c, 0);
+    const n = entries.length || 1;
+    const even = total / n;
+    return entries.map(([status, count]) => ({
+      name: status.charAt(0).toUpperCase() + status.slice(1),
+      value: count,
+      pct: total > 0 ? Math.round((count / total) * 100) : 0,
+      vsEven: Math.round((count - even) * 10) / 10,
+    }));
+  }, [analytics]);
+
+  const descriptive = analytics?.violations.descriptive;
+
+  const snapshotLast7Bars = useMemo(() => {
+    const raw = analytics?.violations.overTime ?? [];
+    if (raw.length === 0) return [];
+    const sorted = [...raw].sort((a, b) => a.date.localeCompare(b.date));
+    const last = sorted.slice(-7);
+    const max = Math.max(1, ...last.map((x) => x.count));
+    return last.map((x) => ({
+      key: x.date,
+      label: new Date(x.date + 'T12:00:00').toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' }),
+      count: x.count,
+      hPct: Math.round((x.count / max) * 100),
+    }));
+  }, [analytics]);
+
+  const statusBarsSorted = useMemo(
+    () => [...violationsByStatusData].sort((a, b) => b.value - a.value),
+    [violationsByStatusData],
+  );
 
   const trafficTrendsModel = useMemo(() => {
+    type Row = {
+      hour: number;
+      hourLabel: string;
+      violations: number;
+      detections: number;
+      total: number;
+    };
     if (!analytics) {
       return {
-        rows: [] as Array<{
-          hour: number;
-          hourLabel: string;
-          violations: number;
-          detections: number;
-          total: number;
-        }>,
+        rows: [] as Row[],
         peakHour: null as number | null,
+        valleyHour: null as number | null,
+        peakHourLabel: null as string | null,
+        peakChartY: null as number | null,
+        valleyHourLabel: null as string | null,
+        valleyChartY: null as number | null,
       };
     }
     const vMap = new Map((analytics.violations.byHour || []).map((i) => [i.hour, i.count]));
@@ -572,7 +671,29 @@ export default function Dashboard() {
       }
     }
     if (best <= 0) peakHour = null;
-    return { rows, peakHour };
+
+    let valleyHour: number | null = null;
+    let worst = Infinity;
+    for (const r of rows) {
+      if (r.total < worst) {
+        worst = r.total;
+        valleyHour = r.hour;
+      }
+    }
+    if (peakHour === valleyHour) valleyHour = null;
+
+    const peakRow = peakHour != null ? rows.find((r) => r.hour === peakHour) ?? null : null;
+    const valleyRow = valleyHour != null ? rows.find((r) => r.hour === valleyHour) ?? null : null;
+
+    return {
+      rows,
+      peakHour,
+      valleyHour,
+      peakHourLabel: peakRow?.hourLabel ?? null,
+      peakChartY: peakRow != null ? Math.max(peakRow.violations, peakRow.detections) : null,
+      valleyHourLabel: valleyRow?.hourLabel ?? null,
+      valleyChartY: valleyRow != null ? Math.max(valleyRow.violations, valleyRow.detections) : null,
+    };
   }, [analytics]);
 
   const hasTrafficTrendsData = trafficTrendsModel.rows.some((r) => r.violations > 0 || r.detections > 0);
@@ -622,7 +743,7 @@ export default function Dashboard() {
       rows.push('Date,Violations');
       if (violationsOverTimeData.length > 0) {
         for (const item of violationsOverTimeData) {
-          rows.push(`${escapeCsvValue(item.date)},${escapeCsvValue(item.violations)}`);
+          rows.push(`${escapeCsvValue(item.dateIso)},${escapeCsvValue(item.violations)}`);
         }
       } else {
         rows.push('No data,0');
@@ -697,6 +818,15 @@ export default function Dashboard() {
     return Math.min(100, Math.round(camScore + detScore));
   }, [cameras.length, onlineCameras.length, detectionEnabled]);
   const registeredPlates = vehicles.map((vehicle) => vehicle.plateNumber);
+  const registeredPlateSet = useMemo(
+    () => new Set(registeredPlates.map((p) => p.trim().toUpperCase()).filter(Boolean)),
+    [registeredPlates],
+  );
+
+  const primaryMonitorLocation =
+    firstOnlineCamera?.locationId ??
+    cameras.find((c) => c.locationId)?.locationId ??
+    'Twin Peaks Drive';
 
   const hasData = vehicles.length > 0 || cameras.length > 0 || violations.length > 0;
 
@@ -706,6 +836,23 @@ export default function Dashboard() {
       ? `/warnings?locationId=${encodeURIComponent(locationFilter)}`
       : '/warnings';
   const violationsUnpaidHref = `/violations${violationsInsightSearch(startDate, endDate, locationFilter)}`;
+  const collectionReportHref = `/violations${violationsInsightSearch(startDate, endDate, locationFilter, { status: 'issued' })}`;
+
+  const insightRangeCaption = useMemo(() => {
+    if (startDate && endDate) return `${startDate} → ${endDate}`;
+    if (startDate) return `From ${startDate}`;
+    if (endDate) return `Through ${endDate}`;
+    return 'All dates in view';
+  }, [startDate, endDate]);
+
+  const tooltipDayStamp = useMemo(() => {
+    const anchor = endDate
+      ? new Date(endDate + 'T12:00:00')
+      : startDate
+        ? new Date(startDate + 'T12:00:00')
+        : new Date();
+    return anchor.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' });
+  }, [startDate, endDate]);
 
   if (isDashboardLoading) {
     return (
@@ -835,38 +982,93 @@ export default function Dashboard() {
                   </div>
                 </div>
 
-                <div className="glass-card rounded-xl border border-border bg-card p-4 shadow-sm">
+                <div className="glass-card flex min-h-[360px] flex-col rounded-xl border border-border bg-card p-4 shadow-sm">
                   <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2 border-b border-border/60 pb-3">
                     <h2 className="text-sm font-semibold tracking-tight text-foreground">Active warnings</h2>
-                    <span className="text-xs tabular-nums text-muted-foreground">{activeWarnings.length} queue</span>
+                    <span className="text-xs tabular-nums text-muted-foreground">{activeWarnings.length} in queue</span>
                   </div>
-                  {activeWarnings.length === 0 ? (
-                    <div className="rounded-lg border border-dashed border-border py-10 text-center">
-                      <CheckCircle className="mx-auto mb-2 h-9 w-9 text-muted-foreground opacity-70" />
-                      <p className="text-sm text-muted-foreground">Queue clear.</p>
-                    </div>
-                  ) : (
-                    <div className="max-h-[min(72vh,720px)] space-y-2 overflow-y-auto pr-1">
-                      {activeWarnings.map((warning) => (
+                  <p className="mb-3 text-[11px] leading-snug text-muted-foreground">
+                    Showing the highest-priority warning. Review and act on the full queue on the Warnings page.
+                  </p>
+                  <div className="flex min-h-[240px] flex-1 flex-col">
+                    {activeWarnings.length === 0 ? (
+                      <div className="flex flex-1 flex-col items-center justify-center rounded-lg border border-dashed border-border px-3 py-8 text-center">
+                        <CheckCircle className="mb-2 h-9 w-9 text-emerald-600/80 dark:text-emerald-400/90" aria-hidden />
+                        <p className="text-sm font-medium text-foreground">System is active.</p>
+                        <p className="mx-auto mt-1.5 max-w-md text-xs leading-relaxed text-muted-foreground">
+                          The AI is currently monitoring {primaryMonitorLocation}. New infractions will appear here in
+                          real-time.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="flex flex-1 flex-col gap-2">
                         <WarningTimer
-                          key={warning.id}
-                          violation={warning}
+                          key={activeWarnings[0].id}
+                          violation={activeWarnings[0]}
                           compact
                           onCancel={handleClearWarning}
                           onIssueTicket={handleMarkTicketed}
                           onSendSms={handleSendSms}
                         />
-                      ))}
-                    </div>
-                  )}
-                  {activeWarnings.length > 0 ? (
-                    <div className="mt-3 flex justify-end border-t border-border/60 pt-2">
-                      <Button variant="link" size="sm" className="h-auto p-0 text-xs" asChild>
-                        <Link to={warningsReviewHref}>Open warnings workspace</Link>
-                      </Button>
-                    </div>
-                  ) : null}
+                        {activeWarnings.length > 1 ? (
+                          <div className="relative mt-1">
+                            <div
+                              className="relative max-h-[10.5rem] overflow-hidden rounded-xl border border-border/70 bg-muted/20 shadow-inner"
+                              aria-label="Next warning in queue (preview)"
+                            >
+                              <div className="pointer-events-none select-none opacity-[0.97]">
+                                <WarningTimer
+                                  key={activeWarnings[1].id}
+                                  violation={activeWarnings[1]}
+                                  compact
+                                  onCancel={handleClearWarning}
+                                  onIssueTicket={handleMarkTicketed}
+                                  onSendSms={handleSendSms}
+                                />
+                              </div>
+                              <div
+                                className="pointer-events-none absolute inset-0 bg-gradient-to-t from-card from-[42%] via-card/80 to-transparent dark:from-card"
+                                aria-hidden
+                              />
+                              <div className="absolute inset-x-0 bottom-0 z-[1] flex items-end justify-center px-3 pb-3 pt-10">
+                                <p className="pointer-events-auto text-center text-xs leading-snug">
+                                  <span className="font-medium tabular-nums text-foreground drop-shadow-[0_1px_2px_rgba(0,0,0,0.06)] dark:drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)]">
+                                    <span className="tabular-nums">{activeWarnings.length - 1}</span> more in queue —{' '}
+                                    <Link
+                                      to={warningsReviewHref}
+                                      className="text-primary underline-offset-2 hover:underline"
+                                    >
+                                      view all on Warnings
+                                    </Link>
+                                  </span>
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    )}
+                  </div>
+                  <div className="mt-auto flex justify-end border-t border-border/60 pt-2">
+                    <Button variant="link" size="sm" className="h-auto p-0 text-xs" asChild>
+                      <Link to={warningsReviewHref}>Open warnings workspace</Link>
+                    </Button>
+                  </div>
                 </div>
+
+                {isAnalyticsLoading && !analytics ? (
+                  <div className="glass-card flex min-h-[200px] flex-1 items-center justify-center rounded-xl border border-border bg-card p-6 shadow-sm">
+                    <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" aria-hidden />
+                  </div>
+                ) : analytics ? (
+                  <RangeSnapshotCard
+                    insightRangeCaption={insightRangeCaption}
+                    sevenDayComparison={analytics.violations.descriptive?.sevenDayComparison}
+                    snapshotLast7Bars={snapshotLast7Bars}
+                    statusBarsSorted={statusBarsSorted}
+                    violationsByLocationData={violationsByLocationData}
+                  />
+                ) : null}
               </div>
 
               <aside className="flex min-w-0 flex-col gap-4 lg:col-span-4" aria-label="Context">
@@ -877,15 +1079,21 @@ export default function Dashboard() {
                       {activeWarnings.length}
                     </p>
                   </div>
-                  <Link
-                    to={violationsUnpaidHref}
-                    className="glass-card rounded-xl border border-border bg-card p-4 text-center shadow-sm transition-shadow hover:shadow-md hover:ring-1 hover:ring-primary/15"
-                  >
+                  <div className="glass-card rounded-xl border border-border bg-card p-4 text-center shadow-sm">
                     <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Unpaid violations</p>
-                    <p className="mt-1 text-2xl font-semibold tabular-nums text-red-600 dark:text-red-400">
+                    <Link
+                      to={violationsUnpaidHref}
+                      className="mt-1 block rounded-md text-2xl font-semibold tabular-nums text-red-600 outline-none ring-offset-background transition-colors hover:text-red-700 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 dark:text-red-400 dark:hover:text-red-300"
+                    >
                       {unpaidViolationsCount}
-                    </p>
-                  </Link>
+                    </Link>
+                    <Link
+                      to={collectionReportHref}
+                      className="mt-2 inline-block text-[10px] font-medium text-primary underline-offset-2 hover:underline"
+                    >
+                      View collection report
+                    </Link>
+                  </div>
                   <div className="glass-card rounded-xl border border-border bg-card p-4 text-center shadow-sm">
                     <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Occupied spots</p>
                     <p className="mt-1 text-2xl font-semibold tabular-nums text-foreground">{occupiedSpotsCount}</p>
@@ -905,7 +1113,9 @@ export default function Dashboard() {
                   {!analytics ? (
                     <p className="text-xs text-muted-foreground">Load analytics to populate.</p>
                   ) : (analytics.violations.topVisitors ?? []).length === 0 ? (
-                    <p className="text-xs text-muted-foreground">None in range.</p>
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      No repeat offenders detected in the selected time period. Parking compliance is currently high.
+                    </p>
                   ) : (
                     <div className="max-h-48 overflow-y-auto">
                       <table className="w-full text-left text-xs">
@@ -916,12 +1126,22 @@ export default function Dashboard() {
                           </tr>
                         </thead>
                         <tbody>
-                          {(analytics.violations.topVisitors ?? []).slice(0, 8).map((row, idx) => (
-                            <tr key={`${row.plateNumber}-${idx}`} className="border-b border-border/50 last:border-0">
-                              <td className="py-1.5 pr-2 font-mono text-foreground">{row.plateNumber}</td>
-                              <td className="py-1.5 text-right tabular-nums text-muted-foreground">{row.count}</td>
-                            </tr>
-                          ))}
+                          {(analytics.violations.topVisitors ?? []).slice(0, 8).map((row, idx) => {
+                            const badge = topOffenderStatusBadge(row.plateNumber, row.count, registeredPlateSet);
+                            return (
+                              <tr key={`${row.plateNumber}-${idx}`} className="border-b border-border/50 last:border-0">
+                                <td className="py-1.5 pr-2">
+                                  <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                                    <span className="font-mono text-foreground">{row.plateNumber}</span>
+                                    <Badge variant="outline" className={cn('text-[10px] font-normal', badge.className)}>
+                                      {badge.label}
+                                    </Badge>
+                                  </div>
+                                </td>
+                                <td className="py-1.5 text-right tabular-nums text-muted-foreground">{row.count}</td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
@@ -967,7 +1187,11 @@ export default function Dashboard() {
             </Fragment>
           )}
 
-          <section className="lg:col-span-12 min-w-0" aria-labelledby="dashboard-insights-heading">
+          <section
+            id="dashboard-full-analytics"
+            className="lg:col-span-12 min-w-0 scroll-mt-4"
+            aria-labelledby="dashboard-insights-heading"
+          >
             <div className="glass-card rounded-xl border border-border bg-card p-4 shadow-sm">
               <div className="mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-border/60 pb-3">
                 <h2 id="dashboard-insights-heading" className="text-sm font-semibold tracking-tight text-foreground">
@@ -1045,101 +1269,142 @@ export default function Dashboard() {
             </div>
           ) : (
             <div className="pt-1">
-              <Tabs defaultValue="volume" className="w-full">
-                <TabsList className="grid h-9 w-full max-w-lg grid-cols-3 gap-1 p-1">
-                  <TabsTrigger value="volume" className="text-xs sm:text-sm">
-                    Volume
+              <Tabs defaultValue="traffic" className="w-full">
+                <TabsList className="grid h-9 w-full max-w-md grid-cols-2 gap-1 p-1">
+                  <TabsTrigger value="traffic" className="text-xs sm:text-sm">
+                    Traffic
                   </TabsTrigger>
-                  <TabsTrigger value="trends" className="text-xs sm:text-sm">
-                    Trends
-                  </TabsTrigger>
-                  <TabsTrigger value="status" className="text-xs sm:text-sm">
-                    Status
+                  <TabsTrigger value="pipeline" className="text-xs sm:text-sm">
+                    Pipeline & places
                   </TabsTrigger>
                 </TabsList>
 
-                <TabsContent value="volume" className="mt-4 outline-none">
+                <TabsContent value="traffic" className="mt-4 outline-none">
                   {hasTrafficTrendsData ? (
                     <>
+                      <p className="mb-2 text-xs text-muted-foreground">
+                        Hourly volume: compare enforcement (violations) against camera activity (detections).
+                      </p>
+                      <div className="mb-3 flex flex-wrap items-center gap-x-6 gap-y-2 text-xs">
+                        <span className="flex items-center gap-2">
+                          <span className="h-2.5 w-8 shrink-0 rounded-full" style={{ background: CHART_DETECTIONS }} />
+                          <span>
+                            <span className="font-semibold" style={{ color: CHART_DETECTIONS }}>
+                              Blue line
+                            </span>{' '}
+                            = Detections
+                          </span>
+                        </span>
+                        <span className="flex items-center gap-2">
+                          <span className="h-2.5 w-8 shrink-0 rounded-full" style={{ background: CHART_VIOLATIONS }} />
+                          <span>
+                            <span className="font-semibold text-destructive">Red line</span> = Violations
+                          </span>
+                        </span>
+                      </div>
                       <ChartContainer
                         config={{
-                          violations: { label: 'Violations', color: CHART_LINE_A },
-                          detections: { label: 'Detections', color: CHART_LINE_B },
+                          violations: { label: 'Violations', color: CHART_VIOLATIONS },
+                          detections: { label: 'Detections', color: CHART_DETECTIONS },
                         }}
-                        className="aspect-[21/9] min-h-[200px] w-full sm:aspect-[2/1]"
+                        className="aspect-[21/9] min-h-[220px] w-full sm:aspect-[2/1]"
                       >
-                        <LineChart data={trafficTrendsModel.rows} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                        <LineChart
+                          data={trafficTrendsModel.rows}
+                          margin={{ top: 28, right: 12, left: 8, bottom: 8 }}
+                        >
                           <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                           <XAxis dataKey="hourLabel" interval={2} tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} />
-                          <YAxis allowDecimals={false} width={36} tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} />
-                          <ChartTooltip content={<ChartTooltipContent />} />
-                          <Legend wrapperStyle={{ fontSize: '12px' }} />
-                          {trafficTrendsModel.peakHour != null ? (
-                            <ReferenceLine
-                              x={`${String(trafficTrendsModel.peakHour).padStart(2, '0')}:00`}
-                              stroke={CHART_REF}
-                              strokeDasharray="5 4"
-                              strokeWidth={1.5}
-                              label={{
-                                value: 'Peak',
-                                position: 'top',
-                                fill: 'hsl(var(--muted-foreground))',
-                                fontSize: 11,
-                              }}
-                            />
-                          ) : null}
+                          <YAxis
+                            allowDecimals={false}
+                            width={40}
+                            tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
+                            label={{
+                              value: 'Total count',
+                              angle: -90,
+                              position: 'insideLeft',
+                              offset: 10,
+                              style: { fill: 'hsl(var(--muted-foreground))', fontSize: 11, fontWeight: 500 },
+                            }}
+                          />
+                          <ChartTooltip
+                            content={({ active, payload, label }) => {
+                              if (!active || !payload?.length) return null;
+                              const hourLabel = String(label ?? '');
+                              const idx = trafficTrendsModel.rows.findIndex((r) => r.hourLabel === hourLabel);
+                              const prev = idx > 0 ? trafficTrendsModel.rows[idx - 1] : null;
+                              const ctx = `${tooltipDayStamp} · ${hourLabel} (${insightRangeCaption})`;
+                              const rows = payload.map((p) => {
+                                const key = String(p.dataKey ?? '');
+                                const val = Number(p.value);
+                                let comparison: string | null = null;
+                                if (prev) {
+                                  const pv = key === 'violations' ? prev.violations : prev.detections;
+                                  comparison = formatDeltaComparison(val - pv, 'prior hour');
+                                } else {
+                                  comparison = 'No prior hour on chart (first bin).';
+                                }
+                                const metric =
+                                  key === 'violations' ? 'Violations' : key === 'detections' ? 'Detections' : key;
+                                return { metric, value: val, comparison };
+                              });
+                              return <InsightTooltipShell contextLabel={ctx} rows={rows} />;
+                            }}
+                          />
                           <Line
                             type="monotone"
                             dataKey="violations"
                             name="Violations"
-                            stroke={CHART_LINE_A}
+                            stroke={CHART_VIOLATIONS}
                             strokeWidth={2}
-                            dot={(dotProps: { cx?: number; cy?: number; payload?: { hour: number } }) => {
-                              const { cx = 0, cy = 0, payload } = dotProps;
-                              const isPeak =
-                                trafficTrendsModel.peakHour != null && payload?.hour === trafficTrendsModel.peakHour;
-                              if (isPeak) {
-                                return (
-                                  <circle
-                                    cx={cx}
-                                    cy={cy}
-                                    r={5}
-                                    fill={CHART_REF}
-                                    stroke="hsl(var(--background))"
-                                    strokeWidth={2}
-                                  />
-                                );
-                              }
-                              return <circle cx={cx} cy={cy} r={2.5} fill={CHART_LINE_A} />;
-                            }}
-                            activeDot={{ r: 6 }}
+                            dot={{ r: 2.5, fill: CHART_VIOLATIONS }}
+                            activeDot={{ r: 5 }}
                           />
                           <Line
                             type="monotone"
                             dataKey="detections"
                             name="Detections"
-                            stroke={CHART_LINE_B}
+                            stroke={CHART_DETECTIONS}
                             strokeWidth={2}
-                            dot={(dotProps: { cx?: number; cy?: number; payload?: { hour: number } }) => {
-                              const { cx = 0, cy = 0, payload } = dotProps;
-                              const isPeak =
-                                trafficTrendsModel.peakHour != null && payload?.hour === trafficTrendsModel.peakHour;
-                              if (isPeak) {
-                                return (
-                                  <circle
-                                    cx={cx}
-                                    cy={cy}
-                                    r={5}
-                                    fill={CHART_REF}
-                                    stroke="hsl(var(--background))"
-                                    strokeWidth={2}
-                                  />
-                                );
-                              }
-                              return <circle cx={cx} cy={cy} r={2.5} fill={CHART_LINE_B} />;
-                            }}
-                            activeDot={{ r: 6 }}
+                            dot={{ r: 2.5, fill: CHART_DETECTIONS }}
+                            activeDot={{ r: 5 }}
                           />
+                          {trafficTrendsModel.peakHourLabel != null && trafficTrendsModel.peakChartY != null ? (
+                            <ReferenceDot
+                              x={trafficTrendsModel.peakHourLabel}
+                              y={trafficTrendsModel.peakChartY}
+                              r={0}
+                              fill="transparent"
+                              stroke="none"
+                              isFront
+                              label={{
+                                value: 'High traffic',
+                                position: 'top',
+                                fill: CHART_DETECTIONS,
+                                fontSize: 11,
+                                fontWeight: 600,
+                              }}
+                            />
+                          ) : null}
+                          {trafficTrendsModel.valleyHourLabel != null &&
+                          trafficTrendsModel.valleyChartY != null &&
+                          trafficTrendsModel.peakHour !== trafficTrendsModel.valleyHour ? (
+                            <ReferenceDot
+                              x={trafficTrendsModel.valleyHourLabel}
+                              y={trafficTrendsModel.valleyChartY}
+                              r={0}
+                              fill="transparent"
+                              stroke="none"
+                              isFront
+                              label={{
+                                value: 'Low activity',
+                                position: trafficTrendsModel.valleyChartY <= 0 ? 'insideBottom' : 'top',
+                                fill: 'hsl(var(--muted-foreground))',
+                                fontSize: 11,
+                                fontWeight: 600,
+                              }}
+                            />
+                          ) : null}
                         </LineChart>
                       </ChartContainer>
                       <p className="mt-3 border-t border-border/60 pt-3 text-xs text-muted-foreground">{trafficStaffingCaption}</p>
@@ -1151,37 +1416,11 @@ export default function Dashboard() {
                   )}
                 </TabsContent>
 
-                <TabsContent value="trends" className="mt-4 space-y-6 outline-none">
-                  <div>
-                    {hasPeakHoursData ? (
-                      <ChartContainer config={{ count: { label: 'Violations', color: CHART_BAR } }}>
-                        <BarChart data={peakHoursData}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                          <XAxis dataKey="hourLabel" interval={2} tick={{ fill: 'hsl(var(--muted-foreground))' }} />
-                          <YAxis tick={{ fill: 'hsl(var(--muted-foreground))' }} />
-                          <ChartTooltip content={<ChartTooltipContent />} />
-                          <Bar dataKey="count" fill={CHART_BAR} radius={[4, 4, 0, 0]} />
-                        </BarChart>
-                      </ChartContainer>
-                    ) : (
-                      <div className="flex min-h-[120px] items-center justify-center text-sm text-muted-foreground">No peak-hour data</div>
-                    )}
-                  </div>
-                  <div>
-                    {violationsOverTimeData.length > 0 ? (
-                      <ChartContainer config={{ violations: { label: 'Violations', color: CHART_LINE_A } }}>
-                        <LineChart data={violationsOverTimeData}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                          <XAxis dataKey="date" tick={{ fill: 'hsl(var(--muted-foreground))' }} />
-                          <YAxis tick={{ fill: 'hsl(var(--muted-foreground))' }} />
-                          <ChartTooltip content={<ChartTooltipContent />} />
-                          <Line type="monotone" dataKey="violations" stroke={CHART_LINE_A} strokeWidth={2} />
-                        </LineChart>
-                      </ChartContainer>
-                    ) : (
-                      <div className="flex min-h-[120px] items-center justify-center text-sm text-muted-foreground">No trend series</div>
-                    )}
-                  </div>
+                <TabsContent value="pipeline" className="mt-4 space-y-6 outline-none">
+                  <p className="text-xs text-muted-foreground">
+                    <span className="font-medium text-foreground">Readable view:</span> same data as charts, shown as
+                    progress bars and ranked rows — easier to scan than multiple graph types.
+                  </p>
                   <div className="rounded-xl border border-border bg-muted/30 p-4 shadow-sm">
                     <div className="grid grid-cols-1 gap-3 text-xs sm:grid-cols-3 sm:gap-4">
                       <div className="space-y-1">
@@ -1212,61 +1451,74 @@ export default function Dashboard() {
                       </div>
                     </div>
                   </div>
-                </TabsContent>
-
-                <TabsContent value="status" className="mt-4 outline-none">
                   <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                     <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
-                      <p className="mb-2 text-xs font-medium text-muted-foreground">By status</p>
-                      {violationsByStatusData.length > 0 ? (
-                        <ChartContainer
-                          config={violationsByStatusData.reduce(
-                            (acc, item, index) => {
-                              acc[item.name.toLowerCase()] = {
-                                label: item.name,
-                                color: INSIGHT_COLORS[index % INSIGHT_COLORS.length],
-                              };
-                              return acc;
-                            },
-                            {} as Record<string, { label: string; color: string }>,
-                          )}
-                        >
-                          <PieChart>
-                            <Pie
-                              data={violationsByStatusData}
-                              cx="50%"
-                              cy="50%"
-                              labelLine={false}
-                              label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                              outerRadius={72}
-                              fill="#a1a1aa"
-                              dataKey="value"
-                            >
-                              {violationsByStatusData.map((_, index) => (
-                                <Cell key={`cell-${index}`} fill={INSIGHT_COLORS[index % INSIGHT_COLORS.length]} />
-                              ))}
-                            </Pie>
-                            <ChartTooltip content={<ChartTooltipContent />} />
-                          </PieChart>
-                        </ChartContainer>
+                      <p className="mb-1 text-xs font-medium text-muted-foreground">By status</p>
+                      <p className="mb-3 text-[11px] text-muted-foreground">
+                        Share of violations in each state — width shows portion of the whole.
+                      </p>
+                      {statusBarsSorted.length > 0 ? (
+                        <div className="space-y-3">
+                          {statusBarsSorted.map((s) => (
+                            <div key={s.name}>
+                              <div className="flex justify-between gap-2 text-xs">
+                                <span className="truncate font-medium text-foreground">{s.name}</span>
+                                <span className="shrink-0 tabular-nums text-muted-foreground">
+                                  {s.value.toLocaleString()} ({s.pct}%)
+                                </span>
+                              </div>
+                              <div className="mt-1.5 h-2.5 overflow-hidden rounded-full bg-muted">
+                                <div
+                                  className="h-full rounded-full transition-[width]"
+                                  style={{ width: `${s.pct}%`, backgroundColor: statusSliceColor(s.name) }}
+                                />
+                              </div>
+                              <p className="mt-0.5 text-[10px] text-muted-foreground">
+                                {Math.abs(s.vsEven) < 0.05
+                                  ? 'Matches an even split across statuses.'
+                                  : `${formatDeltaComparison(Math.round(s.vsEven), 'even split per status')}`}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
                       ) : (
-                        <div className="flex min-h-[160px] items-center justify-center text-sm text-muted-foreground">No data</div>
+                        <div className="flex min-h-[120px] items-center justify-center text-sm text-muted-foreground">No data</div>
                       )}
                     </div>
                     <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
-                      <p className="mb-2 text-xs font-medium text-muted-foreground">Top locations</p>
+                      <p className="mb-1 text-xs font-medium text-muted-foreground">Where violations concentrate</p>
+                      <p className="mb-3 text-[11px] text-muted-foreground">
+                        Longer bar = more volume vs the busiest location in this range.
+                      </p>
                       {violationsByLocationData.length > 0 ? (
-                        <ChartContainer config={{ count: { label: 'Violations', color: CHART_BAR } }}>
-                          <BarChart data={violationsByLocationData} layout="vertical">
-                            <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                            <XAxis type="number" tick={{ fill: 'hsl(var(--muted-foreground))' }} />
-                            <YAxis dataKey="cameraLocationId" type="category" width={100} tick={{ fill: 'hsl(var(--muted-foreground))' }} />
-                            <ChartTooltip content={<ChartTooltipContent />} />
-                            <Bar dataKey="count" fill={CHART_BAR} radius={[0, 4, 4, 0]} />
-                          </BarChart>
-                        </ChartContainer>
+                        <div className="space-y-3">
+                          {violationsByLocationData.map((loc) => {
+                            const top = violationsByLocationData[0]?.count || 1;
+                            const w = Math.round((loc.count / top) * 100);
+                            const next = loc.nextRankCount;
+                            const gap =
+                              next != null ? formatDeltaComparison(loc.count - next, 'next ranked zone') : 'Lowest in this list.';
+                            return (
+                              <div key={loc.cameraLocationId}>
+                                <div className="flex justify-between gap-2 text-xs">
+                                  <span className="truncate font-medium text-foreground">{loc.cameraLocationId}</span>
+                                  <span className="shrink-0 tabular-nums text-muted-foreground">
+                                    {loc.count.toLocaleString()}
+                                  </span>
+                                </div>
+                                <div className="mt-1.5 h-2.5 overflow-hidden rounded-full bg-muted">
+                                  <div
+                                    className="h-full rounded-full bg-destructive/75"
+                                    style={{ width: `${w}%` }}
+                                  />
+                                </div>
+                                <p className="mt-0.5 text-[10px] text-muted-foreground">{gap}</p>
+                              </div>
+                            );
+                          })}
+                        </div>
                       ) : (
-                        <div className="flex min-h-[160px] items-center justify-center text-sm text-muted-foreground">No data</div>
+                        <div className="flex min-h-[120px] items-center justify-center text-sm text-muted-foreground">No data</div>
                       )}
                     </div>
                   </div>

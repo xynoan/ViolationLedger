@@ -52,10 +52,23 @@ export const CameraFeed = memo(function CameraFeed({
     deviceId: camera.deviceId,
     isOnline,
   });
-  const {
-    detections,
-    workerStatus,
-  } = useYoloDetection(camera.id, isOnline);
+  const { detections, workerStatus, lastDetectionAt } = useYoloDetection(camera.id, isOnline);
+
+  const lastMotionLabel = (() => {
+    const capMs = new Date(camera.lastCapture).getTime();
+    const ms =
+      isOnline && lastDetectionAt != null
+        ? Math.max(lastDetectionAt, Number.isFinite(capMs) ? capMs : lastDetectionAt)
+        : Number.isFinite(capMs)
+          ? capMs
+          : lastDetectionAt;
+    if (ms == null || !Number.isFinite(ms)) return 'Waiting for first frame…';
+    const diff = Date.now() - ms;
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return 'just now';
+    if (mins === 1) return '1 min ago';
+    return `${mins} mins ago`;
+  })();
 
   const handleRefresh = useCallback(() => {
     refreshStream();
@@ -79,6 +92,16 @@ export const CameraFeed = memo(function CameraFeed({
           isOnline={isOnline}
           onDelete={canDelete && onDelete ? () => setShowDeleteDialog(true) : undefined}
         />
+
+        <div className="border-b border-border bg-muted/30 px-4 py-2">
+          <p className="text-xs text-muted-foreground">
+            Last motion detected:{' '}
+            <span className="font-medium text-foreground">{lastMotionLabel}</span>
+            <span className="text-muted-foreground/80">
+              {isOnline ? ' · AI worker stream' : ' · last server capture'}
+            </span>
+          </p>
+        </div>
 
         <div className={cn('relative bg-muted flex items-center justify-center overflow-hidden aspect-video')}>
           <VideoPlayer

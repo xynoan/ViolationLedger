@@ -30,6 +30,8 @@ export function useDetectionStream(
   const [isConnected, setIsConnected] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
   const [workerStatus, setWorkerStatus] = useState<string | null>(null);
+  /** Wall-clock time of the last worker `detection` message (proxy for “motion / frames processed”). */
+  const [lastDetectionAt, setLastDetectionAt] = useState<number | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
 
@@ -39,6 +41,7 @@ export function useDetectionStream(
       setIsConnected(false);
       setLastError(null);
       setWorkerStatus(null);
+      setLastDetectionAt(null);
       return;
     }
 
@@ -47,6 +50,7 @@ export function useDetectionStream(
       setIsConnected(false);
       setLastError(null);
       setWorkerStatus(null);
+      setLastDetectionAt(null);
       return;
     }
 
@@ -68,6 +72,7 @@ export function useDetectionStream(
           try {
             const msg = JSON.parse(event.data);
             if (msg.type === 'detection' && msg.cameraId === cameraId) {
+              setLastDetectionAt(Date.now());
               const vehicles = msg.vehicles ?? [];
               const plates = msg.plates ?? [];
               const next: Detection[] = [
@@ -136,6 +141,7 @@ export function useDetectionStream(
     isConnected,
     lastError,
     workerStatus,
+    lastDetectionAt,
   };
 }
 
