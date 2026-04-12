@@ -44,10 +44,7 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
 }, ref) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const deviceSource = String(camera.deviceId || '').trim();
-  const isHttpsPage = window.location.protocol === 'https:';
-  const directMjpegUrl = isHttpsPage
-    ? (/^https:\/\//i.test(deviceSource) ? deviceSource : null)
-    : (/^https?:\/\//i.test(deviceSource) ? deviceSource : null);
+  const directMjpegUrl = /^https?:\/\//i.test(deviceSource) ? deviceSource : null;
   const hasStream = stream !== null && camera.deviceId;
   const showDirectMjpegFallback = !hasStream && !!directMjpegUrl;
   const {
