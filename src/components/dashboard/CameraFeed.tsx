@@ -47,7 +47,6 @@ export const CameraFeed = memo(function CameraFeed({
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const isOnline = camera.status === 'online';
 
-  // Custom hooks: stream from go2rtc, detections from server-side RTSP worker
   const { stream, refresh: refreshStream } = useCameraStream({
     deviceId: camera.deviceId,
     isOnline,

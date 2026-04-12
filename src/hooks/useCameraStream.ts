@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { mergeGo2rtcWsDefaults } from '@/lib/go2rtcConfig';
 
 interface UseCameraStreamOptions {
   /**
@@ -10,15 +9,18 @@ interface UseCameraStreamOptions {
   isOnline: boolean;
 }
 
-const upgradeWsForHttpsPage = (urls: string[]): string[] => {
-  if (typeof window === 'undefined' || window.location.protocol !== 'https:') {
-    return urls;
+const DEFAULT_GO2RTC_WS_BASE_URLS = (() => {
+  // Prefer same-origin proxy first. Under HTTPS, never fall back to ws:// to avoid mixed-content blocks.
+  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  const sameOriginProxy = `${proto}://${window.location.host}/go2rtc`;
+  if (window.location.protocol === 'https:') {
+    return [sameOriginProxy];
   }
-  return urls.map((u) => (u.startsWith('ws://') ? `wss://${u.slice('ws://'.length)}` : u));
-};
+  return [sameOriginProxy, `${proto}://${window.location.hostname}:1984`];
+})();
 
 const normalizeGo2rtcWsUrls = (rawUrl?: string): string[] => {
-  const fallback = upgradeWsForHttpsPage(mergeGo2rtcWsDefaults());
+  const fallback = DEFAULT_GO2RTC_WS_BASE_URLS;
   const trimmed = rawUrl?.trim();
   if (!trimmed) return fallback;
 
@@ -49,9 +51,9 @@ const normalizeGo2rtcWsUrls = (rawUrl?: string): string[] => {
   return [trimmed];
 };
 
-const GO2RTC_WS_BASE_URLS = normalizeGo2rtcWsUrls(import.meta.env.VITE_GO2RTC_WS_URL);
+const GO2RTC_WS_BASE_URLS = normalizeGo2rtcWsUrls((import.meta.env as any).VITE_GO2RTC_WS_URL);
 // Streams should be on by default; disable only when explicitly set to "true".
-const WS_DISABLED = import.meta.env.VITE_DISABLE_WS === 'true';
+const WS_DISABLED = (import.meta.env as any).VITE_DISABLE_WS === 'true';
 
 export function useCameraStream({ deviceId, isOnline }: UseCameraStreamOptions) {
   const [stream, setStream] = useState<MediaStream | null>(null);
@@ -141,7 +143,8 @@ export function useCameraStream({ deviceId, isOnline }: UseCameraStreamOptions) 
           isConnectingRef.current = false;
 
           // If using defaults and current target failed, try next target.
-          if (import.meta.env.VITE_GO2RTC_WS_URL?.trim()) {
+          if ((import.meta.env as any).VITE_GO2RTC_WS_URL?.trim() !== '' &&
+              (import.meta.env as any).VITE_GO2RTC_WS_URL != null) {
             // Explicit URL configured - don't rotate automatically.
           } else if (GO2RTC_WS_BASE_URLS.length > 1) {
             wsBaseIndexRef.current = (wsBaseIndexRef.current + 1) % GO2RTC_WS_BASE_URLS.length;

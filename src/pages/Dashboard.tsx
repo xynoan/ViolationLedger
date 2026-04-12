@@ -5,7 +5,6 @@ import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
 import { StatCard } from '@/components/dashboard/StatCard';
 import { CameraFeed } from '@/components/dashboard/CameraFeed';
-import { Go2RtcStreamPanel } from '@/components/dashboard/Go2RtcStreamPanel';
 import { CaptureResults } from '@/components/dashboard/CaptureResults';
 import { WarningTimer } from '@/components/dashboard/WarningTimer';
 import { Button } from '@/components/ui/button';
@@ -385,7 +384,7 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* go2rtc WebRTC (first online camera, else tunneled preview stream) */}
+            {/* Camera feed (tunneled stream.html when online + stream name) */}
             <div className="space-y-4">
               <h2 className="text-base sm:text-lg font-semibold text-foreground">Camera Feed</h2>
               {firstOnlineCamera ? (
@@ -403,7 +402,10 @@ export default function Dashboard() {
                             camera.deviceId.trim()
                               ? camera.deviceId.trim()
                               : undefined;
-                          return { ...camera, deviceId: deviceIdValue };
+                          return {
+                            ...camera,
+                            deviceId: deviceIdValue,
+                          };
                         });
                         setCameras(camerasWithDeviceId);
                       })
@@ -411,14 +413,17 @@ export default function Dashboard() {
                   }}
                 />
               ) : (
-                <Go2RtcStreamPanel title="Live preview" />
+                <div className="glass-card rounded-xl p-6 text-center">
+                  <Camera className="h-10 w-10 sm:h-12 sm:w-12 text-muted-foreground mx-auto mb-3" />
+                  <p className="text-muted-foreground text-sm mb-4">
+                    {cameras.length > 0 ? 'No online cameras' : 'No cameras configured'}
+                  </p>
+                  <Button size="sm" onClick={() => navigate('/cameras')}>
+                    <Plus className="h-4 w-4 mr-2" />
+                    {cameras.length > 0 ? 'View Cameras' : 'Add Camera'}
+                  </Button>
+                </div>
               )}
-              <div className="flex justify-center">
-                <Button variant="outline" size="sm" onClick={() => navigate('/cameras')}>
-                  <Plus className="h-4 w-4 mr-2" />
-                  {cameras.length > 0 ? 'Manage cameras' : 'Add camera'}
-                </Button>
-              </div>
             </div>
           </div>
         )}
