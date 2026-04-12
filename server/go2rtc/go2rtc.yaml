@@ -1,5 +1,5 @@
 streams:
-  cam1: "rtsp://adrian:12345678@192.168.1.12/stream1"
+  cam1: "http://192.168.0.100:8080/video"
 api:
   listen: ":1984"
   origin: "*"
