@@ -10,9 +10,13 @@ interface UseCameraStreamOptions {
 }
 
 const DEFAULT_GO2RTC_WS_BASE_URLS = (() => {
-  // Prefer same-origin proxy first, then fall back to direct go2rtc port.
+  // Prefer same-origin proxy first. Under HTTPS, never fall back to ws:// to avoid mixed-content blocks.
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-  return [`${proto}://${window.location.host}/go2rtc`, `${proto}://${window.location.hostname}:1984`];
+  const sameOriginProxy = `${proto}://${window.location.host}/go2rtc`;
+  if (window.location.protocol === 'https:') {
+    return [sameOriginProxy];
+  }
+  return [sameOriginProxy, `${proto}://${window.location.hostname}:1984`];
 })();
 
 const normalizeGo2rtcWsUrls = (rawUrl?: string): string[] => {
@@ -20,13 +24,28 @@ const normalizeGo2rtcWsUrls = (rawUrl?: string): string[] => {
   const trimmed = rawUrl?.trim();
   if (!trimmed) return fallback;
 
-  // Keep explicit WebSocket scheme as-is. Some go2rtc installs expose ws:// only.
-  if (trimmed.startsWith('ws://') || trimmed.startsWith('wss://')) {
+  const onHttpsPage = window.location.protocol === 'https:';
+
+  // Relative path form (e.g. /go2rtc) resolves to same-origin ws(s) endpoint.
+  if (trimmed.startsWith('/')) {
+    const proto = onHttpsPage ? 'wss' : 'ws';
+    return [`${proto}://${window.location.host}${trimmed}`];
+  }
+
+  // If app is HTTPS, auto-upgrade ws:// to wss:// to prevent mixed-content errors.
+  if (trimmed.startsWith('ws://')) {
+    if (onHttpsPage) return [`wss://${trimmed.slice('ws://'.length)}`];
+    return [trimmed];
+  }
+  if (trimmed.startsWith('wss://')) {
     return [trimmed];
   }
 
   // Support http(s) inputs by converting to ws(s).
-  if (trimmed.startsWith('http://')) return [`ws://${trimmed.slice('http://'.length)}`];
+  if (trimmed.startsWith('http://')) {
+    if (onHttpsPage) return [`wss://${trimmed.slice('http://'.length)}`];
+    return [`ws://${trimmed.slice('http://'.length)}`];
+  }
   if (trimmed.startsWith('https://')) return [`wss://${trimmed.slice('https://'.length)}`];
 
   return [trimmed];
@@ -226,16 +245,8 @@ export function useCameraStream({ deviceId, isOnline }: UseCameraStreamOptions) 
 
   useEffect(() => {
     const src = deviceId?.trim();
-    const isDirectHttpSource = !!src && /^https?:\/\//i.test(src);
 
     if (WS_DISABLED) {
-      cleanupConnection();
-      return;
-    }
-
-    // Direct HTTP camera URLs (e.g. MJPEG) are rendered by the player fallback.
-    // Skip go2rtc websocket attempts to prevent endless reconnect errors.
-    if (isDirectHttpSource) {
       cleanupConnection();
       return;
     }
@@ -263,10 +274,6 @@ export function useCameraStream({ deviceId, isOnline }: UseCameraStreamOptions) 
     if (WS_DISABLED) return;
 
     const src = deviceId?.trim();
-    if (src && /^https?:\/\//i.test(src)) {
-      cleanupConnection();
-      return;
-    }
     if (!src || !isOnline) return;
 
     cleanupConnection();
