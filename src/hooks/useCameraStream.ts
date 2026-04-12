@@ -19,6 +19,17 @@ const DEFAULT_GO2RTC_WS_BASE_URLS = (() => {
   return [sameOriginProxy, `${proto}://${window.location.hostname}:1984`];
 })();
 
+const isPrivateOrLocalHost = (host: string): boolean => {
+  const normalized = host.toLowerCase();
+  if (normalized === 'localhost' || normalized === '127.0.0.1' || normalized === '::1') {
+    return true;
+  }
+  if (/^10\./.test(normalized)) return true;
+  if (/^192\.168\./.test(normalized)) return true;
+  if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(normalized)) return true;
+  return false;
+};
+
 const normalizeGo2rtcWsUrls = (rawUrl?: string): string[] => {
   const fallback = DEFAULT_GO2RTC_WS_BASE_URLS;
   const trimmed = rawUrl?.trim();
@@ -30,6 +41,19 @@ const normalizeGo2rtcWsUrls = (rawUrl?: string): string[] => {
   if (trimmed.startsWith('/')) {
     const proto = onHttpsPage ? 'wss' : 'ws';
     return [`${proto}://${window.location.host}${trimmed}`];
+  }
+
+  // In HTTPS production, avoid private-IP WS hosts (not publicly reachable / cert mismatch);
+  // same-origin /go2rtc proxy is the supported route.
+  if (onHttpsPage) {
+    try {
+      const parsed = new URL(trimmed);
+      if (isPrivateOrLocalHost(parsed.hostname)) {
+        return DEFAULT_GO2RTC_WS_BASE_URLS;
+      }
+    } catch {
+      // Ignore parse issues and continue normal handling.
+    }
   }
 
   // If app is HTTPS, auto-upgrade ws:// to wss:// to prevent mixed-content errors.
