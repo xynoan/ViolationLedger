@@ -18,6 +18,8 @@ interface WarningTimerProps {
   onIssueTicket?: (id: string) => void;
   /** Manual resend SMS to registered owner (same template as automatic warning SMS). */
   onSendSms?: (id: string) => void | Promise<void>;
+  /** Denser layout for dashboard queue previews. */
+  compact?: boolean;
 }
 
 /** Seconds until expiry; negative = overdue by that many seconds. */
@@ -47,7 +49,7 @@ function tierFromDelta(deltaSec: number | null): 'overdue' | 'urgent' | 'moderat
   return 'calm';
 }
 
-export function WarningTimer({ violation, onCancel, onIssueTicket, onSendSms }: WarningTimerProps) {
+export function WarningTimer({ violation, onCancel, onIssueTicket, onSendSms, compact }: WarningTimerProps) {
   const [deltaSec, setDeltaSec] = useState<number | null>(() => computeDeltaSec(violation.warningExpiresAt));
   const [sendingSms, setSendingSms] = useState(false);
 
@@ -118,15 +120,15 @@ export function WarningTimer({ violation, onCancel, onIssueTicket, onSendSms }: 
   return (
     <div
       className={cn(
-        'glass-card rounded-xl border border-border overflow-hidden animate-slide-up',
+        'glass-card rounded-xl border border-border bg-card shadow-sm overflow-hidden animate-slide-up',
         'border-l-4',
         borderClass,
       )}
     >
       <div className="flex flex-col gap-0 sm:flex-row sm:items-stretch">
         {/* Reserved 1:1 detection thumbnail */}
-        <div className="w-full shrink-0 sm:w-36 md:w-40">
-          <div className="relative aspect-square w-full bg-muted sm:min-h-[9rem]">
+        <div className={cn('w-full shrink-0', compact ? 'sm:w-24 md:w-28' : 'sm:w-36 md:w-40')}>
+          <div className={cn('relative aspect-square w-full bg-muted', compact ? 'sm:min-h-[5.5rem]' : 'sm:min-h-[9rem]')}>
             {imageSrc ? (
               <img
                 src={imageSrc}
@@ -145,12 +147,13 @@ export function WarningTimer({ violation, onCancel, onIssueTicket, onSendSms }: 
           </div>
         </div>
 
-        <div className="flex min-w-0 flex-1 flex-col gap-3 p-4">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-            <div className="flex min-w-0 flex-1 items-start gap-3">
+        <div className={cn('flex min-w-0 flex-1 flex-col gap-3', compact ? 'p-2 sm:p-2.5' : 'p-4')}>
+          <div className={cn('flex flex-col lg:flex-row lg:items-start lg:justify-between', compact ? 'gap-2' : 'gap-3')}>
+            <div className={cn('flex min-w-0 flex-1 items-start', compact ? 'gap-2' : 'gap-3')}>
               <div
                 className={cn(
-                  'rounded-lg p-2 shrink-0',
+                  'rounded-lg shrink-0',
+                  compact ? 'p-1.5' : 'p-2',
                   tier === 'overdue' && 'bg-red-500/10',
                   tier === 'urgent' && 'bg-orange-500/10',
                   tier === 'moderate' && 'bg-amber-500/10',
@@ -160,7 +163,7 @@ export function WarningTimer({ violation, onCancel, onIssueTicket, onSendSms }: 
               >
                 <AlertTriangle
                   className={cn(
-                    'h-5 w-5',
+                    compact ? 'h-4 w-4' : 'h-5 w-5',
                     tier === 'overdue' && 'text-red-600',
                     tier === 'urgent' && 'text-orange-500',
                     tier === 'moderate' && 'text-amber-600',
@@ -169,8 +172,8 @@ export function WarningTimer({ violation, onCancel, onIssueTicket, onSendSms }: 
                   )}
                 />
               </div>
-              <div className="min-w-0 flex-1 space-y-2">
-                <div className="flex flex-wrap items-center gap-2">
+              <div className={cn('min-w-0 flex-1', compact ? 'space-y-1' : 'space-y-2')}>
+                <div className="flex flex-wrap items-center gap-1.5">
                   {violation.plateNumber === 'NONE' ? (
                     <span className="font-semibold text-foreground">Plate Not Visible</span>
                   ) : violation.plateNumber === 'BLUR' ? (
@@ -205,16 +208,28 @@ export function WarningTimer({ violation, onCancel, onIssueTicket, onSendSms }: 
                     </Badge>
                   )}
                 </div>
-                <p className="text-sm text-foreground">{displayMessage}</p>
-                <p className="text-xs text-muted-foreground">
+                <p
+                  className={cn(
+                    'text-foreground',
+                    compact ? 'text-xs line-clamp-2 leading-snug' : 'text-sm',
+                  )}
+                >
+                  {displayMessage}
+                </p>
+                <p className={cn('text-muted-foreground', compact ? 'text-[10px]' : 'text-xs')}>
                   Detected at {new Date(violation.timeDetected).toLocaleString()}
                 </p>
               </div>
             </div>
 
-            <div className="flex shrink-0 flex-col items-stretch gap-2 sm:items-end lg:ml-4 lg:min-w-[11rem]">
-              <div className="flex items-center justify-end gap-2 text-muted-foreground">
-                <Clock className="h-4 w-4 shrink-0" />
+            <div
+              className={cn(
+                'flex shrink-0 flex-col items-stretch sm:items-end lg:ml-4',
+                compact ? 'gap-1.5 lg:min-w-[8rem]' : 'gap-2 lg:min-w-[11rem]',
+              )}
+            >
+              <div className={cn('flex items-center justify-end text-muted-foreground', compact ? 'gap-1' : 'gap-2')}>
+                <Clock className={cn('shrink-0', compact ? 'h-3.5 w-3.5' : 'h-4 w-4')} />
                 {isOutOfView ? (
                   <div className="text-right">
                     <div className="font-mono text-lg font-bold text-muted-foreground">PAUSED</div>
@@ -222,8 +237,13 @@ export function WarningTimer({ violation, onCancel, onIssueTicket, onSendSms }: 
                   </div>
                 ) : isOverdue ? (
                   <div className="text-right">
-                    <div className="font-mono text-lg font-bold text-red-600">OVERDUE</div>
-                    <div className="font-mono text-sm font-semibold text-red-600 tabular-nums">
+                    <div className={cn('font-mono font-bold text-red-600', compact ? 'text-sm' : 'text-lg')}>OVERDUE</div>
+                    <div
+                      className={cn(
+                        'font-mono font-semibold text-red-600 tabular-nums',
+                        compact ? 'text-xs' : 'text-sm',
+                      )}
+                    >
                       +{formatHms(overdueSeconds)}
                     </div>
                     <div className="text-[10px] text-muted-foreground">since grace ended</div>
@@ -231,7 +251,8 @@ export function WarningTimer({ violation, onCancel, onIssueTicket, onSendSms }: 
                 ) : deltaSec !== null ? (
                   <span
                     className={cn(
-                      'font-mono text-xl font-bold tabular-nums',
+                      'font-mono font-bold tabular-nums',
+                      compact ? 'text-base' : 'text-xl',
                       tier === 'urgent' && 'text-orange-500 animate-pulse',
                       tier === 'moderate' && 'text-amber-600',
                       tier === 'calm' && 'text-teal-700 dark:text-teal-300',
@@ -247,21 +268,44 @@ export function WarningTimer({ violation, onCancel, onIssueTicket, onSendSms }: 
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border/60 pt-3">
+          <div
+            className={cn(
+              'flex flex-wrap items-stretch justify-end gap-2 border-t border-border/60',
+              compact ? 'pt-2' : 'pt-3',
+            )}
+          >
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={!canIssueTicket}
+              onClick={() => onIssueTicket?.(violation.id)}
+              className={cn(
+                'disabled:opacity-40 disabled:pointer-events-none font-semibold shadow-sm',
+                compact && 'h-9 min-h-[2.25rem] px-3 text-xs sm:text-sm order-first',
+              )}
+            >
+              <Ticket className="h-4 w-4 mr-1 shrink-0" />
+              Issue ticket
+            </Button>
             {onSendSms && (
               <Button
-                variant="outline"
+                variant={compact ? 'default' : 'outline'}
                 size="sm"
+                className={cn(
+                  'disabled:opacity-40 disabled:pointer-events-none',
+                  compact
+                    ? 'h-9 min-h-[2.25rem] border-0 bg-amber-600 px-3 text-xs font-semibold text-white shadow-sm hover:bg-amber-700 sm:text-sm'
+                    : '',
+                )}
                 disabled={!canSendSms || sendingSms}
                 onClick={handleSendSmsClick}
-                className="disabled:opacity-40 disabled:pointer-events-none"
                 title={
                   canSendSms
                     ? 'Send SMS reminder to the registered owner'
                     : 'SMS requires a readable plate and registered vehicle'
                 }
               >
-                <MessageSquare className="h-4 w-4 mr-1" />
+                <MessageSquare className="h-4 w-4 mr-1 shrink-0" />
                 {sendingSms ? 'Sending…' : 'Send SMS'}
               </Button>
             )}
@@ -269,20 +313,10 @@ export function WarningTimer({ violation, onCancel, onIssueTicket, onSendSms }: 
               variant="ghost"
               size="sm"
               onClick={() => onCancel?.(violation.id)}
-              className="text-muted-foreground hover:text-emerald-600"
+              className={cn('text-muted-foreground hover:text-emerald-600', compact && 'h-9 px-2 text-xs')}
             >
-              <Check className="h-4 w-4 mr-1" />
+              <Check className="h-4 w-4 mr-1 shrink-0" />
               Clear
-            </Button>
-            <Button
-              variant="destructive"
-              size="sm"
-              disabled={!canIssueTicket}
-              onClick={() => onIssueTicket?.(violation.id)}
-              className="disabled:opacity-40 disabled:pointer-events-none"
-            >
-              <Ticket className="h-4 w-4 mr-1" />
-              Issue Ticket
             </Button>
           </div>
         </div>

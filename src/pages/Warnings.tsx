@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { AlertTriangle, CheckCircle, FlaskConical } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
@@ -10,12 +11,16 @@ import { Button } from '@/components/ui/button';
 
 export default function Warnings() {
   usePageTracking();
+  const [searchParams] = useSearchParams();
+  const filterLocationId = useMemo(() => searchParams.get('locationId')?.trim() || '', [searchParams]);
+
   const [violations, setViolations] = useState<Violation[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [testSeedLoading, setTestSeedLoading] = useState(false);
   const [testSeedUnregLoading, setTestSeedUnregLoading] = useState(false);
   const activeWarnings = violations
     .filter(v => v.status === 'warning')
+    .filter((v) => !filterLocationId || v.cameraLocationId === filterLocationId)
     .sort((a, b) => {
       const aUrgent = a.unregisteredUrgent ? 1 : 0;
       const bUrgent = b.unregisteredUrgent ? 1 : 0;
@@ -177,6 +182,11 @@ export default function Warnings() {
       />
 
       <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
+        {filterLocationId ? (
+          <p className="text-xs text-muted-foreground rounded-md border border-border bg-muted/30 px-3 py-2">
+            Showing warnings for location <span className="font-medium text-foreground">{filterLocationId}</span> only.
+          </p>
+        ) : null}
         {activeWarnings.length > 0 ? (
           <>
             <div className="flex flex-wrap items-center justify-between gap-2">

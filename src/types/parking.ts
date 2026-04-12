@@ -21,7 +21,12 @@ export type ResidentType = 'homeowner' | 'tenant';
 
 export interface Resident {
   id: string;
+  /** Composed display name (search, sorting, legacy). */
   name: string;
+  firstName?: string;
+  middleName?: string;
+  lastName?: string;
+  nameSuffix?: string;
   contactNumber: string;
   /** Composed from house number + street (kept for search and legacy rows). */
   address?: string;

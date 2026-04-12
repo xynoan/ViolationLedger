@@ -34,7 +34,7 @@ const ROUTE_LABELS: Record<string, string> = {
   '/violations': 'Violations History',
   '/upload': 'Upload Image',
   '/settings': 'Settings',
-  '/analytics': 'Analytics',
+  '/analytics': 'Dashboard',
   '/users': 'User List',
   '/audit-logs': 'Activity Logs',
 };

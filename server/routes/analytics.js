@@ -325,6 +325,15 @@ router.get('/', async (req, res) => {
       ORDER BY date DESC
       LIMIT 30
     `).all(...detectionParams);
+
+    const detectionsByHour = db.prepare(`
+      SELECT CAST(strftime('%H', timestamp) AS INTEGER) as hour, COUNT(*) as count 
+      FROM detections 
+      ${detectionWhere}
+      AND (class_name IS NULL OR LOWER(TRIM(class_name)) != 'none')
+      GROUP BY hour
+      ORDER BY hour
+    `).all(...detectionParams);
     
     // 6. SMS ANALYTICS
     let smsWhere = `WHERE 1=1`;
@@ -402,6 +411,37 @@ router.get('/', async (req, res) => {
       WHERE timestamp >= ? AND class_name != 'none'
     `).get(sevenDaysAgo.toISOString());
 
+    const topResidents = db.prepare(`
+      SELECT r.name as name, COUNT(*) as count
+      FROM violations v
+      INNER JOIN vehicles veh ON UPPER(TRIM(COALESCE(v.plateNumber, ''))) = UPPER(TRIM(COALESCE(veh.plateNumber, '')))
+        AND veh.residentId IS NOT NULL AND LENGTH(TRIM(veh.residentId)) > 0
+      INNER JOIN residents r ON r.id = veh.residentId
+      ${violationWhere}
+      AND v.plateNumber IS NOT NULL AND LENGTH(TRIM(v.plateNumber)) > 0
+      AND UPPER(TRIM(v.plateNumber)) NOT IN ('NONE', 'BLUR')
+      GROUP BY r.id, r.name
+      ORDER BY count DESC
+      LIMIT 8
+    `).all(...violationParams);
+
+    const topVisitors = db.prepare(`
+      SELECT v.plateNumber as plateNumber, COUNT(*) as count
+      FROM violations v
+      WHERE 1=1
+      AND NOT EXISTS (
+        SELECT 1 FROM vehicles veh
+        WHERE UPPER(TRIM(COALESCE(veh.plateNumber, ''))) = UPPER(TRIM(COALESCE(v.plateNumber, '')))
+        AND veh.residentId IS NOT NULL AND LENGTH(TRIM(veh.residentId)) > 0
+      )
+      ${dateFilter}${violationLocationFilter}
+      AND v.plateNumber IS NOT NULL AND LENGTH(TRIM(v.plateNumber)) > 0
+      AND UPPER(TRIM(v.plateNumber)) NOT IN ('NONE', 'BLUR')
+      GROUP BY UPPER(TRIM(v.plateNumber))
+      ORDER BY count DESC
+      LIMIT 8
+    `).all(...violationParams);
+
     res.json({
       users: {
         total: totalUsers.count,
@@ -449,7 +489,9 @@ router.get('/', async (req, res) => {
             deltaPct,
             basis: 'previous_month_same_span'
           }
-        }
+        },
+        topResidents: topResidents.map((row) => ({ name: row.name, count: row.count })),
+        topVisitors: topVisitors.map((row) => ({ plateNumber: row.plateNumber, count: row.count }))
       },
       warnings: {
         total: totalWarnings.count,
@@ -469,7 +511,8 @@ router.get('/', async (req, res) => {
           acc[item.class_name || 'none'] = item.count;
           return acc;
         }, {}),
-        overTime: detectionsOverTime
+        overTime: detectionsOverTime,
+        byHour: detectionsByHour
       },
       sms: {
         total: totalSMS.count,

@@ -1,6 +1,7 @@
 import express from 'express';
 import db from '../database.js';
 import { RESIDENT_STREET_SET, composeResidentAddress } from '../residentStreets.js';
+import { composeResidentDisplayName } from '../residentName.js';
 
 const router = express.Router();
 
@@ -19,6 +20,10 @@ function normalizeResidentType(value) {
   return 'homeowner';
 }
 
+function trimStr(v) {
+  return typeof v === 'string' ? v.trim() : '';
+}
+
 router.get('/', (req, res) => {
   try {
     const { search } = req.query;
@@ -30,8 +35,10 @@ router.get('/', (req, res) => {
         SELECT * FROM residents 
         WHERE name LIKE ? OR contactNumber LIKE ? OR address LIKE ?
            OR IFNULL(houseNumber, '') LIKE ? OR IFNULL(streetName, '') LIKE ?
+           OR IFNULL(firstName, '') LIKE ? OR IFNULL(middleName, '') LIKE ?
+           OR IFNULL(lastName, '') LIKE ? OR IFNULL(nameSuffix, '') LIKE ?
         ORDER BY name ASC
-      `).all(like, like, like, like, like);
+      `).all(like, like, like, like, like, like, like, like, like);
     } else {
       residents = db.prepare('SELECT * FROM residents ORDER BY name ASC').all();
     }
@@ -62,10 +69,33 @@ router.get('/:id', (req, res) => {
 
 router.post('/', (req, res) => {
   try {
-    const { id, name, contactNumber, houseNumber, streetName, residentStatus, residentType } = req.body;
+    const {
+      id,
+      firstName,
+      middleName,
+      lastName,
+      nameSuffix,
+      contactNumber,
+      houseNumber,
+      streetName,
+      residentStatus,
+      residentType,
+    } = req.body;
 
-    if (!id || !name || !contactNumber) {
-      return res.status(400).json({ error: 'Missing required fields: id, name, contactNumber' });
+    if (!id || contactNumber === undefined || contactNumber === null) {
+      return res.status(400).json({ error: 'Missing required fields: id, contactNumber' });
+    }
+
+    const fn = trimStr(firstName);
+    const mn = trimStr(middleName);
+    const ln = trimStr(lastName);
+    const sfx = trimStr(nameSuffix);
+
+    if (!fn) {
+      return res.status(400).json({ error: 'First name is required' });
+    }
+    if (!ln) {
+      return res.status(400).json({ error: 'Last name is required' });
     }
 
     const sn = typeof streetName === 'string' ? streetName.trim() : '';
@@ -76,15 +106,22 @@ router.post('/', (req, res) => {
       return res.status(400).json({ error: 'Invalid street name' });
     }
     const hn = typeof houseNumber === 'string' ? houseNumber.trim() : '';
+    if (!hn) {
+      return res.status(400).json({ error: 'House / lot number is required' });
+    }
+
+    const composedName = composeResidentDisplayName(fn, mn, ln, sfx);
+    if (!composedName) {
+      return res.status(400).json({ error: 'Could not build display name from parts' });
+    }
+
     const composedAddress = composeResidentAddress(hn, sn);
 
     const createdAt = new Date().toISOString();
     const status = normalizeResidentStatus(residentStatus);
     const type = normalizeResidentType(residentType);
 
-    // Store contact number exactly as input - NO CONVERSION
-    // Only remove spaces, dashes, and parentheses for clean storage
-    const cleanedContact = contactNumber.trim().replace(/[\s\-\(\)]/g, '');
+    const cleanedContact = String(contactNumber).trim().replace(/[\s\-\(\)]/g, '');
 
     if (!cleanedContact || cleanedContact.length === 0) {
       return res.status(400).json({
@@ -93,9 +130,26 @@ router.post('/', (req, res) => {
     }
 
     db.prepare(`
-      INSERT INTO residents (id, name, contactNumber, address, houseNumber, streetName, createdAt, residentStatus, residentType)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, name, cleanedContact, composedAddress, hn || null, sn, createdAt, status, type);
+      INSERT INTO residents (
+        id, name, firstName, middleName, lastName, nameSuffix,
+        contactNumber, address, houseNumber, streetName, createdAt, residentStatus, residentType
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      composedName,
+      fn,
+      mn || null,
+      ln,
+      sfx || null,
+      cleanedContact,
+      composedAddress,
+      hn,
+      sn,
+      createdAt,
+      status,
+      type,
+    );
 
     const created = db.prepare('SELECT * FROM residents WHERE id = ?').get(id);
     res.status(201).json({
@@ -113,23 +167,49 @@ router.post('/', (req, res) => {
 
 router.put('/:id', (req, res) => {
   try {
-    const { name, contactNumber, houseNumber, streetName, residentStatus, residentType } = req.body;
+    const {
+      firstName,
+      middleName,
+      lastName,
+      nameSuffix,
+      contactNumber,
+      houseNumber,
+      streetName,
+      residentStatus,
+      residentType,
+    } = req.body;
     const resident = db.prepare('SELECT * FROM residents WHERE id = ?').get(req.params.id);
 
     if (!resident) {
       return res.status(404).json({ error: 'Resident not found' });
     }
 
-    // Store contact number exactly as input - NO CONVERSION
-    // Only remove spaces, dashes, and parentheses for clean storage
     let cleanedContact = resident.contactNumber;
     if (contactNumber !== undefined) {
-      cleanedContact = contactNumber.trim().replace(/[\s\-\(\)]/g, '');
+      cleanedContact = String(contactNumber).trim().replace(/[\s\-\(\)]/g, '');
       if (!cleanedContact || cleanedContact.length === 0) {
         return res.status(400).json({
           error: 'Contact number cannot be empty'
         });
       }
+    }
+
+    const nextFirst =
+      firstName !== undefined ? trimStr(firstName) : trimStr(resident.firstName ?? '');
+    const nextMiddle =
+      middleName !== undefined ? trimStr(middleName) : trimStr(resident.middleName ?? '');
+    const nextLast =
+      lastName !== undefined
+        ? trimStr(lastName)
+        : trimStr(resident.lastName ?? '') || trimStr(resident.name ?? '');
+    const nextSuffix =
+      nameSuffix !== undefined ? trimStr(nameSuffix) : trimStr(resident.nameSuffix ?? '');
+
+    if (!nextFirst) {
+      return res.status(400).json({ error: 'First name is required' });
+    }
+    if (!nextLast) {
+      return res.status(400).json({ error: 'Last name is required' });
     }
 
     const nextH =
@@ -141,6 +221,9 @@ router.put('/:id', (req, res) => {
         ? (typeof streetName === 'string' ? streetName.trim() : '')
         : (resident.streetName || '').trim();
 
+    if (!nextH) {
+      return res.status(400).json({ error: 'House / lot number is required' });
+    }
     if (!nextS) {
       return res.status(400).json({ error: 'Street name is required' });
     }
@@ -149,6 +232,10 @@ router.put('/:id', (req, res) => {
     }
 
     const composedAddress = composeResidentAddress(nextH, nextS);
+    const composedName = composeResidentDisplayName(nextFirst, nextMiddle, nextLast, nextSuffix);
+    if (!composedName) {
+      return res.status(400).json({ error: 'Could not build display name from parts' });
+    }
 
     const nextStatus =
       residentStatus !== undefined
@@ -162,13 +249,18 @@ router.put('/:id', (req, res) => {
 
     db.prepare(`
       UPDATE residents 
-      SET name = ?, contactNumber = ?, address = ?, houseNumber = ?, streetName = ?, residentStatus = ?, residentType = ?
+      SET name = ?, firstName = ?, middleName = ?, lastName = ?, nameSuffix = ?,
+          contactNumber = ?, address = ?, houseNumber = ?, streetName = ?, residentStatus = ?, residentType = ?
       WHERE id = ?
     `).run(
-      name || resident.name,
+      composedName,
+      nextFirst,
+      nextMiddle || null,
+      nextLast,
+      nextSuffix || null,
       cleanedContact,
       composedAddress,
-      nextH || null,
+      nextH,
       nextS,
       nextStatus,
       nextType,

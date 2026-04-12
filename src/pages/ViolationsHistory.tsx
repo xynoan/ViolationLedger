@@ -71,6 +71,10 @@ function errMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
+const URL_PRESETTABLE_STATUSES = new Set(
+  STATUS_OPTIONS.filter((o) => o.value !== 'all').map((o) => o.value as string),
+);
+
 export default function ViolationsHistory() {
   usePageTracking();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -83,11 +87,17 @@ export default function ViolationsHistory() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isLoadingStats, setIsLoadingStats] = useState(true);
   
-  // Filters
-  const [statusFilter, setStatusFilter] = useState<ViolationStatus | 'all'>('all');
-  const [locationFilter, setLocationFilter] = useState<string>('all');
-  const [startDate, setStartDate] = useState<string>('');
-  const [endDate, setEndDate] = useState<string>('');
+  // Filters (initialize from URL when opening ledger links from the dashboard)
+  const [statusFilter, setStatusFilter] = useState<ViolationStatus | 'all'>(() => {
+    const s = searchParams.get('status')?.trim().toLowerCase();
+    if (s && URL_PRESETTABLE_STATUSES.has(s)) return s as ViolationStatus;
+    return 'all';
+  });
+  const [locationFilter, setLocationFilter] = useState<string>(() => {
+    return searchParams.get('locationId')?.trim() || 'all';
+  });
+  const [startDate, setStartDate] = useState<string>(() => searchParams.get('startDate')?.trim() || '');
+  const [endDate, setEndDate] = useState<string>(() => searchParams.get('endDate')?.trim() || '');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState<string>('');
   const [registryHasViolations, setRegistryHasViolations] = useState(false);

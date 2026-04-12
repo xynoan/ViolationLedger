@@ -1,6 +1,7 @@
 import db from '../database.js';
 import { pathToFileURL } from 'url';
 import { RESIDENT_STREET_OPTIONS, composeResidentAddress } from '../residentStreets.js';
+import { composeResidentDisplayName } from '../residentName.js';
 import { GRACE_PERIOD_MINUTES } from '../routes/violations.js';
 
 const RESET_MODE = process.argv.includes('--reset');
@@ -320,8 +321,8 @@ function run() {
   let vehSeq = 0;
 
   const residentStmt = db.prepare(
-    `INSERT OR REPLACE INTO residents (id, name, contactNumber, address, houseNumber, streetName, createdAt, residentStatus, residentType)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO residents (id, name, firstName, middleName, lastName, nameSuffix, contactNumber, address, houseNumber, streetName, createdAt, residentStatus, residentType)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
 
   for (let i = 0; i < numResidents; i += 1) {
@@ -334,9 +335,21 @@ function run() {
     const residentStatus = rng() < 0.88 ? 'verified' : 'guest';
     const contact = `09${String(1700000000 + idx * 17 + randInt(rng, 0, 999)).slice(-9)}`;
 
+    const full = names[i].trim();
+    const sp = full.indexOf(' ');
+    const firstName = sp === -1 ? '' : full.slice(0, sp).trim();
+    const lastName = sp === -1 ? full : full.slice(sp + 1).trim();
+    const middleName = '';
+    const nameSuffix = '';
+    const displayName = composeResidentDisplayName(firstName, middleName, lastName, nameSuffix) || full;
+
     residentStmt.run(
       residentId,
-      names[i],
+      displayName,
+      firstName,
+      middleName,
+      lastName,
+      nameSuffix,
       contact,
       composed,
       hn,
@@ -346,7 +359,7 @@ function run() {
       residentType,
     );
 
-    residents.push({ id: residentId, name: names[i], contactNumber: contact });
+    residents.push({ id: residentId, name: displayName, contactNumber: contact });
 
     const numVeh = pickWeighted(rng, [
       { v: 1, p: 48 },
@@ -361,7 +374,7 @@ function run() {
       vehicles.push({
         id: id('VEH', vehSeq),
         plateNumber: plate,
-        ownerName: names[i],
+        ownerName: displayName,
         contactNumber: contact,
         registeredAt: isoHoursAgo(rng, 1, 24 * 120),
         dataSource: pickWeighted(rng, [

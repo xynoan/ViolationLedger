@@ -155,6 +155,53 @@ async function initDatabase() {
     /* ignore */
   }
 
+  try {
+    db.run(`ALTER TABLE residents ADD COLUMN firstName TEXT`);
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: residents.firstName migration:', errorMsg);
+    }
+  }
+  try {
+    db.run(`ALTER TABLE residents ADD COLUMN middleName TEXT`);
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: residents.middleName migration:', errorMsg);
+    }
+  }
+  try {
+    db.run(`ALTER TABLE residents ADD COLUMN lastName TEXT`);
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: residents.lastName migration:', errorMsg);
+    }
+  }
+  try {
+    db.run(`ALTER TABLE residents ADD COLUMN nameSuffix TEXT`);
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: residents.nameSuffix migration:', errorMsg);
+    }
+  }
+  try {
+    db.run(`
+      UPDATE residents
+      SET
+        lastName = TRIM(COALESCE(name, '')),
+        firstName = COALESCE(NULLIF(TRIM(firstName), ''), ''),
+        middleName = COALESCE(NULLIF(TRIM(middleName), ''), ''),
+        nameSuffix = COALESCE(NULLIF(TRIM(nameSuffix), ''), '')
+      WHERE lastName IS NULL OR TRIM(COALESCE(lastName, '')) = ''
+    `);
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    console.log('Note: residents name backfill migration:', errorMsg);
+  }
+
   // Create tables
   db.run(`
     CREATE TABLE IF NOT EXISTS vehicles (
