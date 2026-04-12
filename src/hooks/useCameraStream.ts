@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { mergeGo2rtcWsDefaults } from '@/lib/go2rtcConfig';
 
 interface UseCameraStreamOptions {
   /**
@@ -9,18 +10,8 @@ interface UseCameraStreamOptions {
   isOnline: boolean;
 }
 
-const DEFAULT_GO2RTC_WS_BASE_URLS = (() => {
-  // Prefer same-origin proxy first. Under HTTPS, never fall back to ws:// to avoid mixed-content blocks.
-  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-  const sameOriginProxy = `${proto}://${window.location.host}/go2rtc`;
-  if (window.location.protocol === 'https:') {
-    return [sameOriginProxy];
-  }
-  return [sameOriginProxy, `${proto}://${window.location.hostname}:1984`];
-})();
-
 const normalizeGo2rtcWsUrls = (rawUrl?: string): string[] => {
-  const fallback = DEFAULT_GO2RTC_WS_BASE_URLS;
+  const fallback = mergeGo2rtcWsDefaults();
   const trimmed = rawUrl?.trim();
   if (!trimmed) return fallback;
 

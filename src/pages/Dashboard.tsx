@@ -5,6 +5,7 @@ import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
 import { StatCard } from '@/components/dashboard/StatCard';
 import { CameraFeed } from '@/components/dashboard/CameraFeed';
+import { Go2RtcStreamPanel } from '@/components/dashboard/Go2RtcStreamPanel';
 import { CaptureResults } from '@/components/dashboard/CaptureResults';
 import { WarningTimer } from '@/components/dashboard/WarningTimer';
 import { Button } from '@/components/ui/button';
@@ -211,10 +212,9 @@ export default function Dashboard() {
     });
   const issuedTickets = violations.filter(v => v.status === 'issued');
   const clearedToday = violations.filter(v => v.status === 'cleared');
-  const onlineCameras = cameras.filter(c => c.status === 'online');
+  const onlineCameras = cameras.filter((c) => c.status === 'online');
   const firstOnlineCamera = onlineCameras[0];
   const registeredPlates = vehicles.map((vehicle) => vehicle.plateNumber);
-
   const hasData = vehicles.length > 0 || cameras.length > 0 || violations.length > 0;
 
   if (isLoading) {
@@ -385,41 +385,40 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* Camera Feed */}
+            {/* go2rtc WebRTC (first online camera, else tunneled preview stream) */}
             <div className="space-y-4">
               <h2 className="text-base sm:text-lg font-semibold text-foreground">Camera Feed</h2>
               {firstOnlineCamera ? (
-                <CameraFeed 
+                <CameraFeed
                   camera={firstOnlineCamera}
                   registeredPlates={registeredPlates}
                   onRefresh={() => {
-                    // Reload cameras when refresh is called
-                    camerasAPI.getAll().then((data) => {
-                      const camerasWithDeviceId = data.map((camera: any) => {
-                        const deviceIdValue = camera.deviceId && typeof camera.deviceId === 'string' && camera.deviceId.trim() 
-                          ? camera.deviceId.trim() 
-                          : undefined;
-                        return {
-                          ...camera,
-                          deviceId: deviceIdValue
-                        };
-                      });
-                      setCameras(camerasWithDeviceId);
-                    }).catch(console.error);
+                    camerasAPI
+                      .getAll()
+                      .then((data) => {
+                        const camerasWithDeviceId = data.map((camera: any) => {
+                          const deviceIdValue =
+                            camera.deviceId &&
+                            typeof camera.deviceId === 'string' &&
+                            camera.deviceId.trim()
+                              ? camera.deviceId.trim()
+                              : undefined;
+                          return { ...camera, deviceId: deviceIdValue };
+                        });
+                        setCameras(camerasWithDeviceId);
+                      })
+                      .catch(console.error);
                   }}
                 />
               ) : (
-                <div className="glass-card rounded-xl p-6 text-center">
-                  <Camera className="h-10 w-10 sm:h-12 sm:w-12 text-muted-foreground mx-auto mb-3" />
-                  <p className="text-muted-foreground text-sm mb-4">
-                    {cameras.length > 0 ? 'No online cameras' : 'No cameras configured'}
-                  </p>
-                  <Button size="sm" onClick={() => navigate('/cameras')}>
-                    <Plus className="h-4 w-4 mr-2" />
-                    {cameras.length > 0 ? 'View Cameras' : 'Add Camera'}
-                  </Button>
-                </div>
+                <Go2RtcStreamPanel title="Live preview" />
               )}
+              <div className="flex justify-center">
+                <Button variant="outline" size="sm" onClick={() => navigate('/cameras')}>
+                  <Plus className="h-4 w-4 mr-2" />
+                  {cameras.length > 0 ? 'Manage cameras' : 'Add camera'}
+                </Button>
+              </div>
             </div>
           </div>
         )}
