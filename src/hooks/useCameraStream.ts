@@ -226,8 +226,16 @@ export function useCameraStream({ deviceId, isOnline }: UseCameraStreamOptions) 
 
   useEffect(() => {
     const src = deviceId?.trim();
+    const isDirectHttpSource = !!src && /^https?:\/\//i.test(src);
 
     if (WS_DISABLED) {
+      cleanupConnection();
+      return;
+    }
+
+    // Direct HTTP camera URLs (e.g. MJPEG) are rendered by the player fallback.
+    // Skip go2rtc websocket attempts to prevent endless reconnect errors.
+    if (isDirectHttpSource) {
       cleanupConnection();
       return;
     }
@@ -255,6 +263,10 @@ export function useCameraStream({ deviceId, isOnline }: UseCameraStreamOptions) 
     if (WS_DISABLED) return;
 
     const src = deviceId?.trim();
+    if (src && /^https?:\/\//i.test(src)) {
+      cleanupConnection();
+      return;
+    }
     if (!src || !isOnline) return;
 
     cleanupConnection();

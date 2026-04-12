@@ -43,7 +43,10 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
   onPlateMetaChange,
 }, ref) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const deviceSource = String(camera.deviceId || '').trim();
+  const directMjpegUrl = /^https?:\/\//i.test(deviceSource) ? deviceSource : null;
   const hasStream = stream !== null && camera.deviceId;
+  const showDirectMjpegFallback = !hasStream && !!directMjpegUrl;
   const {
     detections: plateDetections,
     plateCount,
@@ -187,9 +190,18 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           !hasStream && "opacity-0" // Hide video visually when no stream, but keep element in DOM
         )}
       />
+
+      {showDirectMjpegFallback && (
+        <img
+          src={directMjpegUrl as string}
+          alt={`${camera.name} live stream`}
+          className="absolute inset-0 z-5 w-full h-full object-cover"
+          loading="eager"
+        />
+      )}
       
       {/* Placeholder overlay when stream is not yet available but camera is online */}
-      {!hasStream && (
+      {!hasStream && !showDirectMjpegFallback && (
         <>
           <div className="absolute inset-0 z-10 bg-gradient-to-t from-foreground/10 to-transparent" />
           <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 text-muted-foreground">
