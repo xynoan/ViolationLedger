@@ -27,6 +27,8 @@ export interface Resident {
   address?: string;
   houseNumber?: string;
   streetName?: string;
+  barangay?: string;
+  city?: string;
   createdAt: Date;
   residentStatus?: ResidentStatus;
   /** Homeowner or Tenant; default homeowner when unset (legacy rows). */

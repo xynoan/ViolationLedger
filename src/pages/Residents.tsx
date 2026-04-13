@@ -288,6 +288,33 @@ function errMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
+function splitResidentName(fullName: string) {
+  const parts = fullName.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) {
+    return {
+      firstName: '',
+      middleName: '',
+      lastName: '',
+      prefixSuffix: '',
+    };
+  }
+  if (parts.length === 1) {
+    return {
+      firstName: parts[0],
+      middleName: '',
+      lastName: '',
+      prefixSuffix: '',
+    };
+  }
+
+  return {
+    firstName: parts[0],
+    middleName: parts.length > 2 ? parts.slice(1, -1).join(' ') : '',
+    lastName: parts[parts.length - 1],
+    prefixSuffix: '',
+  };
+}
+
 export default function Residents() {
   usePageTracking();
   const queryClient = useQueryClient();
@@ -316,10 +343,15 @@ export default function Residents() {
   /** True while we dismissed the sheet but `residentId` may still be in the URL for one commit — skip URL→profile open. */
   const dismissingProfileRef = useRef(false);
   const [formData, setFormData] = useState({
-    name: '',
+    firstName: '',
+    middleName: '',
+    lastName: '',
+    prefixSuffix: '',
     contactNumber: '',
     houseNumber: '',
     streetName: '',
+    barangay: '',
+    city: '',
     residentType: 'homeowner' as ResidentType,
   });
 
@@ -624,10 +656,15 @@ export default function Residents() {
 
   const resetForm = () => {
     setFormData({
-      name: '',
+      firstName: '',
+      middleName: '',
+      lastName: '',
+      prefixSuffix: '',
       contactNumber: '',
       houseNumber: '',
       streetName: '',
+      barangay: '',
+      city: '',
       residentType: 'homeowner',
     });
     setEditingResident(null);
@@ -644,11 +681,17 @@ export default function Residents() {
     }
     if (resident) {
       setEditingResident(resident);
+      const splitName = splitResidentName(resident.name);
       setFormData({
-        name: resident.name,
+        firstName: splitName.firstName,
+        middleName: splitName.middleName,
+        lastName: splitName.lastName,
+        prefixSuffix: splitName.prefixSuffix,
         contactNumber: resident.contactNumber,
         houseNumber: resident.houseNumber || '',
         streetName: resident.streetName || '',
+        barangay: resident.barangay || '',
+        city: resident.city || '',
         residentType: resolveResidentType(resident),
       });
     } else {
@@ -671,10 +714,23 @@ export default function Residents() {
       });
       return;
     }
-    if (!formData.name || !formData.contactNumber) {
+    const firstName = formData.firstName.trim();
+    const middleName = formData.middleName.trim();
+    const lastName = formData.lastName.trim();
+    const prefixSuffix = formData.prefixSuffix.trim();
+    const fullName = [firstName, middleName, lastName, prefixSuffix].filter(Boolean).join(' ');
+    if (!firstName || !lastName || !formData.contactNumber.trim()) {
       toast({
         title: 'Validation Error',
-        description: 'Please fill in name and contact number',
+        description: 'Please fill in first name, last name, and contact number',
+        variant: 'destructive',
+      });
+      return;
+    }
+    if (!formData.houseNumber.trim() || !formData.barangay.trim() || !formData.city.trim()) {
+      toast({
+        title: 'Validation Error',
+        description: 'Please fill in all required address fields',
         variant: 'destructive',
       });
       return;
@@ -698,10 +754,12 @@ export default function Residents() {
     }
 
     const payload = {
-      name: formData.name,
-      contactNumber: formData.contactNumber,
+      name: fullName,
+      contactNumber: formData.contactNumber.trim(),
       houseNumber: formData.houseNumber.trim(),
       streetName: street,
+      barangay: formData.barangay.trim(),
+      city: formData.city.trim(),
       residentType: formData.residentType,
     };
 
@@ -915,7 +973,7 @@ export default function Residents() {
                   Add Resident
                 </Button>
               </DialogTrigger>
-              <DialogContent className="bg-card border-border mx-4 sm:mx-auto max-w-[calc(100vw-2rem)] sm:max-w-lg">
+              <DialogContent className="bg-card border-border mx-4 sm:mx-auto max-w-[calc(100vw-2rem)] sm:max-w-4xl">
                 <DialogHeader>
                   <DialogTitle>{editingResident ? 'Edit Resident' : 'Add New Resident'}</DialogTitle>
                   <DialogDescription>
@@ -924,19 +982,57 @@ export default function Residents() {
                       : 'Enter the resident details to add them to the system.'}
                   </DialogDescription>
                 </DialogHeader>
-                <div className="space-y-4 py-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="name">Name *</Label>
-                    <Input
-                      id="name"
-                      placeholder="Juan dela Cruz"
-                      value={formData.name}
-                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                      className="bg-secondary"
-                    />
+                <div className="space-y-4 py-4 max-h-[78vh] overflow-y-auto">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="space-y-2">
+                      <Label htmlFor="firstName">
+                        First Name <span className="text-red-600">(Required)</span>
+                      </Label>
+                      <Input
+                        id="firstName"
+                        placeholder="Juan"
+                        value={formData.firstName}
+                        onChange={(e) => setFormData({ ...formData, firstName: e.target.value })}
+                        className="bg-secondary"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="middleName">Middle Name</Label>
+                      <Input
+                        id="middleName"
+                        placeholder="Santos"
+                        value={formData.middleName}
+                        onChange={(e) => setFormData({ ...formData, middleName: e.target.value })}
+                        className="bg-secondary"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="lastName">
+                        Last Name <span className="text-red-600">(Required)</span>
+                      </Label>
+                      <Input
+                        id="lastName"
+                        placeholder="Dela Cruz"
+                        value={formData.lastName}
+                        onChange={(e) => setFormData({ ...formData, lastName: e.target.value })}
+                        className="bg-secondary"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="prefixSuffix">Prefix / Suffix</Label>
+                      <Input
+                        id="prefixSuffix"
+                        placeholder="Jr., Sr., III"
+                        value={formData.prefixSuffix}
+                        onChange={(e) => setFormData({ ...formData, prefixSuffix: e.target.value })}
+                        className="bg-secondary"
+                      />
+                    </div>
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="contactNumber">Contact Number *</Label>
+                    <Label htmlFor="contactNumber">
+                      Contact Number <span className="text-red-600">(Required)</span>
+                    </Label>
                     <Input
                       id="contactNumber"
                       placeholder="+639171234567"
@@ -947,7 +1043,9 @@ export default function Residents() {
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div className="space-y-2">
-                      <Label htmlFor="houseNumber">House number</Label>
+                      <Label htmlFor="houseNumber">
+                        House/Lot No. <span className="text-red-600">(Required)</span>
+                      </Label>
                       <Input
                         id="houseNumber"
                         placeholder="e.g. 12-A"
@@ -957,7 +1055,9 @@ export default function Residents() {
                       />
                     </div>
                     <div className="space-y-2 sm:col-span-1">
-                      <Label htmlFor="streetName">Street *</Label>
+                      <Label htmlFor="streetName">
+                        Street <span className="text-red-600">(Required)</span>
+                      </Label>
                       <Select
                         value={formData.streetName || '__unset__'}
                         onValueChange={(v) =>
@@ -978,6 +1078,32 @@ export default function Residents() {
                           ))}
                         </SelectContent>
                       </Select>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-2">
+                      <Label htmlFor="barangay">
+                        Barangay <span className="text-red-600">(Required)</span>
+                      </Label>
+                      <Input
+                        id="barangay"
+                        placeholder="Barangay 12"
+                        value={formData.barangay}
+                        onChange={(e) => setFormData({ ...formData, barangay: e.target.value })}
+                        className="bg-secondary"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="city">
+                        City <span className="text-red-600">(Required)</span>
+                      </Label>
+                      <Input
+                        id="city"
+                        placeholder="Bacolod City"
+                        value={formData.city}
+                        onChange={(e) => setFormData({ ...formData, city: e.target.value })}
+                        className="bg-secondary"
+                      />
                     </div>
                   </div>
                   <div className="space-y-2">

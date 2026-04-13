@@ -18,9 +18,13 @@ export const RESIDENT_STREET_OPTIONS = [
 
 export const RESIDENT_STREET_SET = new Set(RESIDENT_STREET_OPTIONS);
 
-export function composeResidentAddress(houseNumber, streetName) {
+export function composeResidentAddress(houseNumber, streetName, barangay, city) {
   const h = typeof houseNumber === 'string' ? houseNumber.trim() : '';
   const s = typeof streetName === 'string' ? streetName.trim() : '';
-  if (!h && !s) return null;
-  return [h, s].filter(Boolean).join(' ').trim() || null;
+  const b = typeof barangay === 'string' ? barangay.trim() : '';
+  const c = typeof city === 'string' ? city.trim() : '';
+  const primary = [h, s].filter(Boolean).join(' ').trim();
+  const secondary = [b, c].filter(Boolean).join(', ').trim();
+  if (!primary && !secondary) return null;
+  return [primary, secondary].filter(Boolean).join(', ') || null;
 }

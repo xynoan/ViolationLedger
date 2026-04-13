@@ -10,6 +10,7 @@ import Login from "./pages/Login";
 import ActivateAccount from "./pages/ActivateAccount";
 import ResetPassword from "./pages/ResetPassword";
 import Vehicles from "./pages/Vehicles";
+import AddVehicleQuick from "./pages/AddVehicleQuick";
 import Visitors from "./pages/Visitors";
 import Residents from "./pages/Residents";
 import Cameras from "./pages/Cameras";
@@ -62,6 +63,7 @@ const App = () => (
                     <Routes>
                       <Route path="/" element={<Index />} />
                       <Route path="/vehicles" element={<Vehicles />} />
+                      <Route path="/vehicles/add" element={<AddVehicleQuick />} />
                       <Route path="/visitors" element={<Visitors />} />
                       <Route path="/hosts" element={<Navigate to="/residents" replace />} />
                       <Route path="/residents" element={<Residents />} />

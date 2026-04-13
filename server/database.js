@@ -103,8 +103,13 @@ async function initDatabase() {
       name TEXT NOT NULL,
       contactNumber TEXT NOT NULL,
       address TEXT,
+      houseNumber TEXT,
+      streetName TEXT,
+      barangay TEXT,
+      city TEXT,
       createdAt TEXT NOT NULL,
-      residentStatus TEXT NOT NULL DEFAULT 'verified'
+      residentStatus TEXT NOT NULL DEFAULT 'verified',
+      residentType TEXT DEFAULT 'homeowner'
     )
   `);
 
@@ -136,6 +141,22 @@ async function initDatabase() {
     const errorMsg = error?.message || String(error);
     if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
       console.log('Note: residents.streetName migration:', errorMsg);
+    }
+  }
+  try {
+    db.run(`ALTER TABLE residents ADD COLUMN barangay TEXT`);
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: residents.barangay migration:', errorMsg);
+    }
+  }
+  try {
+    db.run(`ALTER TABLE residents ADD COLUMN city TEXT`);
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: residents.city migration:', errorMsg);
     }
   }
 

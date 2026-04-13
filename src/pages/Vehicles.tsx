@@ -34,7 +34,6 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from '@/components/ui/dialog';
 import {
   AlertDialog,
@@ -50,7 +49,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from '@/hooks/use-toast';
 import { vehiclesAPI, residentsAPI, violationsAPI } from '@/lib/api';
 import { useAuth } from '@/hooks/useAuth';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { SearchNoMatchesEmpty } from '@/components/search/SearchNoMatchesEmpty';
 import { cn } from '@/lib/utils';
@@ -611,13 +610,14 @@ export default function Vehicles() {
           </div>
 
           {!isBarangayUser && (
-            <Dialog open={isDialogOpen} onOpenChange={(open) => open ? handleOpenDialog() : handleCloseDialog()}>
-              <DialogTrigger asChild>
-                <Button className="w-full sm:w-auto">
+            <>
+              <Button asChild className="w-full sm:w-auto">
+                <Link to="/vehicles/add">
                   <Plus className="h-4 w-4 mr-2" />
                   Add Vehicle
-                </Button>
-              </DialogTrigger>
+                </Link>
+              </Button>
+              <Dialog open={isDialogOpen} onOpenChange={(open) => (!open ? handleCloseDialog() : undefined)}>
               <DialogContent className="bg-card border-border mx-4 sm:mx-auto max-w-[calc(100vw-2rem)] sm:max-w-lg">
                 <DialogHeader>
                   <DialogTitle>{editingVehicle ? 'Edit Vehicle' : 'Register New Vehicle'}</DialogTitle>
@@ -629,7 +629,9 @@ export default function Vehicles() {
                 </DialogHeader>
                 <div className="space-y-4 py-4 max-h-[80vh] overflow-y-auto">
                   <div className="space-y-2">
-                    <Label htmlFor="plateNumber">Plate Number *</Label>
+                    <Label htmlFor="plateNumber">
+                      Plate Number <span className="text-red-600">*</span>
+                    </Label>
                     <Input
                       id="plateNumber"
                       placeholder="ABC 1234"
@@ -643,7 +645,9 @@ export default function Vehicles() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="vehicleType">Vehicle Type *</Label>
+                    <Label htmlFor="vehicleType">
+                      Vehicle Type <span className="text-red-600">*</span>
+                    </Label>
                     <Select
                       value={formData.vehicleType}
                       onValueChange={(v) => setFormData({ ...formData, vehicleType: v })}
@@ -661,7 +665,9 @@ export default function Vehicles() {
                     </Select>
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="ownerName">Owner Name *</Label>
+                    <Label htmlFor="ownerName">
+                      Owner Name <span className="text-red-600">*</span>
+                    </Label>
                     <div ref={ownerComboRef} className="relative">
                       <div className="relative">
                         <Input
@@ -751,7 +757,8 @@ export default function Vehicles() {
                   </DialogFooter>
                 </div>
               </DialogContent>
-            </Dialog>
+              </Dialog>
+            </>
           )}
         </div>
         {isRefreshing && (

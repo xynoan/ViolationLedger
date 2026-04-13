@@ -421,7 +421,7 @@ export default function Visitors() {
                   Register Visitor
                 </Button>
               </DialogTrigger>
-              <DialogContent className="bg-card border-border mx-4 sm:mx-auto max-w-[calc(100vw-2rem)] sm:max-w-lg">
+              <DialogContent className="bg-card border-border mx-4 sm:mx-auto max-w-[calc(100vw-2rem)] sm:max-w-4xl">
                 <DialogHeader>
                   <DialogTitle>{editingVehicle ? 'Edit Visitor Vehicle' : 'Register Visitor'}</DialogTitle>
                   <DialogDescription>
@@ -430,7 +430,7 @@ export default function Visitors() {
                       : `Register a vehicle for ${activeTab === 'guest' ? 'an active guest' : activeTab === 'delivery' ? 'a delivery' : 'a short-term rental'}.`}
                   </DialogDescription>
                 </DialogHeader>
-                <div className="space-y-4 py-4 max-h-[80vh] overflow-y-auto">
+                <div className="space-y-4 py-4 max-h-[78vh] overflow-y-auto">
                   {editingVehicle ? (
                     <div className="space-y-2">
                       <Label>Category</Label>
@@ -459,8 +459,11 @@ export default function Visitors() {
                     </div>
                   ) : null}
 
-                  <div className="space-y-2">
-                    <Label htmlFor="v-plate">Plate Number *</Label>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="space-y-2">
+                    <Label htmlFor="v-plate">
+                      Plate Number <span className="text-red-600">*</span>
+                    </Label>
                     <Input
                       id="v-plate"
                       placeholder="ABC 1234"
@@ -471,9 +474,11 @@ export default function Visitors() {
                       className="bg-secondary uppercase"
                       spellCheck={false}
                     />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="v-type">Vehicle Type *</Label>
+                    </div>
+                    <div className="space-y-2">
+                    <Label htmlFor="v-type">
+                      Vehicle Type <span className="text-red-600">*</span>
+                    </Label>
                     <Select
                       value={formData.vehicleType}
                       onValueChange={(v) => setFormData({ ...formData, vehicleType: v })}
@@ -489,9 +494,11 @@ export default function Visitors() {
                         ))}
                       </SelectContent>
                     </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="v-owner">Owner Name *</Label>
+                    </div>
+                    <div className="space-y-2">
+                    <Label htmlFor="v-owner">
+                      Owner Name <span className="text-red-600">*</span>
+                    </Label>
                     <Input
                       id="v-owner"
                       placeholder="Juan dela Cruz"
@@ -501,9 +508,11 @@ export default function Visitors() {
                       }
                       className="bg-secondary"
                     />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="v-contact">Contact Number *</Label>
+                    </div>
+                    <div className="space-y-2">
+                    <Label htmlFor="v-contact">
+                      Contact Number <span className="text-red-600">*</span>
+                    </Label>
                     <Input
                       id="v-contact"
                       placeholder="09171234567"
@@ -514,9 +523,11 @@ export default function Visitors() {
                       className="bg-secondary"
                       inputMode="numeric"
                     />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="v-purpose">Purpose of Visit *</Label>
+                    </div>
+                    <div className="space-y-2">
+                    <Label htmlFor="v-purpose">
+                      Purpose of Visit <span className="text-red-600">*</span>
+                    </Label>
                     <Select
                       value={purposeSelectValue}
                       onValueChange={(v) => setFormData({ ...formData, purposeOfVisit: v })}
@@ -532,10 +543,12 @@ export default function Visitors() {
                         ))}
                       </SelectContent>
                     </Select>
-                  </div>
+                    </div>
                   {formData.visitorCategory === 'rental' ? (
                     <div className="space-y-2">
-                      <Label htmlFor="v-rented">Rented / Location *</Label>
+                      <Label htmlFor="v-rented">
+                        Rented / Location <span className="text-red-600">*</span>
+                      </Label>
                       <Select
                         value={
                           formData.rented &&
@@ -564,6 +577,7 @@ export default function Visitors() {
                       </Select>
                     </div>
                   ) : null}
+                  </div>
 
                   <DialogFooter className="!flex-row gap-2 pt-2 sm:justify-stretch">
                     <Button
