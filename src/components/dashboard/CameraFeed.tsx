@@ -27,6 +27,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { RefreshCw } from 'lucide-react';
+import { getJurisdictionKindForLocationId } from '@/lib/blueRidgeGeofence';
 
 interface CameraFeedProps {
   camera: Camera;
@@ -84,6 +85,8 @@ export const CameraFeed = memo(function CameraFeed({
     setShowDeleteDialog(false);
   }, [camera.id, onDelete]);
 
+  const jurisdiction = getJurisdictionKindForLocationId(camera.locationId);
+
   return (
     <>
       <div className="glass-card rounded-xl overflow-hidden animate-slide-up">
@@ -115,11 +118,16 @@ export const CameraFeed = memo(function CameraFeed({
         </div>
 
         <div className="border-t border-border bg-muted/40 px-4 py-2">
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <span className="status-indicator status-active" />
             <span className="font-mono">
               {workerStatus || (isOnline ? 'Connecting detection worker...' : 'Detection offline')}
             </span>
+            {jurisdiction === 'out' ? (
+              <Badge variant="destructive" className="text-[10px] font-semibold">
+                Out of Jurisdiction
+              </Badge>
+            ) : null}
           </div>
         </div>
 

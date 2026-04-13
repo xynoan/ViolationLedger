@@ -1067,6 +1067,7 @@ export default function Dashboard() {
                     snapshotLast7Bars={snapshotLast7Bars}
                     statusBarsSorted={statusBarsSorted}
                     violationsByLocationData={violationsByLocationData}
+                    violations={violations}
                   />
                 ) : null}
               </div>

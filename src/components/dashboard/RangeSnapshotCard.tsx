@@ -5,7 +5,6 @@ import {
   Clipboard,
   Clock,
   Download,
-  MapPin,
   type LucideIcon,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -13,6 +12,8 @@ import { Button } from '@/components/ui/button';
 import { toast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import type { AnalyticsResponse } from '@/lib/api';
+import type { Violation } from '@/types/parking';
+import { BarangayHeatmap } from '@/components/Analytics/BarangayHeatmap';
 
 type SnapshotBar = { key: string; label: string; count: number; hPct: number };
 type StatusRow = { name: string; value: number; pct: number; vsEven: number };
@@ -180,12 +181,14 @@ export function RangeSnapshotCard({
   snapshotLast7Bars,
   statusBarsSorted,
   violationsByLocationData,
+  violations,
 }: {
   insightRangeCaption: string;
   sevenDayComparison: SevenDay | undefined;
   snapshotLast7Bars: SnapshotBar[];
   statusBarsSorted: StatusRow[];
   violationsByLocationData: LocationRow[];
+  violations: Violation[];
 }) {
   const [locale, setLocale] = useState<Locale>('en');
   const t = COPY[locale];
@@ -441,62 +444,7 @@ export function RangeSnapshotCard({
       </div>
 
       <div className="mb-4 flex-1">
-        <p className="mb-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{t.zonesHeading}</p>
-        {zones.length > 0 ? (
-          <ol className="space-y-2.5">
-            {zones.map((loc, idx) => {
-              const rank = idx + 1;
-              const top = zones[0]?.count || 1;
-              const w = Math.round((loc.count / top) * 100);
-              const isTop = rank === 1;
-              return (
-                <li
-                  key={loc.cameraLocationId}
-                  className={cn(
-                    'rounded-lg border px-2.5 py-2',
-                    isTop ? 'border-amber-300/80 bg-amber-50/60 dark:border-amber-800/50 dark:bg-amber-950/25' : 'border-border/70 bg-muted/20',
-                  )}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex min-w-0 items-center gap-2">
-                      <span
-                        className={cn(
-                          'flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-bold tabular-nums',
-                          isTop ? 'bg-amber-600 text-white' : 'bg-muted text-muted-foreground',
-                        )}
-                      >
-                        {rank}
-                      </span>
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <MapPin className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
-                          <span className="truncate text-xs font-semibold text-foreground">{loc.cameraLocationId}</span>
-                          {isTop ? (
-                            <Badge
-                              variant="outline"
-                              className="border-amber-600/50 bg-amber-100/90 text-[10px] font-semibold text-amber-950 dark:border-amber-500/40 dark:bg-amber-950/50 dark:text-amber-50"
-                            >
-                              {t.highPriority}
-                            </Badge>
-                          ) : null}
-                        </div>
-                        <p className="mt-0.5 text-[10px] text-muted-foreground">
-                          {t.rank} {rank} · {t.violationsLabel}: {loc.count.toLocaleString()}
-                        </p>
-                      </div>
-                    </div>
-                    <span className="shrink-0 text-xs font-semibold tabular-nums text-foreground">{loc.count}</span>
-                  </div>
-                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted/80">
-                    <div className="h-full rounded-full bg-destructive/70" style={{ width: `${w}%` }} />
-                  </div>
-                </li>
-              );
-            })}
-          </ol>
-        ) : (
-          <p className="text-xs text-muted-foreground">{t.noZones}</p>
-        )}
+        <BarangayHeatmap violations={violations} />
       </div>
 
       <div className="mt-auto flex flex-col gap-2 border-t border-border/60 pt-3">
