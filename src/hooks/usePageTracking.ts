@@ -7,12 +7,13 @@ import { auditLogsAPI } from '@/lib/api';
  * Hook to track page views for audit logging
  * This logs when a user navigates to a page
  */
-export function usePageTracking() {
+export function usePageTracking(enabled = true) {
   const location = useLocation();
   const { user, isAuthenticated } = useAuth();
   const previousPath = useRef<string>('');
 
   useEffect(() => {
+    if (!enabled) return;
     if (!isAuthenticated || !user) return;
     
     // Skip if it's the same path (e.g., re-render)
@@ -43,6 +44,6 @@ export function usePageTracking() {
     // Small delay to ensure user is fully authenticated
     const timer = setTimeout(logPageView, 100);
     return () => clearTimeout(timer);
-  }, [location.pathname, user, isAuthenticated]);
+  }, [enabled, location.pathname, user, isAuthenticated]);
 }
 

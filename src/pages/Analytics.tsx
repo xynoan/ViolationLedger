@@ -75,8 +75,12 @@ function escapeCsvValue(value: unknown): string {
   return str;
 }
 
-export default function Analytics() {
-  usePageTracking();
+type AnalyticsProps = {
+  embedded?: boolean;
+};
+
+export default function Analytics({ embedded = false }: AnalyticsProps) {
+  usePageTracking(!embedded);
   const [analytics, setAnalytics] = useState<AnalyticsResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [cameras, setCameras] = useState<CameraType[]>([]);
@@ -231,6 +235,13 @@ export default function Analytics() {
   const warningTrendMeta = getTrendMeta(analytics?.warnings.sevenDayComparison);
 
   if (isLoading) {
+    if (embedded) {
+      return (
+        <div className="py-4 flex items-center justify-center">
+          <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      );
+    }
     return (
       <div className="min-h-screen">
         <Header title="Analytics" subtitle="Key system statistics and insights" />
@@ -242,6 +253,22 @@ export default function Analytics() {
   }
 
   if (!analytics) {
+    if (embedded) {
+      return (
+        <Card>
+          <CardContent className="pt-6">
+            <div className="text-center py-6">
+              <BarChart3 className="h-8 w-8 text-muted-foreground mx-auto mb-3" />
+              <p className="text-muted-foreground">Failed to load analytics data</p>
+              <Button onClick={loadAnalytics} className="mt-4" variant="outline" size="sm">
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Retry
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      );
+    }
     return (
       <div className="min-h-screen">
         <Header title="Analytics" subtitle="Key system statistics and insights" />
@@ -264,24 +291,40 @@ export default function Analytics() {
   }
 
   return (
-    <div className="min-h-screen">
-      <Header 
-        title="Analytics" 
-        subtitle="Comprehensive system statistics and insights"
-        action={
-          <div className="flex items-center gap-2">
-            <Button onClick={handleExportReport} variant="outline" size="sm">
-              Export Report
-            </Button>
-            <Button onClick={loadAnalytics} disabled={isLoading} variant="outline" size="sm">
-              <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
-              Refresh
-            </Button>
-          </div>
-        }
-      />
+    <div className={embedded ? "space-y-6" : "min-h-screen"}>
+      {!embedded && (
+        <Header 
+          title="Analytics" 
+          subtitle="Comprehensive system statistics and insights"
+          action={
+            <div className="flex items-center gap-2">
+              <Button onClick={handleExportReport} variant="outline" size="sm">
+                Export Report
+              </Button>
+              <Button onClick={loadAnalytics} disabled={isLoading} variant="outline" size="sm">
+                <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+                Refresh
+              </Button>
+            </div>
+          }
+        />
+      )}
 
-      <div className="p-4 sm:p-6 space-y-6">
+      <div className={embedded ? "space-y-6" : "p-4 sm:p-6 space-y-6"}>
+        {embedded && (
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-base sm:text-lg font-semibold text-foreground">Analytics</h2>
+            <div className="flex items-center gap-2">
+              <Button onClick={handleExportReport} variant="outline" size="sm">
+                Export Report
+              </Button>
+              <Button onClick={loadAnalytics} disabled={isLoading} variant="outline" size="sm">
+                <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+                Refresh
+              </Button>
+            </div>
+          </div>
+        )}
         {/* Filters */}
         <Card>
           <CardHeader>

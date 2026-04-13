@@ -7,6 +7,7 @@ import { StatCard } from '@/components/dashboard/StatCard';
 import { CameraFeed } from '@/components/dashboard/CameraFeed';
 import { CaptureResults } from '@/components/dashboard/CaptureResults';
 import { WarningTimer } from '@/components/dashboard/WarningTimer';
+import Analytics from '@/pages/Analytics';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Vehicle, Camera as CameraType, Violation } from '@/types/parking';
@@ -312,9 +313,10 @@ export default function Dashboard() {
             </div>
           </div>
         ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
-            {/* Active Warnings */}
-            <div className="lg:col-span-2 space-y-4 sm:space-y-6">
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
+              {/* Active Warnings */}
+              <div className="lg:col-span-2 space-y-4 sm:space-y-6">
               <div className="space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <h2 className="text-base sm:text-lg font-semibold text-foreground flex items-center gap-2">
@@ -382,49 +384,52 @@ export default function Dashboard() {
                 </h2>
                 <CaptureResults />
               </div>
+              </div>
+
+              {/* Camera feed (tunneled stream.html when online + stream name) */}
+              <div className="space-y-4">
+                <h2 className="text-base sm:text-lg font-semibold text-foreground">Camera Feed</h2>
+                {firstOnlineCamera ? (
+                  <CameraFeed
+                    camera={firstOnlineCamera}
+                    registeredPlates={registeredPlates}
+                    onRefresh={() => {
+                      camerasAPI
+                        .getAll()
+                        .then((data) => {
+                          const camerasWithDeviceId = data.map((camera: any) => {
+                            const deviceIdValue =
+                              camera.deviceId &&
+                              typeof camera.deviceId === 'string' &&
+                              camera.deviceId.trim()
+                                ? camera.deviceId.trim()
+                                : undefined;
+                            return {
+                              ...camera,
+                              deviceId: deviceIdValue,
+                            };
+                          });
+                          setCameras(camerasWithDeviceId);
+                        })
+                        .catch(console.error);
+                    }}
+                  />
+                ) : (
+                  <div className="glass-card rounded-xl p-6 text-center">
+                    <Camera className="h-10 w-10 sm:h-12 sm:w-12 text-muted-foreground mx-auto mb-3" />
+                    <p className="text-muted-foreground text-sm mb-4">
+                      {cameras.length > 0 ? 'No online cameras' : 'No cameras configured'}
+                    </p>
+                    <Button size="sm" onClick={() => navigate('/cameras')}>
+                      <Plus className="h-4 w-4 mr-2" />
+                      {cameras.length > 0 ? 'View Cameras' : 'Add Camera'}
+                    </Button>
+                  </div>
+                )}
+              </div>
             </div>
 
-            {/* Camera feed (tunneled stream.html when online + stream name) */}
-            <div className="space-y-4">
-              <h2 className="text-base sm:text-lg font-semibold text-foreground">Camera Feed</h2>
-              {firstOnlineCamera ? (
-                <CameraFeed
-                  camera={firstOnlineCamera}
-                  registeredPlates={registeredPlates}
-                  onRefresh={() => {
-                    camerasAPI
-                      .getAll()
-                      .then((data) => {
-                        const camerasWithDeviceId = data.map((camera: any) => {
-                          const deviceIdValue =
-                            camera.deviceId &&
-                            typeof camera.deviceId === 'string' &&
-                            camera.deviceId.trim()
-                              ? camera.deviceId.trim()
-                              : undefined;
-                          return {
-                            ...camera,
-                            deviceId: deviceIdValue,
-                          };
-                        });
-                        setCameras(camerasWithDeviceId);
-                      })
-                      .catch(console.error);
-                  }}
-                />
-              ) : (
-                <div className="glass-card rounded-xl p-6 text-center">
-                  <Camera className="h-10 w-10 sm:h-12 sm:w-12 text-muted-foreground mx-auto mb-3" />
-                  <p className="text-muted-foreground text-sm mb-4">
-                    {cameras.length > 0 ? 'No online cameras' : 'No cameras configured'}
-                  </p>
-                  <Button size="sm" onClick={() => navigate('/cameras')}>
-                    <Plus className="h-4 w-4 mr-2" />
-                    {cameras.length > 0 ? 'View Cameras' : 'Add Camera'}
-                  </Button>
-                </div>
-              )}
-            </div>
+            <Analytics embedded />
           </div>
         )}
       </div>
