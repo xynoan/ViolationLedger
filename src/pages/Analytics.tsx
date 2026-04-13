@@ -33,6 +33,12 @@ import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, Cart
 import { Camera as CameraType } from '@/types/parking';
 
 const COLORS = ['#3b82f6', '#ef4444', '#f59e0b', '#10b981', '#8b5cf6', '#ec4899'];
+const VEHICLE_TYPE_COLORS: Record<string, string> = {
+  motorcycle: '#f59e0b',
+  car: '#3b82f6',
+  van: '#10b981',
+};
+const UNKNOWN_VEHICLE_COLOR = '#94a3b8';
 type TrendData = { currentTotal: number; previousTotal: number; delta: number; deltaPct: number };
 
 function getTrendMeta(trend?: TrendData | null) {
@@ -551,7 +557,13 @@ export default function Analytics({ embedded = false }: AnalyticsProps) {
                   <XAxis dataKey="vehicleType" />
                   <YAxis />
                   <ChartTooltip content={<ChartTooltipContent />} />
-                  <Bar dataKey="count" fill="#f97316" />
+                  <Bar dataKey="count">
+                    {byVehicleTypeData.map((entry, index) => {
+                      const key = String(entry.vehicleType || '').toLowerCase();
+                      const fill = VEHICLE_TYPE_COLORS[key] || UNKNOWN_VEHICLE_COLOR;
+                      return <Cell key={`vehicle-type-cell-${index}`} fill={fill} />;
+                    })}
+                  </Bar>
                 </BarChart>
               </ChartContainer>
             ) : (
