@@ -24,6 +24,12 @@ const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
 /** cameraId -> ChildProcess */
 const workers = new Map();
 
+/** cameraId -> RTSP URL this worker was started with (restart if config changes) */
+const workerRtspUrls = new Map();
+
+/** cameraId -> epoch ms; delay restarting after a failed worker exit */
+const workerBackoffUntil = new Map();
+
 /** cameraId -> Set<WebSocket> */
 const subscribers = new Map();
 
@@ -151,10 +157,16 @@ function broadcastStatus(cameraId, status, detail = null) {
   }
 }
 
-function getOnlineCamerasWithDeviceId() {
+function getOnlineCamerasForDetection() {
   try {
-    const rows = db.prepare('SELECT id, deviceId FROM cameras WHERE status = ? AND deviceId IS NOT NULL AND deviceId != ?').all('online', '');
-    return rows.filter((r) => r.deviceId && String(r.deviceId).trim());
+    const rows = db.prepare(
+      'SELECT id, deviceId, detectionRtspUrl FROM cameras WHERE status = ?',
+    ).all('online');
+    return rows.filter((r) => {
+      const d = r.deviceId && String(r.deviceId).trim();
+      const u = r.detectionRtspUrl && String(r.detectionRtspUrl).trim();
+      return Boolean(d || u);
+    });
   } catch (e) {
     console.error('[Detection] DB error:', e);
     return [];
@@ -167,10 +179,27 @@ function buildRtspUrl(deviceId) {
   return `${base}/${stream}`;
 }
 
-function startWorker(cameraId, deviceId) {
+/** Full RTSP URL for the Python worker: per-camera override, else go2rtc base + stream name. */
+function resolveDetectionRtspUrl(cam) {
+  const override = cam.detectionRtspUrl && String(cam.detectionRtspUrl).trim();
+  if (override) {
+    if (/^rtsp:\/\//i.test(override)) return override;
+    console.warn(
+      `[Detection] Camera ${cam.id}: detectionRtspUrl must start with rtsp:// — falling back to go2rtc path`,
+    );
+  }
+  const deviceId = cam.deviceId && String(cam.deviceId).trim();
+  if (!deviceId) return null;
+  return buildRtspUrl(deviceId);
+}
+
+function startWorker(cameraId, rtspUrl) {
+  const backoffUntil = workerBackoffUntil.get(cameraId);
+  if (backoffUntil && Date.now() < backoffUntil) {
+    return;
+  }
   if (workers.has(cameraId)) return;
 
-  const rtspUrl = buildRtspUrl(deviceId);
   console.log(`[Detection] Starting worker for ${cameraId} -> ${rtspUrl}`);
   broadcastStatus(cameraId, 'loading_model', 'Loading model...');
 
@@ -211,8 +240,10 @@ function startWorker(cameraId, deviceId) {
     if (str.includes('Loading model')) {
       broadcastStatus(cameraId, 'loading_model', 'Loading model...');
     } else if (str.includes('Model loaded') && str.includes('starting detection loop')) {
+      workerBackoffUntil.delete(cameraId);
       broadcastStatus(cameraId, 'starting_detection_loop', 'Starting detection loop...');
     } else if (str.includes('Model loaded')) {
+      workerBackoffUntil.delete(cameraId);
       broadcastStatus(cameraId, 'model_loaded', 'Model loaded');
     }
   });
@@ -220,8 +251,10 @@ function startWorker(cameraId, deviceId) {
   proc.on('close', (code, signal) => {
     workers.delete(cameraId);
     workerStatuses.delete(cameraId);
+    workerRtspUrls.delete(cameraId);
     if (code !== 0 && code !== null) {
       console.warn(`[Detection] Worker ${cameraId} exited: code=${code} signal=${signal}`);
+      workerBackoffUntil.set(cameraId, Date.now() + 20000);
     }
   });
 
@@ -229,9 +262,12 @@ function startWorker(cameraId, deviceId) {
     console.error(`[Detection] Worker ${cameraId} error:`, err);
     workers.delete(cameraId);
     workerStatuses.delete(cameraId);
+    workerRtspUrls.delete(cameraId);
+    workerBackoffUntil.set(cameraId, Date.now() + 20000);
   });
 
   workers.set(cameraId, proc);
+  workerRtspUrls.set(cameraId, rtspUrl);
 }
 
 function stopWorker(cameraId) {
@@ -240,6 +276,7 @@ function stopWorker(cameraId) {
     proc.kill('SIGTERM');
     workers.delete(cameraId);
     workerStatuses.delete(cameraId);
+    workerRtspUrls.delete(cameraId);
     console.log(`[Detection] Stopped worker for ${cameraId}`);
   }
 }
@@ -252,7 +289,7 @@ function syncWorkers() {
     return;
   }
 
-  const cameras = getOnlineCamerasWithDeviceId();
+  const cameras = getOnlineCamerasForDetection();
   const wanted = new Set(cameras.map((c) => c.id));
 
   for (const [cameraId] of workers) {
@@ -262,8 +299,16 @@ function syncWorkers() {
   }
 
   for (const cam of cameras) {
+    const rtspUrl = resolveDetectionRtspUrl(cam);
+    if (!rtspUrl) continue;
+
+    const runningUrl = workerRtspUrls.get(cam.id);
+    if (workers.has(cam.id) && runningUrl && runningUrl !== rtspUrl) {
+      stopWorker(cam.id);
+    }
+
     if (!workers.has(cam.id)) {
-      startWorker(cam.id, cam.deviceId);
+      startWorker(cam.id, rtspUrl);
     }
   }
 }

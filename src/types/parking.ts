@@ -40,6 +40,8 @@ export interface Camera {
   status: 'online' | 'offline';
   lastCapture: Date;
   deviceId?: string;
+  /** When set, server-side YOLO uses this RTSP URL instead of GO2RTC_RTSP_BASE + deviceId. */
+  detectionRtspUrl?: string | null;
   isFixed?: boolean;
   illegalParkingZone?: boolean;
 }

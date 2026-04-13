@@ -1,20 +1,27 @@
 import express from 'express';
 import db from '../database.js';
 import { authenticateToken, requireRole } from '../middleware/auth.js';
+import { syncDetectionWorkers } from '../detection_service.js';
 
 const router = express.Router();
+
+function mapDetectionRtspUrl(camera) {
+  const v = camera?.detectionRtspUrl;
+  if (v && typeof v === 'string' && v.trim()) return v.trim();
+  return null;
+}
 
 function getStatements() {
   return {
     getAll: db.prepare('SELECT * FROM cameras ORDER BY name'),
     getById: db.prepare('SELECT * FROM cameras WHERE id = ?'),
     create: db.prepare(`
-      INSERT INTO cameras (id, name, locationId, status, lastCapture, deviceId, isFixed, illegalParkingZone)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO cameras (id, name, locationId, status, lastCapture, deviceId, isFixed, illegalParkingZone, detectionRtspUrl)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `),
     update: db.prepare(`
       UPDATE cameras 
-      SET name = ?, locationId = ?, status = ?, deviceId = ?, isFixed = ?, illegalParkingZone = ?
+      SET name = ?, locationId = ?, status = ?, deviceId = ?, isFixed = ?, illegalParkingZone = ?, detectionRtspUrl = ?
       WHERE id = ?
     `),
     delete: db.prepare('DELETE FROM cameras WHERE id = ?'),
@@ -50,7 +57,8 @@ router.get('/', (req, res) => {
         lastCapture: lastCaptureDate,
         deviceId: deviceIdValue,
         isFixed: camera.isFixed === 1 || camera.isFixed === true,
-        illegalParkingZone: camera.illegalParkingZone === 1 || camera.illegalParkingZone === true
+        illegalParkingZone: camera.illegalParkingZone === 1 || camera.illegalParkingZone === true,
+        detectionRtspUrl: mapDetectionRtspUrl(camera),
       };
     }));
   } catch (error) {
@@ -93,7 +101,8 @@ router.get('/:id', (req, res) => {
       lastCapture: lastCaptureDate,
       deviceId: deviceIdValue,
       isFixed: camera.isFixed === 1 || camera.isFixed === true,
-      illegalParkingZone: camera.illegalParkingZone === 1 || camera.illegalParkingZone === true
+      illegalParkingZone: camera.illegalParkingZone === 1 || camera.illegalParkingZone === true,
+      detectionRtspUrl: mapDetectionRtspUrl(camera),
     });
   } catch (error) {
     console.error('Error getting camera:', error);
@@ -109,7 +118,7 @@ router.post('/', authenticateToken, requireRole('admin'), (req, res) => {
     console.log('POST /api/cameras - Request body:', JSON.stringify(req.body, null, 2));
     
     const statements = getStatements();
-    const { id, name, locationId, status, deviceId, isFixed, illegalParkingZone } = req.body;
+    const { id, name, locationId, status, deviceId, isFixed, illegalParkingZone, detectionRtspUrl } = req.body;
     
     // Validate required fields
     if (!id || !name || !locationId || !status) {
@@ -128,6 +137,10 @@ router.post('/', authenticateToken, requireRole('admin'), (req, res) => {
     const lastCapture = new Date().toISOString();
     // Ensure deviceId is properly handled (null if empty/undefined)
     const deviceIdValue = (deviceId && typeof deviceId === 'string' && deviceId.trim()) ? deviceId.trim() : null;
+    const detectionRtspUrlValue =
+      detectionRtspUrl && typeof detectionRtspUrl === 'string' && detectionRtspUrl.trim()
+        ? detectionRtspUrl.trim()
+        : null;
     // Convert boolean to integer (SQLite uses INTEGER for booleans: 1 = true, 0 = false)
     const isFixedValue = isFixed === true || isFixed === 1 || isFixed === 'true' ? 1 : 1; // Default to 1 (true)
     const illegalParkingZoneValue = illegalParkingZone === true || illegalParkingZone === 1 || illegalParkingZone === 'true' ? 1 : 1; // Default to 1 (true)
@@ -152,7 +165,17 @@ router.post('/', authenticateToken, requireRole('admin'), (req, res) => {
     
     // Execute the insert
     try {
-      const result = statements.create.run(id, name, locationId, status, lastCapture, deviceIdValue, isFixedValue, illegalParkingZoneValue);
+      const result = statements.create.run(
+        id,
+        name,
+        locationId,
+        status,
+        lastCapture,
+        deviceIdValue,
+        isFixedValue,
+        illegalParkingZoneValue,
+        detectionRtspUrlValue,
+      );
       if (result.changes === 0) {
         throw new Error('Failed to insert camera - no rows affected');
       }
@@ -205,13 +228,15 @@ router.post('/', authenticateToken, requireRole('admin'), (req, res) => {
       lastCapture: lastCaptureDate,
       deviceId: responseDeviceId,
       isFixed: camera.isFixed === 1 || camera.isFixed === true,
-      illegalParkingZone: camera.illegalParkingZone === 1 || camera.illegalParkingZone === true
+      illegalParkingZone: camera.illegalParkingZone === 1 || camera.illegalParkingZone === true,
+      detectionRtspUrl: mapDetectionRtspUrl(camera),
     };
     
     console.log('Sending response:', JSON.stringify(response, null, 2));
     
     // Send response - wrap in try-catch to handle any serialization errors
     try {
+      syncDetectionWorkers();
       res.status(201).json(response);
       console.log('Response sent successfully');
     } catch (responseError) {
@@ -287,7 +312,7 @@ router.post('/', authenticateToken, requireRole('admin'), (req, res) => {
 router.put('/:id', authenticateToken, requireRole('admin'), (req, res) => {
   try {
     const statements = getStatements();
-    const { name, locationId, status, deviceId, isFixed, illegalParkingZone } = req.body;
+    const { name, locationId, status, deviceId, isFixed, illegalParkingZone, detectionRtspUrl } = req.body;
     const camera = statements.getById.get(req.params.id);
     
     if (!camera) {
@@ -307,6 +332,12 @@ router.put('/:id', authenticateToken, requireRole('admin'), (req, res) => {
       ? (illegalParkingZone === true || illegalParkingZone === 1 || illegalParkingZone === 'true' ? 1 : 0)
       : (camera.illegalParkingZone === 1 || camera.illegalParkingZone === true ? 1 : 1); // Default to 1 if not provided
 
+    const detectionRtspUrlValue = (detectionRtspUrl !== undefined)
+      ? ((detectionRtspUrl && typeof detectionRtspUrl === 'string' && detectionRtspUrl.trim())
+        ? detectionRtspUrl.trim()
+        : null)
+      : camera.detectionRtspUrl;
+
     statements.update.run(
       name || camera.name,
       locationId || camera.locationId,
@@ -314,8 +345,11 @@ router.put('/:id', authenticateToken, requireRole('admin'), (req, res) => {
       deviceIdValue,
       isFixedValue,
       illegalParkingZoneValue,
+      detectionRtspUrlValue,
       req.params.id
     );
+
+    syncDetectionWorkers();
 
     const updated = statements.getById.get(req.params.id);
     const responseDeviceId = (updated.deviceId && typeof updated.deviceId === 'string' && updated.deviceId.trim()) 
@@ -338,7 +372,8 @@ router.put('/:id', authenticateToken, requireRole('admin'), (req, res) => {
       status: updated.status,
       deviceId: responseDeviceId,
       isFixed: updated.isFixed === 1 || updated.isFixed === true,
-      illegalParkingZone: updated.illegalParkingZone === 1 || updated.illegalParkingZone === true
+      illegalParkingZone: updated.illegalParkingZone === 1 || updated.illegalParkingZone === true,
+      detectionRtspUrl: mapDetectionRtspUrl(updated),
     });
   } catch (error) {
     console.error('Error updating camera:', error);
@@ -364,6 +399,7 @@ router.delete('/:id', authenticateToken, requireRole('admin'), (req, res) => {
 
     console.log('Deleting camera:', camera.name);
     statements.delete.run(req.params.id);
+    syncDetectionWorkers();
     console.log('Camera deleted successfully');
     
     // Send 204 No Content - some clients expect .end() instead of .send()

@@ -130,7 +130,8 @@ async function fetchAPI(
 
 // Cameras API
 export const camerasAPI = {
-  getAll: () => fetchAPI('/cameras', { cache: true }),
+  getAll: (opts?: { cache?: boolean }) =>
+    fetchAPI('/cameras', { cache: opts?.cache !== false }),
   getById: (id: string) => fetchAPI(`/cameras/${id}`, { cache: true }),
   create: (data: any) => fetchAPI('/cameras', {
     method: 'POST',

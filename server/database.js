@@ -286,6 +286,15 @@ async function initDatabase() {
       console.log('Note: illegalParkingZone column migration:', errorMsg);
     }
   }
+
+  try {
+    db.run('ALTER TABLE cameras ADD COLUMN detectionRtspUrl TEXT');
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: detectionRtspUrl column migration:', errorMsg);
+    }
+  }
   
   // Update existing cameras to have fixed and illegal parking zone enabled by default
   try {
