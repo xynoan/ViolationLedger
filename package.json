@@ -15,11 +15,13 @@
     "build": "vite build",
     "build:dev": "vite build --mode development",
     "build:prod": "cross-env VITE_API_URL=/api VITE_DISABLE_WS=false vite build",
+    "build:prod:cam-tunnel": "cross-env VITE_API_URL=/api VITE_DISABLE_WS=false VITE_GO2RTC_WS_URL=https://cam.violationledger.com vite build",
     "lint": "eslint .",
     "preview": "vite preview",
     "server:install": "cd server && npm install",
     "server:start": "cd server && npm start",
-    "deploy:build": "npm run build:prod ; npm run server:install"
+    "deploy:build": "npm run build:prod ; npm run server:install",
+    "deploy:build:cam-tunnel": "npm run build:prod:cam-tunnel ; npm run server:install"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
