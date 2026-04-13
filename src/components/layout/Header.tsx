@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Bell, LogOut, User, AlertTriangle, Camera, Clock } from 'lucide-react';
+import { Bell, LogOut, User, AlertTriangle, Camera, Clock, Moon, Sun } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import {
@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useAuth } from '@/hooks/useAuth';
 import { notificationsAPI } from '@/lib/api';
+import { useTheme } from 'next-themes';
 
 interface HeaderProps {
   title: string;
@@ -51,9 +52,15 @@ type NotificationKind = 'warning_expired' | 'vehicle_detected' | 'incident_creat
 
 export function Header({ title, subtitle, action, autoRefreshNotifications = true }: HeaderProps) {
   const { user, logout } = useAuth();
+  const { theme, setTheme } = useTheme();
   const navigate = useNavigate();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [isLoadingNotifications, setIsLoadingNotifications] = useState(true);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   // Load notifications
   useEffect(() => {
@@ -230,6 +237,17 @@ export function Header({ title, subtitle, action, autoRefreshNotifications = tru
             {action}
           </div>
         )}
+        {mounted ? (
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+          >
+            {theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+          </Button>
+        ) : null}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="icon" className="relative">

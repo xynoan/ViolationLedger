@@ -62,3 +62,28 @@ export function avgViolationOpenMinutesForStreetInClockHour(
   });
   return Math.round(mins.reduce((a, b) => a + b, 0) / mins.length);
 }
+
+/** Local clock hour (0–23) with the most `timeDetected` events in `violations`. */
+export function peakClockHourFromViolations(
+  violations: Violation[],
+): { hour: number; count: number } | null {
+  const hourCounts = new Array(24).fill(0);
+  for (const v of violations) {
+    hourCounts[new Date(v.timeDetected).getHours()] += 1;
+  }
+  let bestHour = -1;
+  let bestCount = 0;
+  for (let h = 0; h < 24; h++) {
+    if (hourCounts[h] > bestCount) {
+      bestCount = hourCounts[h];
+      bestHour = h;
+    }
+  }
+  return bestHour >= 0 && bestCount > 0 ? { hour: bestHour, count: bestCount } : null;
+}
+
+/** e.g. 17 → "5:00 PM" in the user's locale. */
+export function formatLocalHourShort(hour: number): string {
+  const d = new Date(2000, 0, 1, hour, 0, 0);
+  return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+}

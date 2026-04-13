@@ -1,29 +1,17 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { CSSProperties } from 'react';
-import type { Violation } from '@/types/parking';
-import type { ResidentStreetName } from '@/lib/residentStreets';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, ArrowDownRight, ArrowUpRight, CheckCircle, Flame, Pause, Play } from 'lucide-react';
+import { motion } from 'framer-motion';
 import { cn } from '@/lib/utils';
-import {
-  buildLiveEnforcementCountsByResidentStreet,
-  mapGeoNameToResidentStreet,
-} from '@/lib/residentStreetGeoAliases';
-import { isActiveViolationForStreetHeat } from '@/lib/violationStreetAttribution';
-import {
-  avgViolationOpenMinutesForStreetInClockHour,
-  buildViolationCountByStreetForClockHour,
-  formatClockHHMM,
-  hourIndexFromMinutes,
-} from '@/lib/violationHourHistogram';
-import { getStreetStyle } from '@/lib/blueRidgeMapStreetStyle';
 import { BR_SVG_VIEWBOX, createBlueRidgeMercatorEngine } from '@/lib/blueRidgeMercatorMap';
-import { Slider } from '@/components/ui/slider';
 import boundaryGeo from '@/assets/blueRidgeBoundary.json';
 import streetsGeo from '@/assets/blueRidgeStreets.json';
-import type { Feature, FeatureCollection, Geometry, LineString, MultiLineString } from 'geojson';
+import type { FeatureCollection, Geometry, LineString, MultiLineString } from 'geojson';
+import type { Violation } from '@/types/parking';
+import type { ResidentStreetName } from '@/lib/residentStreets';
+import { mapGeoNameToResidentStreet, violationMatchesResidentStreet } from '@/lib/residentStreetGeoAliases';
 
 const BOUNDARY_FC = boundaryGeo as FeatureCollection;
 const STREETS_FC = streetsGeo as FeatureCollection;
-
 const VIEW_W = BR_SVG_VIEWBOX.width;
 const VIEW_H = BR_SVG_VIEWBOX.height;
 
@@ -31,60 +19,90 @@ function isLineGeometry(g: Geometry | null): g is LineString | MultiLineString {
   return g?.type === 'LineString' || g?.type === 'MultiLineString';
 }
 
-type StreetProps = { name?: string; ['@id']?: string };
-
-function streetFeatureKey(f: Feature, index: number): string {
-  const id = (f.properties as StreetProps | null)?.['@id'];
-  return id ?? `street-${index}`;
-}
-
-const DECORATIVE_STYLE: CSSProperties = {
-  stroke: '#334155',
-  strokeWidth: 0.8,
-  strokeOpacity: 0.22,
-  filter: 'none',
-};
-
-/** Emerald accent on top of historical stroke; width scales with concurrent open enforcement. */
-function liveEnforcementOverlayStyle(count: number): CSSProperties {
-  const strokeWidth = count === 1 ? 2.25 : count <= 3 ? 3.25 : count <= 5 ? 4.5 : 6;
-  return {
-    stroke: '#34d399',
-    strokeWidth,
-    strokeOpacity: 0.9,
-    filter: 'drop-shadow(0 0 5px rgb(52 211 153 / 0.55))',
-  };
-}
-
 export type BlueRidgeSvgMapProps = {
-  violations: Violation[];
+  violations?: Violation[];
   className?: string;
-  selectedStreet?: ResidentStreetName | null;
-  onStreetSelect?: (street: ResidentStreetName | null) => void;
 };
 
-export function BlueRidgeSvgMap({
-  violations,
-  className,
-  selectedStreet = null,
-  onStreetSelect,
-}: BlueRidgeSvgMapProps) {
-  const [timeSliderMinutes, setTimeSliderMinutes] = useState(() => {
-    const d = new Date();
-    return d.getHours() * 60 + d.getMinutes();
-  });
+type TemporalPeriod = 'day' | 'week' | 'month';
+type StreetStatus = 'neutral' | 'compliant' | 'warning' | 'critical';
+type StreetMetric = {
+  streetId: string;
+  name: ResidentStreetName;
+  warnings: number;
+  tickets: number;
+  compliantMoves: number;
+  status: StreetStatus;
+  score: number;
+};
 
-  const [tooltip, setTooltip] = useState<{
+const PERIOD_ORDER: TemporalPeriod[] = ['day', 'week', 'month'];
+
+const STATUS_COLOR: Record<StreetStatus, string> = {
+  neutral: '#2D3748',
+  compliant: '#10B981',
+  warning: '#F59E0B',
+  critical: '#EF4444',
+};
+
+function periodCutoff(period: TemporalPeriod): number {
+  const now = Date.now();
+  if (period === 'day') return now - 24 * 60 * 60 * 1000;
+  if (period === 'week') return now - 7 * 24 * 60 * 60 * 1000;
+  return now - 30 * 24 * 60 * 60 * 1000;
+}
+
+function computeStreetStatus(warnings: number, tickets: number, compliantMoves: number): StreetStatus {
+  if (tickets >= 3 || tickets > warnings) return 'critical';
+  if (warnings >= 2) return 'warning';
+  if (compliantMoves >= 2) return 'compliant';
+  return 'neutral';
+}
+
+function adviceForStreet(street: StreetMetric, avgScore: number): string {
+  const diffPct = avgScore > 0 ? Math.round(((street.score - avgScore) / avgScore) * 100) : 0;
+  if (street.status === 'critical') {
+    return `Warning triggers are ${Math.max(40, diffPct)}% higher than average on ${street.name}. Suggest deploying a "No Parking" sign and assigning tanod monitoring.`;
+  }
+  if (street.status === 'warning') {
+    return `SMS alerts are trending upward on ${street.name}. Suggest a visible curbside reminder and 15-minute patrol checks.`;
+  }
+  if (street.status === 'compliant') {
+    return `${street.name} has strong compliance flow. Keep current signage and rotate patrols to higher-risk streets.`;
+  }
+  return `${street.name} is stable for this period. Continue baseline monitoring and keep deterrence signage visible.`;
+}
+
+function glowFilterForStatus(status: StreetStatus): string | undefined {
+  if (status === 'critical') return 'drop-shadow(0 0 8px #EF4444)';
+  if (status === 'warning') return 'drop-shadow(0 0 6px #F59E0B)';
+  return undefined;
+}
+
+function mockStreetMeta(metric: StreetMetric): { avgDuration: string; peakHour: string } {
+  const avg = Math.max(3, Math.min(58, metric.warnings * 4 + metric.tickets * 9 + 2));
+  const peak = (8 + (metric.warnings * 2 + metric.tickets * 3)) % 24;
+  const hour12 = peak % 12 === 0 ? 12 : peak % 12;
+  const suffix = peak >= 12 ? 'PM' : 'AM';
+  return { avgDuration: `${avg} mins`, peakHour: `${hour12}:00 ${suffix}` };
+}
+
+export function BlueRidgeSvgMap({ violations = [], className }: BlueRidgeSvgMapProps) {
+  const [period, setPeriod] = useState<TemporalPeriod>('day');
+  const [selectedStreetId, setSelectedStreetId] = useState<string | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const [hoveredStreet, setHoveredStreet] = useState<{
     x: number;
     y: number;
-    label: string;
-    count: number;
-    liveCount: number;
-    avgMins: number | null;
-    timeLabel: string;
+    metric: StreetMetric;
   } | null>(null);
-
-  const totalViolations = violations.length;
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const dragRef = useRef<{ pointerId: number; startX: number; startY: number; startPanX: number; startPanY: number } | null>(null);
+  const suppressClickRef = useRef(false);
 
   const { path, boundaryPolygon } = useMemo(
     () => createBlueRidgeMercatorEngine(BOUNDARY_FC, VIEW_W, VIEW_H, STREETS_FC),
@@ -94,310 +112,507 @@ export function BlueRidgeSvgMap({
   const boundaryPathD = useMemo(() => path(boundaryPolygon) ?? '', [path, boundaryPolygon]);
 
   const streetPaths = useMemo(() => {
-    const out: {
-      key: string;
-      d: string;
-      osmName: string;
-      resident: ResidentStreetName | null;
-      decorative: boolean;
-    }[] = [];
-    STREETS_FC.features.forEach((f, index) => {
-      if (!f.geometry || !isLineGeometry(f.geometry)) return;
+    const out: Array<{ key: string; d: string; resident: ResidentStreetName | null; decorative: boolean }> = [];
+    for (const f of STREETS_FC.features) {
+      if (!f.geometry || !isLineGeometry(f.geometry)) continue;
       const d = path(f) ?? '';
-      if (!d) return;
-      const raw = ((f.properties as StreetProps | null)?.name ?? '').trim();
+      if (!d) continue;
+      const raw = String((f.properties as { name?: string } | null)?.name ?? '').trim();
       const resident = raw ? mapGeoNameToResidentStreet(raw) : null;
-      const decorative = resident == null;
       out.push({
-        key: streetFeatureKey(f, index),
+        key: String((f.properties as { ['@id']?: string } | null)?.['@id'] ?? `s-${out.length}`),
         d,
-        osmName: raw || '—',
         resident,
-        decorative,
+        decorative: resident == null,
       });
-    });
+    }
     return out;
   }, [path]);
 
-  const historicalByStreet = useMemo(
-    () => buildViolationCountByStreetForClockHour(violations, timeSliderMinutes),
-    [violations, timeSliderMinutes],
-  );
-
-  const liveByStreet = useMemo(
-    () => buildLiveEnforcementCountsByResidentStreet(violations),
-    [violations],
-  );
-
-  const liveOpenTotal = useMemo(
-    () => violations.filter((v) => isActiveViolationForStreetHeat(v)).length,
-    [violations],
-  );
-
-  const selectedHour = hourIndexFromMinutes(timeSliderMinutes);
-  const hourRangeLabel = `${String(selectedHour).padStart(2, '0')}:00–${String(selectedHour).padStart(2, '0')}:59`;
-
-  const clearTooltip = useCallback(() => setTooltip(null), []);
-
-  const showTooltip = useCallback(
-    (e: React.PointerEvent, label: string, resident: ResidentStreetName | null) => {
-      const timeLabel = formatClockHHMM(timeSliderMinutes);
-      if (!resident) {
-        setTooltip({
-          x: e.clientX,
-          y: e.clientY,
-          label,
-          count: 0,
-          liveCount: 0,
-          avgMins: null,
-          timeLabel,
-        });
-        return;
-      }
-      const count = historicalByStreet.get(resident) ?? 0;
-      const liveCount = liveByStreet.get(resident) ?? 0;
-      const avgMins = avgViolationOpenMinutesForStreetInClockHour(
-        violations,
-        resident,
-        timeSliderMinutes,
-      );
-      setTooltip({
-        x: e.clientX,
-        y: e.clientY,
-        label,
-        count,
-        liveCount,
-        avgMins,
-        timeLabel,
+  const metrics = useMemo(() => {
+    const cutoff = periodCutoff(period);
+    const residents = [...new Set(streetPaths.map((s) => s.resident).filter((s): s is ResidentStreetName => !!s))];
+    const base = new Map<ResidentStreetName, StreetMetric>();
+    for (const street of residents) {
+      base.set(street, {
+        streetId: street.toLowerCase().replace(/\s+/g, '-'),
+        name: street,
+        warnings: 0,
+        tickets: 0,
+        compliantMoves: 0,
+        status: 'neutral',
+        score: 0,
       });
-    },
-    [violations, historicalByStreet, liveByStreet, timeSliderMinutes],
+    }
+
+    const scoped = violations.filter((v) => new Date(v.timeDetected).getTime() >= cutoff);
+    for (const v of scoped) {
+      for (const street of residents) {
+        if (!violationMatchesResidentStreet(v, street)) continue;
+        const m = base.get(street);
+        if (!m) break;
+        if (v.status === 'warning' || v.status === 'pending') m.warnings += 1;
+        const hasIssued = v.status === 'issued' && v.timeIssued;
+        if (hasIssued) {
+          const mins =
+            (new Date(v.timeIssued as Date).getTime() - new Date(v.timeDetected).getTime()) / 60000;
+          if (mins >= 30) m.tickets += 1;
+          if (mins <= 2) m.compliantMoves += 1;
+        }
+        break;
+      }
+    }
+
+    const out = [...base.values()].map((m) => {
+      const status = computeStreetStatus(m.warnings, m.tickets, m.compliantMoves);
+      const score = m.warnings + m.tickets * 2;
+      return { ...m, status, score };
+    });
+    out.sort((a, b) => b.score - a.score || b.tickets - a.tickets || b.warnings - a.warnings);
+    return out;
+  }, [violations, period, streetPaths]);
+
+  const previousPeriodMetrics = useMemo(() => {
+    const now = Date.now();
+    const span =
+      period === 'day' ? 24 * 60 * 60 * 1000 : period === 'week' ? 7 * 24 * 60 * 60 * 1000 : 30 * 24 * 60 * 60 * 1000;
+    const prevStart = now - span * 2;
+    const prevEnd = now - span;
+
+    const residents = [...new Set(streetPaths.map((s) => s.resident).filter((s): s is ResidentStreetName => !!s))];
+    const base = new Map<ResidentStreetName, StreetMetric>();
+    for (const street of residents) {
+      base.set(street, {
+        streetId: street.toLowerCase().replace(/\s+/g, '-'),
+        name: street,
+        warnings: 0,
+        tickets: 0,
+        compliantMoves: 0,
+        status: 'neutral',
+        score: 0,
+      });
+    }
+
+    for (const v of violations) {
+      const t = new Date(v.timeDetected).getTime();
+      if (t < prevStart || t >= prevEnd) continue;
+      for (const street of residents) {
+        if (!violationMatchesResidentStreet(v, street)) continue;
+        const m = base.get(street);
+        if (!m) break;
+        if (v.status === 'warning' || v.status === 'pending') m.warnings += 1;
+        const hasIssued = v.status === 'issued' && v.timeIssued;
+        if (hasIssued) {
+          const mins = (new Date(v.timeIssued as Date).getTime() - new Date(v.timeDetected).getTime()) / 60000;
+          if (mins >= 30) m.tickets += 1;
+          if (mins <= 2) m.compliantMoves += 1;
+        }
+        break;
+      }
+    }
+
+    const out = new Map<string, number>();
+    for (const m of base.values()) {
+      out.set(m.streetId, m.warnings + m.tickets * 2);
+    }
+    return out;
+  }, [violations, period, streetPaths]);
+
+  const totalPeriodViolations = useMemo(
+    () => metrics.reduce((sum, m) => sum + m.warnings + m.tickets, 0),
+    [metrics],
   );
-
+  const selectedMetric = metrics.find((m) => m.streetId === selectedStreetId) ?? null;
+  const hottestStreet = metrics.find((m) => m.score > 0) ?? metrics[0] ?? null;
+  const avgScore = metrics.length ? metrics.reduce((sum, m) => sum + m.score, 0) / metrics.length : 0;
+  const previousPeriodTotal = useMemo(() => {
+    const now = Date.now();
+    const span = period === 'day' ? 24 * 60 * 60 * 1000 : period === 'week' ? 7 * 24 * 60 * 60 * 1000 : 30 * 24 * 60 * 60 * 1000;
+    const prevStart = now - span * 2;
+    const prevEnd = now - span;
+    return violations.filter((v) => {
+      const t = new Date(v.timeDetected).getTime();
+      return t >= prevStart && t < prevEnd;
+    }).length;
+  }, [violations, period]);
+  const trendPct = previousPeriodTotal > 0
+    ? Math.round(((totalPeriodViolations - previousPeriodTotal) / previousPeriodTotal) * 100)
+    : 0;
+  const adviceText = selectedMetric
+    ? adviceForStreet(selectedMetric, avgScore)
+    : hottestStreet
+      ? `Across Blue Ridge B, violation rates are ${trendPct <= 0 ? `down ${Math.abs(trendPct)}%` : `up ${trendPct}%`} this ${period}. ${hottestStreet.name} remains the primary hotspot.`
+      : `Across Blue Ridge B, there are no violations recorded this ${period}. Keep patrol visibility and compliance signage steady.`;
+  const canZoomOut = zoom > 1;
+  const canZoomIn = zoom < 2.6;
+  const clampPan = useCallback((next: { x: number; y: number }) => {
+    const maxX = ((zoom - 1) * VIEW_W) / 2;
+    const maxY = ((zoom - 1) * VIEW_H) / 2;
+    return {
+      x: Math.max(-maxX, Math.min(maxX, next.x)),
+      y: Math.max(-maxY, Math.min(maxY, next.y)),
+    };
+  }, [zoom]);
   useEffect(() => {
-    const onScroll = () => setTooltip(null);
-    window.addEventListener('scroll', onScroll, true);
-    return () => window.removeEventListener('scroll', onScroll, true);
-  }, []);
-
-  const headerTitle =
-    selectedStreet != null ? `FOCUS: ${selectedStreet.toUpperCase()}` : 'BLUE RIDGE B';
+    const el = viewportRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const z = Math.min(2.6, Math.max(1, Number((zoom + (e.deltaY < 0 ? 0.12 : -0.12)).toFixed(2))));
+      setZoom(z);
+      if (z === 1) {
+        setPan({ x: 0, y: 0 });
+      } else {
+        setPan((p) => clampPan(p));
+      }
+    };
+    el.addEventListener('wheel', onWheel, { passive: false, capture: true });
+    return () => el.removeEventListener('wheel', onWheel, true);
+  }, [zoom, clampPan]);
+  useEffect(() => {
+    if (!isPlaying) return;
+    const timer = window.setInterval(() => {
+      setPeriod((prev) => PERIOD_ORDER[(PERIOD_ORDER.indexOf(prev) + 1) % PERIOD_ORDER.length]);
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [isPlaying]);
+  const setZoomClamped = (next: number) => {
+    const z = Math.min(2.6, Math.max(1, Number(next.toFixed(2))));
+    setZoom(z);
+    if (z === 1) {
+      setPan({ x: 0, y: 0 });
+    } else {
+      setPan((p) => clampPan(p));
+    }
+  };
 
   return (
     <div
       className={cn(
-        'relative flex h-full min-h-[280px] w-full flex-col rounded-lg border border-border/80 bg-[#0f172a]',
+        'relative w-full rounded-xl bg-[#0b1220] p-4 text-slate-100',
         className,
       )}
     >
-      <div className="border-b border-slate-800/90 px-3 py-2">
-        <p
-          className={cn(
-            'text-center font-mono text-[11px] font-semibold tracking-[0.14em] text-slate-300',
-            selectedStreet && 'text-sky-300',
-          )}
-        >
-          {headerTitle}
-        </p>
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <p className="text-sm font-semibold uppercase tracking-wide text-slate-300">Temporal Filter</p>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setIsPlaying((v) => !v)}
+            className={cn(
+              'inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium',
+              isPlaying
+                ? 'border-emerald-500/60 bg-emerald-500/15 text-emerald-300'
+                : 'border-slate-700 bg-[#0f172a] text-slate-300 hover:bg-slate-800',
+            )}
+            aria-label={isPlaying ? 'Pause temporal playback' : 'Play temporal playback'}
+          >
+            {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+            {isPlaying ? 'Pause' : 'Play'}
+          </button>
+          <div className="inline-flex rounded-lg border border-slate-700 bg-[#0f172a] p-1">
+            {(['day', 'week', 'month'] as const).map((p) => (
+              <button
+                key={p}
+                type="button"
+                onClick={() => {
+                  setIsPlaying(false);
+                  setPeriod(p);
+                }}
+                className={cn(
+                  'rounded-md px-4 py-1.5 text-sm font-medium capitalize transition-colors',
+                  period === p ? 'bg-slate-100 text-slate-900' : 'text-slate-300 hover:bg-slate-800',
+                )}
+              >
+                {p}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
-      <div className="relative min-h-0 w-full flex-1 overflow-visible bg-[#0f172a]">
-        <svg
-          className="relative z-0 h-full w-full overflow-visible touch-none select-none"
-          viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
-          preserveAspectRatio="xMidYMid meet"
-          role="img"
-          aria-label="Barangay Blue Ridge B street heatmap"
-          onPointerLeave={clearTooltip}
-        >
-          <rect width={VIEW_W} height={VIEW_H} fill="#0f172a" />
-
-          <path
-            d={boundaryPathD}
-            fill="none"
-            stroke="#334155"
-            strokeWidth={1.25}
-            pointerEvents="none"
-          />
-
-          <g>
-            {streetPaths.map(({ key, d, osmName, resident, decorative }) => {
-              const heatCount = resident ? historicalByStreet.get(resident) ?? 0 : 0;
-              const liveCount = resident ? liveByStreet.get(resident) ?? 0 : 0;
-              const dimOthers = selectedStreet != null && resident != null && resident !== selectedStreet;
-              const isSelected = resident != null && selectedStreet === resident;
-              if (decorative) {
-                return (
-                  <path
-                    key={key}
-                    d={d}
-                    fill="none"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    pointerEvents="none"
-                    style={DECORATIVE_STYLE}
-                  />
-                );
-              }
-              const { style, className: tierClass } = getStreetStyle(heatCount);
-              const label = resident ?? osmName;
-              const histAvg =
-                resident != null
-                  ? avgViolationOpenMinutesForStreetInClockHour(
-                      violations,
-                      resident,
-                      timeSliderMinutes,
-                    )
-                  : null;
-              return (
-                <g
-                  key={key}
-                  className={cn(
-                    'cursor-pointer transition-[opacity,stroke,filter] duration-200',
-                    isSelected && 'brightness-110',
-                  )}
-                  style={{ opacity: dimOthers ? 0.38 : 1 }}
-                >
-                  <path
-                    data-street-path=""
-                    data-resident-street={resident ?? undefined}
-                    d={d}
-                    fill="none"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className={cn(tierClass)}
-                    style={style}
-                    onPointerEnter={(e) => showTooltip(e, label, resident)}
-                    onPointerMove={(e) => showTooltip(e, label, resident)}
-                    onPointerLeave={clearTooltip}
-                    onClick={() => {
-                      if (!resident || !onStreetSelect) return;
-                      onStreetSelect(selectedStreet === resident ? null : resident);
-                    }}
-                  >
-                    <title>
-                      {`${label} | ${heatCount} hist. @ ${hourRangeLabel} | Live open: ${liveCount} | Avg. in hour: ${histAvg ?? '—'} min`}
-                    </title>
-                  </path>
-                  {liveCount > 0 ? (
-                    <path
-                      d={d}
-                      fill="none"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      pointerEvents="none"
-                      className={cn(liveCount >= 3 && 'animate-pulse')}
-                      style={liveEnforcementOverlayStyle(liveCount)}
-                      aria-hidden
-                    />
-                  ) : null}
-                </g>
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+        <div ref={viewportRef} className="relative rounded-xl border border-slate-800/80 bg-[#020617] p-0 [overscroll-behavior:contain]">
+          <svg
+            ref={svgRef}
+            className="h-[min(62vh,520px)] w-full"
+            viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
+            preserveAspectRatio="xMidYMid meet"
+            role="img"
+            aria-label="Blue Ridge B hotspot map"
+            onWheel={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setZoomClamped(zoom + (e.deltaY < 0 ? 0.12 : -0.12));
+            }}
+            onPointerDown={(e) => {
+              if (zoom <= 1) return;
+              const svg = svgRef.current;
+              if (!svg) return;
+              dragRef.current = {
+                pointerId: e.pointerId,
+                startX: e.clientX,
+                startY: e.clientY,
+                startPanX: pan.x,
+                startPanY: pan.y,
+              };
+              suppressClickRef.current = false;
+              setIsPanning(true);
+              svg.setPointerCapture(e.pointerId);
+            }}
+            onPointerMove={(e) => {
+              const drag = dragRef.current;
+              if (!drag || e.pointerId !== drag.pointerId) return;
+              const svg = svgRef.current;
+              if (!svg) return;
+              const rect = svg.getBoundingClientRect();
+              const dxView = ((e.clientX - drag.startX) * VIEW_W) / Math.max(1, rect.width);
+              const dyView = ((e.clientY - drag.startY) * VIEW_H) / Math.max(1, rect.height);
+              if (Math.abs(dxView) > 1.2 || Math.abs(dyView) > 1.2) suppressClickRef.current = true;
+              setPan(
+                clampPan({
+                  x: drag.startPanX + dxView,
+                  y: drag.startPanY + dyView,
+                }),
               );
-            })}
-          </g>
-        </svg>
-
-        <div className="pointer-events-none absolute right-2 top-2 z-20 flex flex-wrap items-center justify-end gap-2">
-          <div
-            className="rounded border border-slate-600/50 bg-[#0f172a]/95 px-2 py-1 font-mono text-[9px] font-semibold tabular-nums text-slate-200 shadow-sm"
-            aria-label={`Total violations: ${totalViolations}`}
-          >
-            Total <span className="text-sky-400">{totalViolations}</span>
-          </div>
-          <div
-            className="flex items-center gap-1.5 rounded border border-emerald-500/25 bg-[#0f172a]/90 px-2 py-1 font-mono text-[9px] font-medium uppercase tracking-wider text-emerald-400/95 shadow-sm"
-            title="Warning + pending violations in the loaded dataset"
-          >
-            <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-emerald-400 shadow-[0_0_6px_#34d399]" />
-            <span>Live</span>
-            <span className="tabular-nums text-emerald-300">{liveOpenTotal}</span>
-            <span className="font-normal normal-case tracking-normal text-slate-500">open</span>
-          </div>
-        </div>
-
-        <div
-          className="pointer-events-none absolute bottom-2 left-2 z-20 max-w-[200px] rounded border border-slate-700/60 bg-[#0f172a]/95 px-2 py-1.5 font-mono text-[8px] leading-tight text-slate-400 shadow-sm backdrop-blur-[2px]"
-          aria-hidden
-        >
-          <p className="mb-1 font-semibold uppercase tracking-wider text-slate-500">Legend</p>
-          <ul className="space-y-0.5">
-            <li className="flex items-center gap-1.5">
-              <span className="h-0.5 w-4 shrink-0 rounded bg-[#1e293b]" />
-              Stable (0)
-            </li>
-            <li className="flex items-center gap-1.5">
-              <span className="h-0.5 w-4 shrink-0 rounded bg-[#0ea5e9]" />
-              Light (1–2)
-            </li>
-            <li className="flex items-center gap-1.5">
-              <span className="h-0.5 w-4 shrink-0 rounded bg-[#f59e0b]" />
-              Elevated (3–5)
-            </li>
-            <li className="flex items-center gap-1.5">
-              <span className="h-0.5 w-4 shrink-0 rounded bg-[#ef4444]" />
-              Critical (6+)
-            </li>
-            <li className="flex items-center gap-1.5">
-              <span className="h-0.5 w-4 shrink-0 rounded bg-[#34d399] shadow-[0_0_4px_#34d399]" />
-              Live ring (warning / pending now)
-            </li>
-          </ul>
-          <p className="mt-1.5 border-t border-slate-700/50 pt-1 text-[7px] leading-tight text-slate-500">
-            Base color = historical volume in the scrubbed clock-hour. Emerald overlay = open enforcement on
-            that street right now.
-          </p>
-        </div>
-
-        {tooltip ? (
-          <div
-            className="pointer-events-none fixed z-[220] max-w-[min(360px,92vw)] rounded-md border border-slate-600/80 bg-[#0f172a] px-3 py-2 font-mono text-[11px] leading-snug text-slate-100 shadow-lg"
-            style={{
-              left: tooltip.x + 12,
-              top: tooltip.y + 12,
+            }}
+            onPointerUp={(e) => {
+              const drag = dragRef.current;
+              if (!drag || e.pointerId !== drag.pointerId) return;
+              const svg = svgRef.current;
+              if (svg?.hasPointerCapture(e.pointerId)) svg.releasePointerCapture(e.pointerId);
+              dragRef.current = null;
+              setIsPanning(false);
+              window.setTimeout(() => {
+                suppressClickRef.current = false;
+              }, 0);
+            }}
+            onPointerCancel={(e) => {
+              const drag = dragRef.current;
+              if (!drag || e.pointerId !== drag.pointerId) return;
+              const svg = svgRef.current;
+              if (svg?.hasPointerCapture(e.pointerId)) svg.releasePointerCapture(e.pointerId);
+              dragRef.current = null;
+              setIsPanning(false);
+              suppressClickRef.current = false;
             }}
           >
-            <span className="text-slate-300">{tooltip.label}</span>
-            <span className="text-slate-500"> | </span>
-            <span className="text-sky-400">
-              {tooltip.count} hist. @ {tooltip.timeLabel} ({hourRangeLabel})
-            </span>
-            <span className="text-slate-500"> | </span>
-            <span className="text-emerald-400">
-              Live {tooltip.liveCount} open
-            </span>
-            <span className="text-slate-500"> | </span>
-            <span className="text-amber-200/90">
-              Avg. in hour: {tooltip.avgMins != null ? `${tooltip.avgMins} min` : '—'}
-            </span>
-          </div>
-        ) : null}
-      </div>
-
-      <div className="shrink-0 border-t border-slate-800/90 bg-[#0b1220] px-3 py-3">
-        <div className="mb-2 flex flex-wrap items-end justify-between gap-2">
-          <div>
-            <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
-              Time rewind
-            </p>
-            <p className="mt-0.5 max-w-[min(100%,420px)] text-[9px] leading-snug text-slate-500">
-              Scrub local time for historical load by hour; emerald ring on a street = open warning or pending
-              enforcement there now (independent of the slider).
-            </p>
-          </div>
-          <div className="text-right font-mono text-sm font-semibold tabular-nums text-sky-400">
-            {formatClockHHMM(timeSliderMinutes)}
-            <span className="ml-1.5 text-[9px] font-normal text-slate-500">bucket {hourRangeLabel}</span>
+            <defs>
+              <clipPath id="br-boundary-clip">
+                <path d={boundaryPathD} />
+              </clipPath>
+            </defs>
+            <rect width={VIEW_W} height={VIEW_H} fill="#020617" />
+            <g
+              style={{
+                transformOrigin: `${VIEW_W / 2}px ${VIEW_H / 2}px`,
+                transformBox: 'fill-box',
+                transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                transition: isPanning ? 'none' : 'transform 180ms ease-out',
+              }}
+            >
+              <path d={boundaryPathD} fill="rgba(255,255,255,0.03)" stroke="none" pointerEvents="none" />
+              <g clipPath="url(#br-boundary-clip)">
+                {streetPaths.map((street) => {
+                  const metric = street.resident
+                    ? metrics.find((m) => m.name === street.resident) ?? null
+                    : null;
+                  const color = metric ? STATUS_COLOR[metric.status] : '#2D3748';
+                  const isSelected = metric?.streetId === selectedStreetId;
+                  return (
+                    <motion.path
+                      key={street.key}
+                      d={street.d}
+                      fill="none"
+                      animate={{
+                        stroke: isSelected ? '#ffffff' : color,
+                        strokeWidth: isSelected ? 5 : street.decorative ? 1.4 : 4,
+                      }}
+                      transition={{ duration: 0.45, ease: 'easeInOut' }}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      opacity={street.decorative ? 0.35 : 1}
+                      className={cn(!street.decorative && 'cursor-pointer')}
+                      style={metric ? { filter: glowFilterForStatus(metric.status) } : undefined}
+                      onClick={() => {
+                        if (suppressClickRef.current) return;
+                        if (!metric) return;
+                        setSelectedStreetId((prev) => (prev === metric.streetId ? null : metric.streetId));
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!metric) return;
+                        setHoveredStreet({ x: e.clientX, y: e.clientY, metric });
+                      }}
+                      onMouseMove={(e) => {
+                        if (!metric) return;
+                        setHoveredStreet({ x: e.clientX, y: e.clientY, metric });
+                      }}
+                      onMouseLeave={() => setHoveredStreet(null)}
+                    />
+                  );
+                })}
+              </g>
+              <path
+                d={boundaryPathD}
+                fill="none"
+                stroke="#06b6d4"
+                strokeWidth={2}
+                strokeDasharray="5,5"
+                style={{ filter: 'drop-shadow(0 0 5px rgba(6,182,212,0.55))' }}
+                pointerEvents="none"
+              />
+              <text
+                x={56}
+                y={38}
+                fill="#67e8f9"
+                fontSize={10}
+                fontFamily="'JetBrains Mono', monospace"
+                letterSpacing="0.08em"
+                style={{ textTransform: 'uppercase' }}
+              >
+                ZONE: BLUE RIDGE B
+              </text>
+            </g>
+          </svg>
+          {hoveredStreet ? (
+            <div
+              className="pointer-events-none fixed z-[240] rounded-md border border-slate-600/70 bg-slate-900/80 px-3 py-2 text-xs text-slate-100 shadow-lg backdrop-blur-sm"
+              style={{ left: hoveredStreet.x + 10, top: hoveredStreet.y + 10 }}
+            >
+              {(() => {
+                const meta = mockStreetMeta(hoveredStreet.metric);
+                return (
+                  <>
+                    <p className="font-semibold">{hoveredStreet.metric.name}</p>
+                    <p>Average Duration: {meta.avgDuration}</p>
+                    <p>Peak Hour: {meta.peakHour}</p>
+                  </>
+                );
+              })()}
+            </div>
+          ) : null}
+          <div className="mt-2 flex justify-end gap-1.5">
+            <button
+              type="button"
+              className="h-7 w-7 rounded border border-slate-600 text-sm text-slate-200 disabled:opacity-40"
+              onClick={() => setZoomClamped(zoom - 0.2)}
+              disabled={!canZoomOut}
+              aria-label="Zoom out map"
+            >
+              -
+            </button>
+            <button
+              type="button"
+              className="rounded border border-slate-600 px-2 text-xs text-slate-300"
+              onClick={() => {
+                setZoom(1);
+                setPan({ x: 0, y: 0 });
+              }}
+              aria-label="Reset zoom"
+            >
+              {Math.round(zoom * 100)}%
+            </button>
+            <button
+              type="button"
+              className="h-7 w-7 rounded border border-slate-600 text-sm text-slate-200 disabled:opacity-40"
+              onClick={() => setZoomClamped(zoom + 0.2)}
+              disabled={!canZoomIn}
+              aria-label="Zoom in map"
+            >
+              +
+            </button>
           </div>
         </div>
-        <Slider
-          min={0}
-          max={1439}
-          step={1}
-          value={[timeSliderMinutes]}
-          onValueChange={(v) => setTimeSliderMinutes(v[0] ?? 0)}
-          className="w-full py-1"
-          aria-label="Time of day for historical street load"
-        />
+
+        <aside className="rounded-xl border border-slate-800 bg-[#0f172a] p-3">
+          <p className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-300">Top Streets</p>
+          <p className="mb-3 text-xs text-slate-400">
+            Ranked by enforcement pressure in the selected period (warnings + weighted tickets).
+          </p>
+          {selectedStreetId ? (
+            <button
+              type="button"
+              className="mb-3 rounded border border-slate-600 px-2 py-1 text-xs text-slate-200 hover:bg-slate-800"
+              onClick={() => setSelectedStreetId(null)}
+            >
+              Clear selection
+            </button>
+          ) : null}
+          {totalPeriodViolations === 0 ? (
+            <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-100">
+              🎉 Great Job! No violations recorded this {period}. Blue Ridge B is maintaining a perfect street
+              state.
+            </div>
+          ) : (
+            <ul className="space-y-2">
+              {metrics.slice(0, 8).map((m, idx) => (
+                <li
+                  key={m.streetId}
+                  className={cn(
+                    'flex items-center justify-between rounded-md border px-3 py-2 text-sm',
+                    selectedStreetId === m.streetId
+                      ? 'border-slate-400 bg-slate-700/40'
+                      : 'border-slate-700 bg-slate-900/30',
+                  )}
+                >
+                  <button
+                    type="button"
+                    className="flex min-w-0 items-center gap-2 text-left"
+                    onClick={() => setSelectedStreetId((prev) => (prev === m.streetId ? null : m.streetId))}
+                  >
+                    <span className="w-5 shrink-0 text-slate-400">{idx + 1}</span>
+                    <span className="truncate">{m.name}</span>
+                  </button>
+                  <span className="tabular-nums text-slate-200">{m.score}</span>
+                  <span className="ml-2 inline-flex items-center gap-0.5 text-[11px]">
+                    {(() => {
+                      const prev = previousPeriodMetrics.get(m.streetId) ?? 0;
+                      const pct = prev > 0 ? Math.round(((m.score - prev) / prev) * 100) : m.score > 0 ? 100 : 0;
+                      const up = pct >= 0;
+                      return (
+                        <>
+                          {up ? (
+                            <ArrowUpRight className="h-3 w-3 text-emerald-400" />
+                          ) : (
+                            <ArrowDownRight className="h-3 w-3 text-red-400" />
+                          )}
+                          <span className={up ? 'text-emerald-300' : 'text-red-300'}>
+                            {up ? '+' : ''}
+                            {pct}%
+                          </span>
+                        </>
+                      );
+                    })()}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <div className="mt-4 rounded-md border border-slate-700 bg-slate-900/30 p-3 text-xs text-slate-300">
+            <p className="mb-1 font-semibold">Legend</p>
+            <div className="space-y-1.5">
+              <p className="flex items-start gap-2"><span className="mt-0.5 h-3 w-3 rounded-full bg-[#2D3748]" /><span><strong>Slate Gray:</strong> Neutral - No violations or activity detected.</span></p>
+              <p className="flex items-start gap-2"><span className="mt-0.5 h-3 w-3 rounded-full bg-[#10B981]" /><span><strong>Emerald:</strong> Compliant - High turnover; vehicles move within the 2-minute grace period.</span></p>
+              <p className="flex items-start gap-2"><span className="mt-0.5 h-3 w-3 rounded-full bg-[#F59E0B]" /><span><strong>Amber:</strong> Warning Zone - High frequency of SMS warnings sent (2-30 min stay).</span></p>
+              <p className="flex items-start gap-2"><span className="mt-0.5 h-3 w-3 rounded-full bg-[#EF4444]" /><span><strong>Crimson:</strong> Critical - Frequent illegal parking (Exceeding 30 mins).</span></p>
+            </div>
+          </div>
+        </aside>
+      </div>
+
+      <div className="mt-4 rounded-xl border border-slate-800 bg-[#0f172a] p-4">
+        <p className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-200">
+          {selectedMetric?.status === 'critical' ? (
+            <AlertTriangle className="h-4 w-4 text-red-400" />
+          ) : selectedMetric?.status === 'compliant' ? (
+            <CheckCircle className="h-4 w-4 text-emerald-400" />
+          ) : (
+            <Flame className="h-4 w-4 text-amber-400" />
+          )}
+          Actionable Advice
+        </p>
+        <p className="text-sm leading-relaxed text-slate-300">{adviceText}</p>
       </div>
     </div>
   );

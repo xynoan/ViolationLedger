@@ -23,9 +23,7 @@ import { usePageTracking } from '@/hooks/usePageTracking';
 import { CameraFeed } from '@/components/dashboard/CameraFeed';
 import { RangeSnapshotCard } from '@/components/dashboard/RangeSnapshotCard';
 import { BlueRidgeSvgMap } from '@/components/Analytics/BlueRidgeSvgMap';
-import type { ResidentStreetName } from '@/lib/residentStreets';
-import { violationMatchesResidentStreet } from '@/lib/residentStreetGeoAliases';
-import { violationLocationForHeatmap } from '@/lib/violationStreetAttribution';
+import { peakClockHourFromViolations } from '@/lib/violationHourHistogram';
 import { InsightTooltipShell, formatDeltaComparison } from '@/components/dashboard/InsightChartTooltip';
 import { WarningTimer } from '@/components/dashboard/WarningTimer';
 import { Button } from '@/components/ui/button';
@@ -38,7 +36,6 @@ import {
   ChartTooltip,
 } from '@/components/ui/chart';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, ReferenceDot, Legend } from 'recharts';
 import { Vehicle, Camera as CameraType, Violation } from '@/types/parking';
@@ -190,22 +187,6 @@ function peakHourFromByHour(byHour: Array<{ hour: number; count: number }>): { h
   return bestHour >= 0 && bestCount > 0 ? { hour: bestHour, count: bestCount } : null;
 }
 
-function peakHourFromViolations(violations: Violation[]): { hour: number; count: number } | null {
-  const hourCounts = new Array(24).fill(0);
-  for (const v of violations) {
-    hourCounts[new Date(v.timeDetected).getHours()] += 1;
-  }
-  let bestHour = -1;
-  let bestCount = 0;
-  for (let h = 0; h < 24; h++) {
-    if (hourCounts[h] > bestCount) {
-      bestCount = hourCounts[h];
-      bestHour = h;
-    }
-  }
-  return bestHour >= 0 && bestCount > 0 ? { hour: bestHour, count: bestCount } : null;
-}
-
 /** Higher score = triage first (longest overstay, then soonest expiry, then urgent / oldest). */
 function warningTriageScore(v: Violation): number {
   const ex = v.warningExpiresAt ? new Date(v.warningExpiresAt).getTime() : null;
@@ -284,7 +265,7 @@ function buildDailyBriefingLines(
   const dow = now.getDay();
 
   const fromAnalyticsHour = analytics ? peakHourFromByHour(analytics.violations.byHour || []) : null;
-  const fromViolationsHour = peakHourFromViolations(violations);
+  const fromViolationsHour = peakClockHourFromViolations(violations);
   const peak =
     fromAnalyticsHour && fromAnalyticsHour.count > 0 ? fromAnalyticsHour : fromViolationsHour;
 
@@ -392,7 +373,6 @@ export default function Dashboard() {
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [cameras, setCameras] = useState<CameraType[]>([]);
   const [violations, setViolations] = useState<Violation[]>([]);
-  const [mapFocusStreet, setMapFocusStreet] = useState<ResidentStreetName | null>(null);
   const [isDashboardLoading, setIsDashboardLoading] = useState(true);
   const [detectionEnabled, setDetectionEnabled] = useState(true);
   const [detectionToggleLoading, setDetectionToggleLoading] = useState(false);
@@ -805,16 +785,6 @@ export default function Dashboard() {
     () => violations.filter((v) => v.status === 'issued' || v.status === 'pending').length,
     [violations],
   );
-
-  const mapViolationLogRows = useMemo(() => {
-    const sorted = [...violations].sort(
-      (a, b) => new Date(b.timeDetected).getTime() - new Date(a.timeDetected).getTime(),
-    );
-    const filtered = mapFocusStreet
-      ? sorted.filter((v) => violationMatchesResidentStreet(v, mapFocusStreet))
-      : sorted;
-    return filtered.slice(0, 50);
-  }, [violations, mapFocusStreet]);
 
   const occupiedSpotsCount = useMemo(
     () =>
@@ -1273,75 +1243,13 @@ export default function Dashboard() {
               {hasData ? (
                 <Fragment>
                   <div
-                    className="mb-4 h-[min(420px,50vh)] min-h-[320px] w-full overflow-visible border-b border-border/60 pb-4"
+                    className="mb-8 w-full overflow-visible"
                     aria-label="Barangay Blue Ridge B vector map"
                   >
                     <BlueRidgeSvgMap
                       violations={violations}
-                      className="h-full"
-                      selectedStreet={mapFocusStreet}
-                      onStreetSelect={setMapFocusStreet}
+                      className=""
                     />
-                  </div>
-                  <div className="mb-4 rounded-lg border border-border/70 bg-card/50 px-3 py-3 shadow-sm">
-                    <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                      <h3 className="text-xs font-semibold uppercase tracking-wide text-foreground">
-                        Violation log
-                      </h3>
-                      {mapFocusStreet ? (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 text-[11px]"
-                          onClick={() => setMapFocusStreet(null)}
-                        >
-                          Clear map focus
-                        </Button>
-                      ) : null}
-                    </div>
-                    <p className="mb-2 text-[10px] text-muted-foreground">
-                      {mapFocusStreet
-                        ? `Filtered to ${mapFocusStreet}. Click the same street on the map again to clear.`
-                        : 'Click a roster street on the map to filter this table.'}
-                    </p>
-                    {mapViolationLogRows.length === 0 ? (
-                      <p className="py-6 text-center text-sm text-muted-foreground">
-                        No violations in this view.
-                      </p>
-                    ) : (
-                      <div className="max-h-[280px] overflow-auto rounded-md border border-border/50">
-                        <Table>
-                          <TableHeader>
-                            <TableRow>
-                              <TableHead className="text-xs">Plate</TableHead>
-                              <TableHead className="text-xs">Status</TableHead>
-                              <TableHead className="text-xs">Location</TableHead>
-                              <TableHead className="text-xs">Detected</TableHead>
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {mapViolationLogRows.map((v) => (
-                              <TableRow key={v.id}>
-                                <TableCell className="font-mono text-xs">{v.plateNumber}</TableCell>
-                                <TableCell className="text-xs capitalize">{v.status}</TableCell>
-                                <TableCell className="max-w-[160px] truncate text-xs text-muted-foreground">
-                                  {violationLocationForHeatmap(v) || v.cameraLocationId}
-                                </TableCell>
-                                <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                                  {new Date(v.timeDetected).toLocaleString(undefined, {
-                                    month: 'short',
-                                    day: 'numeric',
-                                    hour: '2-digit',
-                                    minute: '2-digit',
-                                  })}
-                                </TableCell>
-                              </TableRow>
-                            ))}
-                          </TableBody>
-                        </Table>
-                      </div>
-                    )}
                   </div>
                 </Fragment>
               ) : null}

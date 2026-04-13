@@ -120,12 +120,13 @@ function StreetHeatPolyline({ positions, pathOptions, tooltip }: StreetHeatPolyl
   );
 }
 
-export type BarangayHeatmapProps = {
+export type LegacyBarangayLeafletHeatmapProps = {
   violations: Violation[];
   className?: string;
 };
 
-export function BarangayHeatmap({ violations, className }: BarangayHeatmapProps) {
+/** Legacy Leaflet basemap (unused on Dashboard — prefer `BlueRidgeSvgMap`). */
+export function LegacyBarangayLeafletHeatmap({ violations, className }: LegacyBarangayLeafletHeatmapProps) {
   const boundaryFc = boundaryGeo as GeoJSONType.FeatureCollection;
 
   /** Tight jurisdiction bounds — used with maxBoundsViscosity so pan cannot leave Barangay B. */
