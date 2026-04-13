@@ -22,6 +22,10 @@ import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
 import { CameraFeed } from '@/components/dashboard/CameraFeed';
 import { RangeSnapshotCard } from '@/components/dashboard/RangeSnapshotCard';
+import { BlueRidgeSvgMap } from '@/components/Analytics/BlueRidgeSvgMap';
+import type { ResidentStreetName } from '@/lib/residentStreets';
+import { violationMatchesResidentStreet } from '@/lib/residentStreetGeoAliases';
+import { violationLocationForHeatmap } from '@/lib/violationStreetAttribution';
 import { InsightTooltipShell, formatDeltaComparison } from '@/components/dashboard/InsightChartTooltip';
 import { WarningTimer } from '@/components/dashboard/WarningTimer';
 import { Button } from '@/components/ui/button';
@@ -34,6 +38,7 @@ import {
   ChartTooltip,
 } from '@/components/ui/chart';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, ReferenceDot, Legend } from 'recharts';
 import { Vehicle, Camera as CameraType, Violation } from '@/types/parking';
@@ -387,6 +392,7 @@ export default function Dashboard() {
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [cameras, setCameras] = useState<CameraType[]>([]);
   const [violations, setViolations] = useState<Violation[]>([]);
+  const [mapFocusStreet, setMapFocusStreet] = useState<ResidentStreetName | null>(null);
   const [isDashboardLoading, setIsDashboardLoading] = useState(true);
   const [detectionEnabled, setDetectionEnabled] = useState(true);
   const [detectionToggleLoading, setDetectionToggleLoading] = useState(false);
@@ -458,7 +464,7 @@ export default function Dashboard() {
         violationsAPI.getAll().catch(() => []),
       ]);
 
-      const camerasWithDeviceId = camerasData.map((camera: any) => {
+      const camerasWithDeviceId = (camerasData as CameraType[]).map((camera) => {
         const deviceIdValue =
           camera.deviceId && typeof camera.deviceId === 'string' && camera.deviceId.trim()
             ? camera.deviceId.trim()
@@ -472,13 +478,16 @@ export default function Dashboard() {
       setVehicles(vehiclesData);
       setCameras(camerasWithDeviceId);
       setViolations(
-        (violationsData || []).map((v: any) => ({
-          ...v,
-          timeDetected: new Date(v.timeDetected),
-          timeIssued: v.timeIssued ? new Date(v.timeIssued) : undefined,
-          warningExpiresAt: v.warningExpiresAt ? new Date(v.warningExpiresAt) : undefined,
-          smsSentAt: v.smsSentAt ? new Date(v.smsSentAt) : undefined,
-        })),
+        (violationsData || []).map((raw) => {
+          const v = raw as Violation;
+          return {
+            ...v,
+            timeDetected: new Date(v.timeDetected),
+            timeIssued: v.timeIssued ? new Date(v.timeIssued) : undefined,
+            warningExpiresAt: v.warningExpiresAt ? new Date(v.warningExpiresAt) : undefined,
+            smsSentAt: v.smsSentAt ? new Date(v.smsSentAt) : undefined,
+          };
+        }),
       );
     } catch (error) {
       console.error('Error loading dashboard data:', error);
@@ -796,6 +805,16 @@ export default function Dashboard() {
     () => violations.filter((v) => v.status === 'issued' || v.status === 'pending').length,
     [violations],
   );
+
+  const mapViolationLogRows = useMemo(() => {
+    const sorted = [...violations].sort(
+      (a, b) => new Date(b.timeDetected).getTime() - new Date(a.timeDetected).getTime(),
+    );
+    const filtered = mapFocusStreet
+      ? sorted.filter((v) => violationMatchesResidentStreet(v, mapFocusStreet))
+      : sorted;
+    return filtered.slice(0, 50);
+  }, [violations, mapFocusStreet]);
 
   const occupiedSpotsCount = useMemo(
     () =>
@@ -1162,7 +1181,7 @@ export default function Dashboard() {
                         camerasAPI
                           .getAll()
                           .then((data) => {
-                            const camerasWithDeviceId = data.map((camera: any) => {
+                            const camerasWithDeviceId = (data as CameraType[]).map((camera) => {
                               const deviceIdValue =
                                 camera.deviceId && typeof camera.deviceId === 'string' && camera.deviceId.trim()
                                   ? camera.deviceId.trim()
@@ -1250,6 +1269,82 @@ export default function Dashboard() {
                   </div>
                 ) : null}
               </div>
+
+              {hasData ? (
+                <Fragment>
+                  <div
+                    className="mb-4 h-[min(420px,50vh)] min-h-[320px] w-full overflow-visible border-b border-border/60 pb-4"
+                    aria-label="Barangay Blue Ridge B vector map"
+                  >
+                    <BlueRidgeSvgMap
+                      violations={violations}
+                      className="h-full"
+                      selectedStreet={mapFocusStreet}
+                      onStreetSelect={setMapFocusStreet}
+                    />
+                  </div>
+                  <div className="mb-4 rounded-lg border border-border/70 bg-card/50 px-3 py-3 shadow-sm">
+                    <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                      <h3 className="text-xs font-semibold uppercase tracking-wide text-foreground">
+                        Violation log
+                      </h3>
+                      {mapFocusStreet ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 text-[11px]"
+                          onClick={() => setMapFocusStreet(null)}
+                        >
+                          Clear map focus
+                        </Button>
+                      ) : null}
+                    </div>
+                    <p className="mb-2 text-[10px] text-muted-foreground">
+                      {mapFocusStreet
+                        ? `Filtered to ${mapFocusStreet}. Click the same street on the map again to clear.`
+                        : 'Click a roster street on the map to filter this table.'}
+                    </p>
+                    {mapViolationLogRows.length === 0 ? (
+                      <p className="py-6 text-center text-sm text-muted-foreground">
+                        No violations in this view.
+                      </p>
+                    ) : (
+                      <div className="max-h-[280px] overflow-auto rounded-md border border-border/50">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead className="text-xs">Plate</TableHead>
+                              <TableHead className="text-xs">Status</TableHead>
+                              <TableHead className="text-xs">Location</TableHead>
+                              <TableHead className="text-xs">Detected</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {mapViolationLogRows.map((v) => (
+                              <TableRow key={v.id}>
+                                <TableCell className="font-mono text-xs">{v.plateNumber}</TableCell>
+                                <TableCell className="text-xs capitalize">{v.status}</TableCell>
+                                <TableCell className="max-w-[160px] truncate text-xs text-muted-foreground">
+                                  {violationLocationForHeatmap(v) || v.cameraLocationId}
+                                </TableCell>
+                                <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                                  {new Date(v.timeDetected).toLocaleString(undefined, {
+                                    month: 'short',
+                                    day: 'numeric',
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                  })}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    )}
+                  </div>
+                </Fragment>
+              ) : null}
 
           {isAnalyticsLoading && !analytics ? (
             <div className="flex flex-col items-center justify-center gap-3 px-5 py-16 text-muted-foreground">

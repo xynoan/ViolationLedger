@@ -13,7 +13,6 @@ import { toast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import type { AnalyticsResponse } from '@/lib/api';
 import type { Violation } from '@/types/parking';
-import { BarangayHeatmap } from '@/components/Analytics/BarangayHeatmap';
 
 type SnapshotBar = { key: string; label: string; count: number; hPct: number };
 type StatusRow = { name: string; value: number; pct: number; vsEven: number };
@@ -443,9 +442,13 @@ export function RangeSnapshotCard({
         ) : null}
       </div>
 
-      <div className="mb-4 flex-1">
-        <BarangayHeatmap violations={violations} />
-      </div>
+      <p className="mb-2 text-[10px] leading-snug text-muted-foreground">
+        Street-trace map lives in{' '}
+        <a href="#dashboard-full-analytics" className="font-medium text-primary underline-offset-2 hover:underline">
+          Dashboard → Analytics
+        </a>
+        .
+      </p>
 
       <div className="mt-auto flex flex-col gap-2 border-t border-border/60 pt-3">
         <Button
