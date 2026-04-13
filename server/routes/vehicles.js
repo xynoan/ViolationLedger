@@ -75,7 +75,15 @@ router.post('/', (req, res) => {
       id,
       plateNumber,
       ownerName,
+      ownerFirstName,
+      ownerMiddleName,
+      ownerLastName,
+      ownerSuffix,
       contactNumber,
+      houseNumber,
+      streetName,
+      barangay,
+      city,
       dataSource,
       residentId,
       rented,
@@ -84,7 +92,17 @@ router.post('/', (req, res) => {
       visitorCategory: visitorCategoryRaw,
     } = req.body;
 
-    if (!id || !plateNumber || !ownerName) {
+    const ofn = typeof ownerFirstName === 'string' ? ownerFirstName.trim() : '';
+    const omn = typeof ownerMiddleName === 'string' ? ownerMiddleName.trim() : '';
+    const oln = typeof ownerLastName === 'string' ? ownerLastName.trim() : '';
+    const osf = typeof ownerSuffix === 'string' ? ownerSuffix.trim() : '';
+    const hn = typeof houseNumber === 'string' ? houseNumber.trim() : '';
+    const sn = typeof streetName === 'string' ? streetName.trim() : '';
+    const bg = typeof barangay === 'string' ? barangay.trim() : '';
+    const ct = typeof city === 'string' ? city.trim() : '';
+    const resolvedOwnerName = (typeof ownerName === 'string' ? ownerName.trim() : '') || [ofn, omn, oln, osf].filter(Boolean).join(' ');
+
+    if (!id || !plateNumber || !resolvedOwnerName) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
@@ -133,13 +151,21 @@ router.post('/', (req, res) => {
     }
 
     db.prepare(`
-      INSERT INTO vehicles (id, plateNumber, ownerName, contactNumber, registeredAt, dataSource, residentId, rented, purposeOfVisit, vehicleType, visitorCategory)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO vehicles (id, plateNumber, ownerName, ownerFirstName, ownerMiddleName, ownerLastName, ownerSuffix, contactNumber, houseNumber, streetName, barangay, city, registeredAt, dataSource, residentId, rented, purposeOfVisit, vehicleType, visitorCategory)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       plateNumber,
-      ownerName,
+      resolvedOwnerName,
+      ofn || null,
+      omn || null,
+      oln || null,
+      osf || null,
       cleanedContact,
+      hn || null,
+      sn || null,
+      bg || null,
+      ct || null,
       registeredAt,
       vehicleDataSource,
       rid,
@@ -168,7 +194,15 @@ router.put('/:id', requireRole('admin', 'barangay_user'), (req, res) => {
     const {
       plateNumber,
       ownerName,
+      ownerFirstName,
+      ownerMiddleName,
+      ownerLastName,
+      ownerSuffix,
       contactNumber,
+      houseNumber,
+      streetName,
+      barangay,
+      city,
       residentId,
       rented,
       purposeOfVisit,
@@ -241,14 +275,43 @@ router.put('/:id', requireRole('admin', 'barangay_user'), (req, res) => {
       }
     }
 
+    const nextOwnerFirstName =
+      ownerFirstName !== undefined ? String(ownerFirstName || '').trim() : String(vehicle.ownerFirstName || '').trim();
+    const nextOwnerMiddleName =
+      ownerMiddleName !== undefined ? String(ownerMiddleName || '').trim() : String(vehicle.ownerMiddleName || '').trim();
+    const nextOwnerLastName =
+      ownerLastName !== undefined ? String(ownerLastName || '').trim() : String(vehicle.ownerLastName || '').trim();
+    const nextOwnerSuffix =
+      ownerSuffix !== undefined ? String(ownerSuffix || '').trim() : String(vehicle.ownerSuffix || '').trim();
+    const nextOwnerName =
+      (ownerName !== undefined ? String(ownerName || '').trim() : String(vehicle.ownerName || '').trim()) ||
+      [nextOwnerFirstName, nextOwnerMiddleName, nextOwnerLastName, nextOwnerSuffix].filter(Boolean).join(' ');
+
+    const nextHouseNumber =
+      houseNumber !== undefined ? String(houseNumber || '').trim() : String(vehicle.houseNumber || '').trim();
+    const nextStreetName =
+      streetName !== undefined ? String(streetName || '').trim() : String(vehicle.streetName || '').trim();
+    const nextBarangay =
+      barangay !== undefined ? String(barangay || '').trim() : String(vehicle.barangay || '').trim();
+    const nextCity =
+      city !== undefined ? String(city || '').trim() : String(vehicle.city || '').trim();
+
     db.prepare(`
       UPDATE vehicles 
-      SET plateNumber = ?, ownerName = ?, contactNumber = ?, residentId = ?, rented = ?, purposeOfVisit = ?, vehicleType = ?, visitorCategory = ?
+      SET plateNumber = ?, ownerName = ?, ownerFirstName = ?, ownerMiddleName = ?, ownerLastName = ?, ownerSuffix = ?, contactNumber = ?, houseNumber = ?, streetName = ?, barangay = ?, city = ?, residentId = ?, rented = ?, purposeOfVisit = ?, vehicleType = ?, visitorCategory = ?
       WHERE id = ?
     `).run(
       plateNumber !== undefined ? plateNumber : vehicle.plateNumber,
-      ownerName !== undefined ? ownerName : vehicle.ownerName,
+      nextOwnerName,
+      nextOwnerFirstName || null,
+      nextOwnerMiddleName || null,
+      nextOwnerLastName || null,
+      nextOwnerSuffix || null,
       cleanedContact,
+      nextHouseNumber || null,
+      nextStreetName || null,
+      nextBarangay || null,
+      nextCity || null,
       residentId !== undefined ? (residentId || null) : vehicle.residentId,
       rented !== undefined ? (rented || null) : vehicle.rented,
       purposeOfVisit !== undefined ? purposeOfVisit : vehicle.purposeOfVisit,

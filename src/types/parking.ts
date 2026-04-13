@@ -2,7 +2,15 @@ export interface Vehicle {
   id: string;
   plateNumber: string;
   ownerName: string;
+  ownerFirstName?: string;
+  ownerMiddleName?: string;
+  ownerLastName?: string;
+  ownerSuffix?: string;
   contactNumber: string;
+  houseNumber?: string;
+  streetName?: string;
+  barangay?: string;
+  city?: string;
   registeredAt: Date;
   dataSource?: string;
   residentId?: string;

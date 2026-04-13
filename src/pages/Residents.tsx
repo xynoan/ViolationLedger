@@ -350,8 +350,6 @@ export default function Residents() {
     contactNumber: '',
     houseNumber: '',
     streetName: '',
-    barangay: '',
-    city: '',
     residentType: 'homeowner' as ResidentType,
   });
 
@@ -663,8 +661,6 @@ export default function Residents() {
       contactNumber: '',
       houseNumber: '',
       streetName: '',
-      barangay: '',
-      city: '',
       residentType: 'homeowner',
     });
     setEditingResident(null);
@@ -690,8 +686,6 @@ export default function Residents() {
         contactNumber: resident.contactNumber,
         houseNumber: resident.houseNumber || '',
         streetName: resident.streetName || '',
-        barangay: resident.barangay || '',
-        city: resident.city || '',
         residentType: resolveResidentType(resident),
       });
     } else {
@@ -727,7 +721,7 @@ export default function Residents() {
       });
       return;
     }
-    if (!formData.houseNumber.trim() || !formData.barangay.trim() || !formData.city.trim()) {
+    if (!formData.houseNumber.trim()) {
       toast({
         title: 'Validation Error',
         description: 'Please fill in all required address fields',
@@ -758,8 +752,6 @@ export default function Residents() {
       contactNumber: formData.contactNumber.trim(),
       houseNumber: formData.houseNumber.trim(),
       streetName: street,
-      barangay: formData.barangay.trim(),
-      city: formData.city.trim(),
       residentType: formData.residentType,
     };
 
@@ -1078,32 +1070,6 @@ export default function Residents() {
                           ))}
                         </SelectContent>
                       </Select>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div className="space-y-2">
-                      <Label htmlFor="barangay">
-                        Barangay <span className="text-red-600">(Required)</span>
-                      </Label>
-                      <Input
-                        id="barangay"
-                        placeholder="Barangay 12"
-                        value={formData.barangay}
-                        onChange={(e) => setFormData({ ...formData, barangay: e.target.value })}
-                        className="bg-secondary"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="city">
-                        City <span className="text-red-600">(Required)</span>
-                      </Label>
-                      <Input
-                        id="city"
-                        placeholder="Bacolod City"
-                        value={formData.city}
-                        onChange={(e) => setFormData({ ...formData, city: e.target.value })}
-                        className="bg-secondary"
-                      />
                     </div>
                   </div>
                   <div className="space-y-2">

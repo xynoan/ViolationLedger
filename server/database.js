@@ -182,7 +182,15 @@ async function initDatabase() {
       id TEXT PRIMARY KEY,
       plateNumber TEXT NOT NULL UNIQUE,
       ownerName TEXT NOT NULL,
+      ownerFirstName TEXT,
+      ownerMiddleName TEXT,
+      ownerLastName TEXT,
+      ownerSuffix TEXT,
       contactNumber TEXT NOT NULL,
+      houseNumber TEXT,
+      streetName TEXT,
+      barangay TEXT,
+      city TEXT,
       registeredAt TEXT NOT NULL,
       dataSource TEXT NOT NULL DEFAULT 'barangay',
       residentId TEXT,
@@ -253,6 +261,70 @@ async function initDatabase() {
     const errorMsg = error?.message || String(error);
     if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
       console.log('Note: visitorCategory column migration:', errorMsg);
+    }
+  }
+  try {
+    db.run('ALTER TABLE vehicles ADD COLUMN ownerFirstName TEXT');
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: ownerFirstName column migration:', errorMsg);
+    }
+  }
+  try {
+    db.run('ALTER TABLE vehicles ADD COLUMN ownerMiddleName TEXT');
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: ownerMiddleName column migration:', errorMsg);
+    }
+  }
+  try {
+    db.run('ALTER TABLE vehicles ADD COLUMN ownerLastName TEXT');
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: ownerLastName column migration:', errorMsg);
+    }
+  }
+  try {
+    db.run('ALTER TABLE vehicles ADD COLUMN ownerSuffix TEXT');
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: ownerSuffix column migration:', errorMsg);
+    }
+  }
+  try {
+    db.run('ALTER TABLE vehicles ADD COLUMN houseNumber TEXT');
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: vehicles.houseNumber column migration:', errorMsg);
+    }
+  }
+  try {
+    db.run('ALTER TABLE vehicles ADD COLUMN streetName TEXT');
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: vehicles.streetName column migration:', errorMsg);
+    }
+  }
+  try {
+    db.run('ALTER TABLE vehicles ADD COLUMN barangay TEXT');
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: vehicles.barangay column migration:', errorMsg);
+    }
+  }
+  try {
+    db.run('ALTER TABLE vehicles ADD COLUMN city TEXT');
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: vehicles.city column migration:', errorMsg);
     }
   }
 

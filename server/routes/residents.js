@@ -30,9 +30,8 @@ router.get('/', (req, res) => {
         SELECT * FROM residents 
         WHERE name LIKE ? OR contactNumber LIKE ? OR address LIKE ?
            OR IFNULL(houseNumber, '') LIKE ? OR IFNULL(streetName, '') LIKE ?
-           OR IFNULL(barangay, '') LIKE ? OR IFNULL(city, '') LIKE ?
         ORDER BY name ASC
-      `).all(like, like, like, like, like, like, like);
+      `).all(like, like, like, like, like);
     } else {
       residents = db.prepare('SELECT * FROM residents ORDER BY name ASC').all();
     }
@@ -63,7 +62,7 @@ router.get('/:id', (req, res) => {
 
 router.post('/', (req, res) => {
   try {
-    const { id, name, contactNumber, houseNumber, streetName, barangay, city, residentStatus, residentType } = req.body;
+    const { id, name, contactNumber, houseNumber, streetName, residentStatus, residentType } = req.body;
 
     if (!id || !name || !contactNumber) {
       return res.status(400).json({ error: 'Missing required fields: id, name, contactNumber' });
@@ -77,15 +76,7 @@ router.post('/', (req, res) => {
       return res.status(400).json({ error: 'Invalid street name' });
     }
     const hn = typeof houseNumber === 'string' ? houseNumber.trim() : '';
-    const bg = typeof barangay === 'string' ? barangay.trim() : '';
-    const ct = typeof city === 'string' ? city.trim() : '';
-    if (!bg) {
-      return res.status(400).json({ error: 'Barangay is required' });
-    }
-    if (!ct) {
-      return res.status(400).json({ error: 'City is required' });
-    }
-    const composedAddress = composeResidentAddress(hn, sn, bg, ct);
+    const composedAddress = composeResidentAddress(hn, sn, '', '');
 
     const createdAt = new Date().toISOString();
     const status = normalizeResidentStatus(residentStatus);
@@ -104,7 +95,7 @@ router.post('/', (req, res) => {
     db.prepare(`
       INSERT INTO residents (id, name, contactNumber, address, houseNumber, streetName, barangay, city, createdAt, residentStatus, residentType)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, name, cleanedContact, composedAddress, hn || null, sn, bg, ct, createdAt, status, type);
+    `).run(id, name, cleanedContact, composedAddress, hn || null, sn, null, null, createdAt, status, type);
 
     const created = db.prepare('SELECT * FROM residents WHERE id = ?').get(id);
     res.status(201).json({
@@ -122,7 +113,7 @@ router.post('/', (req, res) => {
 
 router.put('/:id', (req, res) => {
   try {
-    const { name, contactNumber, houseNumber, streetName, barangay, city, residentStatus, residentType } = req.body;
+    const { name, contactNumber, houseNumber, streetName, residentStatus, residentType } = req.body;
     const resident = db.prepare('SELECT * FROM residents WHERE id = ?').get(req.params.id);
 
     if (!resident) {
@@ -149,29 +140,14 @@ router.put('/:id', (req, res) => {
       streetName !== undefined
         ? (typeof streetName === 'string' ? streetName.trim() : '')
         : (resident.streetName || '').trim();
-    const nextB =
-      barangay !== undefined
-        ? (typeof barangay === 'string' ? barangay.trim() : '')
-        : (resident.barangay || '').trim();
-    const nextC =
-      city !== undefined
-        ? (typeof city === 'string' ? city.trim() : '')
-        : (resident.city || '').trim();
-
     if (!nextS) {
       return res.status(400).json({ error: 'Street name is required' });
     }
     if (!RESIDENT_STREET_SET.has(nextS)) {
       return res.status(400).json({ error: 'Invalid street name' });
     }
-    if (!nextB) {
-      return res.status(400).json({ error: 'Barangay is required' });
-    }
-    if (!nextC) {
-      return res.status(400).json({ error: 'City is required' });
-    }
 
-    const composedAddress = composeResidentAddress(nextH, nextS, nextB, nextC);
+    const composedAddress = composeResidentAddress(nextH, nextS, '', '');
 
     const nextStatus =
       residentStatus !== undefined
@@ -193,8 +169,8 @@ router.put('/:id', (req, res) => {
       composedAddress,
       nextH || null,
       nextS,
-      nextB,
-      nextC,
+      null,
+      null,
       nextStatus,
       nextType,
       req.params.id
