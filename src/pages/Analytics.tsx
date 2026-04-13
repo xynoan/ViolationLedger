@@ -320,15 +320,9 @@ export default function Analytics({ embedded = false }: AnalyticsProps) {
         {embedded && (
           <div className="flex items-center justify-between gap-2">
             <h2 className="text-base sm:text-lg font-semibold text-foreground">Analytics</h2>
-            <div className="flex items-center gap-2">
-              <Button onClick={handleExportReport} variant="outline" size="sm">
-                Export Report
-              </Button>
-              <Button onClick={loadAnalytics} disabled={isLoading} variant="outline" size="sm">
-                <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
-                Refresh
-              </Button>
-            </div>
+            <Button onClick={handleExportReport} variant="outline" size="sm">
+              Export Report
+            </Button>
           </div>
         )}
         {/* Filters */}

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Camera, Car, Bike, Truck, Bus, Image as ImageIcon, Calendar, Clock, ZoomIn, ChevronDown, Eye } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -61,18 +61,16 @@ export function CaptureResults({ autoRefresh = true }: CaptureResultsProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [cameras, setCameras] = useState<CameraType[]>([]);
   const [selectedImage, setSelectedImage] = useState<{ src: string; alt: string } | null>(null);
+  const refreshDebounceRef = useRef<number | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
     loadCaptureResults();
-    if (!autoRefresh) return;
-    // Refresh more frequently for near real-time updates
-    const interval = setInterval(loadCaptureResults, 5000);
-    return () => clearInterval(interval);
-  }, [autoRefresh]);
+  }, []);
 
-  const loadCaptureResults = async () => {
+  const loadCaptureResults = useCallback(async (silent = false) => {
     try {
-      setIsLoading(true);
+      if (!silent) setIsLoading(true);
       
       const camerasData = await camerasAPI.getAll();
       setCameras(camerasData);
@@ -151,9 +149,55 @@ export function CaptureResults({ autoRefresh = true }: CaptureResultsProps) {
     } catch (error) {
       console.error('Error loading capture results:', error);
     } finally {
-      setIsLoading(false);
+      if (!silent) setIsLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (!autoRefresh || cameras.length === 0) return;
+
+    const cameraIds = cameras.map((c) => c.id).filter(Boolean);
+    if (cameraIds.length === 0) return;
+
+    const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+    const wsBase = apiBase.replace(/^http/, 'ws').replace(/\/api\/?$/, '');
+    const wsUrl = `${wsBase}/api/detect/ws?cameraIds=${encodeURIComponent(cameraIds.join(','))}`;
+
+    const ws = new WebSocket(wsUrl);
+    wsRef.current = ws;
+
+    ws.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg?.type !== 'detection') return;
+        const vehicleCount = Array.isArray(msg.vehicles) ? msg.vehicles.length : 0;
+        const plateCount = Array.isArray(msg.plates) ? msg.plates.length : 0;
+        // Refresh only when a real vehicle/plate detection exists.
+        if (vehicleCount + plateCount <= 0) return;
+
+        if (refreshDebounceRef.current) {
+          window.clearTimeout(refreshDebounceRef.current);
+        }
+        // Allow DB write from worker before refreshing capture list.
+        refreshDebounceRef.current = window.setTimeout(() => {
+          void loadCaptureResults(true);
+        }, 1000);
+      } catch {
+        // Ignore malformed stream payloads.
+      }
+    };
+
+    return () => {
+      if (refreshDebounceRef.current) {
+        window.clearTimeout(refreshDebounceRef.current);
+        refreshDebounceRef.current = null;
+      }
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
+    };
+  }, [autoRefresh, cameras, loadCaptureResults]);
 
   const getVehicleCounts = (detections: CaptureResult['detections']) => {
     const counts = {

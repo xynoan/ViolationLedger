@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Car, AlertTriangle, CheckCircle, Camera, Plus, RefreshCw, Pause, Play, FlaskConical } from 'lucide-react';
+import { Car, AlertTriangle, CheckCircle, Camera, Plus, Pause, Play, FlaskConical } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
@@ -244,6 +244,7 @@ export default function Dashboard() {
           <Button
             variant="outline"
             size="sm"
+            className="hidden devtools-unhide-detection-toggle"
             onClick={handleToggleDetection}
             disabled={detectionToggleLoading}
           >
@@ -258,10 +259,6 @@ export default function Dashboard() {
                 Resume Detection
               </>
             )}
-          </Button>
-          <Button variant="outline" size="sm" onClick={loadData}>
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Refresh
           </Button>
         </div>
 
