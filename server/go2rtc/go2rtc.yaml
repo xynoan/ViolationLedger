@@ -1,5 +1,5 @@
 streams:
-  cam1: "rtsp://ncmorva:12345678@192.168.254.179:554/stream1"
+  cam1: "rtsp://ncmorva:12345678@192.168.254.250:554/stream1"
 api:
   listen: ":1984"
   origin: "*"

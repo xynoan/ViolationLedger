@@ -4,6 +4,7 @@ import { dirname, join } from 'path';
 import fs from 'fs-extra';
 import { tmpdir } from 'os';
 import { randomUUID } from 'crypto';
+import { getPythonExecutable } from './python_executable.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -72,9 +73,8 @@ export async function analyzeImageWithAI(imageBase64 = null, imagePath = null) {
       });
     }
 
-    // Try python3 first, fallback to python
-    const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
-    
+    const pythonCmd = getPythonExecutable();
+
     // Verify Python version before running
     await new Promise((resolve) => {
       const versionCheck = spawn(pythonCmd, ['--version'], { timeout: 5000 });
@@ -347,7 +347,7 @@ export async function runYoloDetection(imageBase64) {
       console.warn(`[YOLO] Vehicle model weights not found at ${VEHICLE_MODEL_PATH}. Python may fall back to default weights.`);
     }
 
-    const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+    const pythonCmd = getPythonExecutable();
     console.log('[YOLO] Spawning Python process...');
     const pythonProcess = spawn(pythonCmd, [YOLO_DETECTION_SERVICE_PATH, '--base64-file', tempBase64File], {
       cwd: __dirname,
@@ -442,9 +442,8 @@ export async function analyzeVideoStream(videoStreamUrl, cameraConfig) {
       }
     };
 
-    // Try python3 first, fallback to python
-    const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
-    
+    const pythonCmd = getPythonExecutable();
+
     console.log(`📹 Starting video analysis with ${pythonCmd}...`);
     
     // Spawn Python process

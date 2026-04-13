@@ -12,6 +12,7 @@ import { dirname, join } from 'path';
 import db from './database.js';
 import { getDetectionEnabled } from './detection_state.js';
 import { createViolationFromDetection } from './routes/violations.js';
+import { getPythonExecutable } from './python_executable.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -19,7 +20,7 @@ const __dirname = dirname(__filename);
 const DETECTION_WORKER_PATH = join(__dirname, 'detection_worker.py');
 const GO2RTC_RTSP_BASE = process.env.GO2RTC_RTSP_BASE || 'rtsp://127.0.0.1:8554';
 const SYNC_INTERVAL_MS = 30000; // Re-sync workers every 30s
-const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+const pythonCmd = getPythonExecutable();
 
 /** cameraId -> ChildProcess */
 const workers = new Map();

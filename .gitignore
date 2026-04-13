@@ -1,6 +1,7 @@
 # Dependencies
 node_modules/
 server/node_modules/
+server/.venv/
 
 # Database
 server/parking.db

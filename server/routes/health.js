@@ -8,6 +8,7 @@ import { dirname, join } from 'path';
 import fs from 'fs-extra';
 import { spawn } from 'child_process';
 import { getSmsServiceStatus } from '../utils/smsService.js';
+import { getPythonExecutable } from '../python_executable.js';
 
 function readEnvFile() {
   const envPath = join(__dirname, '..', '.env');
@@ -98,9 +99,8 @@ async function checkAIService() {
       };
     }
     
-    // Check if Python is available
-    const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
-    
+    const pythonCmd = getPythonExecutable();
+
     return new Promise((resolve) => {
       const testProcess = spawn(pythonCmd, ['--version'], { timeout: 5000 });
       let pythonAvailable = false;
