@@ -104,10 +104,20 @@ Run with PM2 so it restarts on reboot:
 
 ```bash
 cd /opt/LedgerMonitor
-NODE_ENV=production pm2 start server/server.js --name ledger-monitor -i 1
+NODE_ENV=production pm2 start ecosystem.config.cjs
 pm2 save
 pm2 startup   # follow the command it prints to enable on boot
 ```
+
+Equivalent one-liner (same as `ecosystem.config.cjs`):
+
+```bash
+NODE_ENV=production pm2 start server/server.js --name ledger-monitor -i 1
+```
+
+**Important:** The Node app (`server/server.js`) starts RTSP detection by spawning `server/detection_worker.py` with `--camera-id` and `--rtsp-url`. Do **not** register `detection_worker.py` as its own PM2 process. If you see `detection_worker.py: error: the following arguments are required: --camera-id, --rtsp-url` in logs, remove the stray process (`pm2 delete <name>`) and keep only `ledger-monitor`.
+
+**RTSP `404 Not Found` on DESCRIBE:** Detection builds URLs as `{GO2RTC_RTSP_BASE}/{camera.deviceId}` (default base `rtsp://127.0.0.1:8554`). Ensure go2rtc (or your RTSP server) actually publishes that path and that each camera’s **device ID** in the app matches the stream name (e.g. deviceId `cam1` → `rtsp://127.0.0.1:8554/cam1`).
 
 The app is now listening on **port 3001**. Keep the default port or set `PORT` in `server/.env`.
 
