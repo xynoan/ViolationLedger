@@ -521,9 +521,9 @@ export default function Analytics() {
 
         <Card>
           <CardHeader>
-            <CardTitle>AI Descriptive Analytics</CardTitle>
+            <CardTitle>Descriptive Analytics</CardTitle>
             <CardDescription>
-              Auto-generated summary using Gemini ({descriptive?.aiNarrative ? 'live' : 'unavailable'})
+              Auto-generated summary from live dashboard metrics
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -533,7 +533,7 @@ export default function Analytics() {
               </div>
             ) : (
               <div className="text-sm text-muted-foreground">
-                Gemini narrative unavailable. Ensure <code>GEMINI_API_KEY</code> is configured on the server.
+                Narrative unavailable for the selected filter range.
               </div>
             )}
           </CardContent>

@@ -4,7 +4,6 @@ import db from '../database.js';
 const router = express.Router();
 const REPEAT_OFFENDER_THRESHOLD = 3;
 const DAY_MS = 24 * 60 * 60 * 1000;
-const GEMINI_MODEL = 'gemini-2.0-flash';
 
 function buildPreviousMonthWindow(currentStart, currentEndExclusive) {
   const prevStart = new Date(currentStart);
@@ -43,49 +42,29 @@ function computeTrend(currentTotal, previousTotal) {
   return { currentTotal, previousTotal, delta, deltaPct };
 }
 
-async function buildGeminiNarrative(payload) {
-  const apiKey = String(process.env.GEMINI_API_KEY || '').trim();
-  if (!apiKey) return null;
+function buildDescriptiveNarrative(payload) {
+  const trend = payload?.trends?.violations7d;
+  const topLocation = payload?.topLocation?.cameraLocationId || 'the monitored area';
+  const topVehicleType = payload?.topVehicleType?.vehicleType || 'unknown';
+  const topVehicleTypeCount = Number(payload?.topVehicleType?.count || 0);
+  const warnings = Number(payload?.totals?.warnings || 0);
+  const recurringPct = Number(payload?.repeatOffenders?.recurringPct || 0);
+  const delta = Number(trend?.delta || 0);
+  const deltaPct = Number(trend?.deltaPct || 0);
 
-  const prompt = [
-    'You are an analytics assistant for a parking violation monitoring dashboard.',
-    'Generate a concise narrative in plain English with exactly 3 bullet points.',
-    'Focus on actionable observations from this JSON metrics payload.',
-    'Mention trend direction, likely risk area, and one recommended action.',
-    'Keep each bullet to <= 22 words and avoid markdown headings.',
-    '',
-    JSON.stringify(payload),
-  ].join('\n');
+  const trendLine = delta > 0
+    ? `- Violation volume is increasing (+${delta} / +${deltaPct}% over the last 7-day comparison window).`
+    : delta < 0
+      ? `- Violation volume is decreasing (${delta} / ${deltaPct}% over the last 7-day comparison window).`
+      : '- Violation volume is flat versus the previous 7-day comparison window.';
 
-  try {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(apiKey)}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            temperature: 0.3,
-            maxOutputTokens: 220,
-          },
-        }),
-      },
-    );
+  const riskLine = `- Highest concentration remains around ${topLocation}, with ${topVehicleType} leading violation type (${topVehicleTypeCount}).`;
 
-    if (!response.ok) {
-      return null;
-    }
+  const actionLine = warnings > 0
+    ? `- Immediate action: prioritize active warning follow-ups (${warnings} open) and enforce repeat-offender checks (${recurringPct.toFixed(2)}% recurring).`
+    : `- Recommended action: focus patrols in ${topLocation} and monitor repeat-offender share (${recurringPct.toFixed(2)}%) to prevent warning buildup.`;
 
-    const data = await response.json();
-    const text = data?.candidates?.[0]?.content?.parts
-      ?.map((p) => p?.text || '')
-      .join('\n')
-      .trim();
-    return text || null;
-  } catch {
-    return null;
-  }
+  return [trendLine, riskLine, actionLine].join('\n');
 }
 
 router.get('/', async (req, res) => {
@@ -460,7 +439,7 @@ router.get('/', async (req, res) => {
       WHERE timestamp >= ? AND class_name != 'none'
     `).get(sevenDaysAgo.toISOString());
 
-    const aiNarrative = await buildGeminiNarrative({
+    const aiNarrative = buildDescriptiveNarrative({
       period: {
         startDate: startDate || null,
         endDate: endDate || null,
