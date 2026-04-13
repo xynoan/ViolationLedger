@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ArrowDownRight, ArrowUpRight, CheckCircle, Flame, Pause, Play } from 'lucide-react';
+import { Activity, ArrowDownRight, ArrowUpRight, CheckCircle, ExternalLink, Globe, MapPin, Pause, Play, ShieldCheck } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { BR_SVG_VIEWBOX, createBlueRidgeMercatorEngine } from '@/lib/blueRidgeMercatorMap';
 import boundaryGeo from '@/assets/blueRidgeBoundary.json';
@@ -8,7 +9,11 @@ import streetsGeo from '@/assets/blueRidgeStreets.json';
 import type { FeatureCollection, Geometry, LineString, MultiLineString } from 'geojson';
 import type { Violation } from '@/types/parking';
 import type { ResidentStreetName } from '@/lib/residentStreets';
-import { mapGeoNameToResidentStreet, violationMatchesResidentStreet } from '@/lib/residentStreetGeoAliases';
+import {
+  geoNamesForResidentStreet,
+  mapGeoNameToResidentStreet,
+  violationMatchesResidentStreet,
+} from '@/lib/residentStreetGeoAliases';
 
 const BOUNDARY_FC = boundaryGeo as FeatureCollection;
 const STREETS_FC = streetsGeo as FeatureCollection;
@@ -88,6 +93,7 @@ function mockStreetMeta(metric: StreetMetric): { avgDuration: string; peakHour: 
 }
 
 export function BlueRidgeSvgMap({ violations = [], className }: BlueRidgeSvgMapProps) {
+  const navigate = useNavigate();
   const [period, setPeriod] = useState<TemporalPeriod>('day');
   const [selectedStreetId, setSelectedStreetId] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -128,6 +134,14 @@ export function BlueRidgeSvgMap({ violations = [], className }: BlueRidgeSvgMapP
     }
     return out;
   }, [path]);
+  const geoStreetNameSet = useMemo(() => {
+    const names = new Set<string>();
+    for (const f of STREETS_FC.features) {
+      const raw = String((f.properties as { name?: string } | null)?.name ?? '').trim();
+      if (raw) names.add(raw);
+    }
+    return names;
+  }, []);
 
   const metrics = useMemo(() => {
     const cutoff = periodCutoff(period);
@@ -224,7 +238,6 @@ export function BlueRidgeSvgMap({ violations = [], className }: BlueRidgeSvgMapP
   );
   const selectedMetric = metrics.find((m) => m.streetId === selectedStreetId) ?? null;
   const hottestStreet = metrics.find((m) => m.score > 0) ?? metrics[0] ?? null;
-  const avgScore = metrics.length ? metrics.reduce((sum, m) => sum + m.score, 0) / metrics.length : 0;
   const previousPeriodTotal = useMemo(() => {
     const now = Date.now();
     const span = period === 'day' ? 24 * 60 * 60 * 1000 : period === 'week' ? 7 * 24 * 60 * 60 * 1000 : 30 * 24 * 60 * 60 * 1000;
@@ -238,11 +251,108 @@ export function BlueRidgeSvgMap({ violations = [], className }: BlueRidgeSvgMapP
   const trendPct = previousPeriodTotal > 0
     ? Math.round(((totalPeriodViolations - previousPeriodTotal) / previousPeriodTotal) * 100)
     : 0;
-  const adviceText = selectedMetric
-    ? adviceForStreet(selectedMetric, avgScore)
-    : hottestStreet
-      ? `Across Blue Ridge B, violation rates are ${trendPct <= 0 ? `down ${Math.abs(trendPct)}%` : `up ${trendPct}%`} this ${period}. ${hottestStreet.name} remains the primary hotspot.`
-      : `Across Blue Ridge B, there are no violations recorded this ${period}. Keep patrol visibility and compliance signage steady.`;
+  const congestionIntensity = hottestStreet?.score ?? 0;
+  const activeHotspots = useMemo(() => metrics.filter((m) => m.score > 0).length, [metrics]);
+  const intensityColorClass =
+    congestionIntensity >= 8
+      ? 'text-[#EF4444]'
+      : congestionIntensity >= 3
+        ? 'text-[#F59E0B]'
+        : 'text-[#10B981]';
+  const selectedRank = selectedMetric
+    ? Math.max(1, metrics.findIndex((m) => m.streetId === selectedMetric.streetId) + 1)
+    : null;
+  const selectedInfractions = selectedMetric ? selectedMetric.warnings + selectedMetric.tickets : 0;
+  const selectedSharePct =
+    selectedMetric && totalPeriodViolations > 0
+      ? Math.round((selectedInfractions / totalPeriodViolations) * 100)
+      : 0;
+  const selectedComplianceRate =
+    selectedMetric && selectedMetric.warnings > 0
+      ? Math.round(((selectedMetric.warnings - selectedMetric.tickets) / selectedMetric.warnings) * 100)
+      : 100;
+  const globalWarnings = useMemo(() => metrics.reduce((sum, m) => sum + m.warnings, 0), [metrics]);
+  const globalTickets = useMemo(() => metrics.reduce((sum, m) => sum + m.tickets, 0), [metrics]);
+  const globalComplianceRate = globalWarnings > 0 ? Math.round(((globalWarnings - globalTickets) / globalWarnings) * 100) : 100;
+  const globalClearedViaSms = useMemo(() => metrics.reduce((sum, m) => sum + m.compliantMoves, 0), [metrics]);
+  const globalWarningPlates = useMemo(() => {
+    const cutoff = periodCutoff(period);
+    return [...violations]
+      .filter((v) => new Date(v.timeDetected).getTime() >= cutoff && (v.status === 'warning' || v.status === 'pending'))
+      .sort((a, b) => new Date(b.timeDetected).getTime() - new Date(a.timeDetected).getTime())
+      .map((v) => v.plateNumber)
+      .filter((plate, idx, arr) => !!plate && arr.indexOf(plate) === idx)
+      .slice(0, 3);
+  }, [period, violations]);
+  const globalTicketPlates = useMemo(() => {
+    const cutoff = periodCutoff(period);
+    return [...violations]
+      .filter((v) => new Date(v.timeDetected).getTime() >= cutoff && v.status === 'issued')
+      .sort((a, b) => new Date(b.timeDetected).getTime() - new Date(a.timeDetected).getTime())
+      .map((v) => v.plateNumber)
+      .filter((plate, idx, arr) => !!plate && arr.indexOf(plate) === idx)
+      .slice(0, 3);
+  }, [period, violations]);
+  const selectedStreetWarningPlates = useMemo(() => {
+    if (!selectedMetric) return [];
+    const cutoff = periodCutoff(period);
+    return [...violations]
+      .filter(
+        (v) =>
+          new Date(v.timeDetected).getTime() >= cutoff &&
+          violationMatchesResidentStreet(v, selectedMetric.name) &&
+          (v.status === 'warning' || v.status === 'pending'),
+      )
+      .sort((a, b) => new Date(b.timeDetected).getTime() - new Date(a.timeDetected).getTime())
+      .map((v) => v.plateNumber)
+      .filter((plate, idx, arr) => !!plate && arr.indexOf(plate) === idx)
+      .slice(0, 3);
+  }, [selectedMetric, period, violations]);
+  const selectedStreetTicketPlates = useMemo(() => {
+    if (!selectedMetric) return [];
+    const cutoff = periodCutoff(period);
+    return [...violations]
+      .filter(
+        (v) =>
+          new Date(v.timeDetected).getTime() >= cutoff &&
+          violationMatchesResidentStreet(v, selectedMetric.name) &&
+          v.status === 'issued',
+      )
+      .sort((a, b) => new Date(b.timeDetected).getTime() - new Date(a.timeDetected).getTime())
+      .map((v) => v.plateNumber)
+      .filter((plate, idx, arr) => !!plate && arr.indexOf(plate) === idx)
+      .slice(0, 3);
+  }, [selectedMetric, period, violations]);
+  const selectedStreetLocationId = selectedMetric
+    ? geoNamesForResidentStreet(selectedMetric.name).find((name) => geoStreetNameSet.has(name)) ?? selectedMetric.name
+    : '';
+  const periodStartDate = useMemo(() => {
+    const d = new Date();
+    if (period === 'month') {
+      d.setDate(1);
+    } else if (period === 'week') {
+      d.setDate(d.getDate() - 6);
+    }
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }, [period]);
+  const periodEndDate = useMemo(() => {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }, [period]);
+  const isStreetMode = !!selectedMetric;
+  const displayWarnings = isStreetMode ? selectedMetric.warnings : globalWarnings;
+  const displayTickets = isStreetMode ? selectedMetric.tickets : globalTickets;
+  const displayComplianceRate = isStreetMode ? selectedComplianceRate : globalComplianceRate;
+  const displayClearedViaSms = isStreetMode ? selectedMetric.compliantMoves : globalClearedViaSms;
+  const displayWarningPlates = isStreetMode ? selectedStreetWarningPlates : globalWarningPlates;
+  const displayTicketPlates = isStreetMode ? selectedStreetTicketPlates : globalTicketPlates;
+  const analysisPeriodLabel = period.charAt(0).toUpperCase() + period.slice(1);
   const canZoomOut = zoom > 1;
   const canZoomIn = zoom < 2.6;
   const clampPan = useCallback((next: { x: number; y: number }) => {
@@ -462,19 +572,34 @@ export function BlueRidgeSvgMap({ violations = [], className }: BlueRidgeSvgMapP
                 style={{ filter: 'drop-shadow(0 0 5px rgba(6,182,212,0.55))' }}
                 pointerEvents="none"
               />
-              <text
-                x={56}
-                y={38}
-                fill="#67e8f9"
-                fontSize={10}
-                fontFamily="'JetBrains Mono', monospace"
-                letterSpacing="0.08em"
-                style={{ textTransform: 'uppercase' }}
-              >
-                ZONE: BLUE RIDGE B
-              </text>
             </g>
           </svg>
+          <div className="pointer-events-none absolute left-3 top-3 z-20 w-[240px] rounded-xl border border-cyan-200/20 bg-gradient-to-br from-white/18 via-white/10 to-white/5 p-3 text-slate-100 shadow-[0_10px_30px_rgba(2,6,23,0.55)] backdrop-blur-xl">
+            <p className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-cyan-100/80">
+              <Activity className="h-3.5 w-3.5 text-cyan-200" />
+              Street Status Summary
+            </p>
+            {congestionIntensity === 0 ? (
+              <>
+                <p className="flex items-center gap-2 text-lg font-semibold text-emerald-300">
+                  <ShieldCheck className="h-5 w-5" />
+                  Optimal
+                </p>
+                <p className="mt-1 text-xs text-slate-200/90">All streets are clear.</p>
+              </>
+            ) : (
+              <>
+                <p className={cn('text-4xl font-semibold leading-none tabular-nums', intensityColorClass)}>
+                  {congestionIntensity}
+                </p>
+                <p className="mt-1 text-xs text-slate-200/90">Congestion Intensity</p>
+                <p className="mt-2 text-xs text-slate-100/95">Primary Focus: {hottestStreet?.name ?? 'N/A'}</p>
+                <p className="mt-1 text-xs text-slate-200/90">
+                  {activeHotspots} Active Hotspot{activeHotspots === 1 ? '' : 's'}
+                </p>
+              </>
+            )}
+          </div>
           {hoveredStreet ? (
             <div
               className="pointer-events-none fixed z-[240] rounded-md border border-slate-600/70 bg-slate-900/80 px-3 py-2 text-xs text-slate-100 shadow-lg backdrop-blur-sm"
@@ -492,7 +617,7 @@ export function BlueRidgeSvgMap({ violations = [], className }: BlueRidgeSvgMapP
               })()}
             </div>
           ) : null}
-          <div className="mt-2 flex justify-end gap-1.5">
+          <div className="absolute bottom-[15rem] right-4 z-20 flex items-center gap-1.5">
             <button
               type="button"
               className="h-7 w-7 rounded border border-slate-600 text-sm text-slate-200 disabled:opacity-40"
@@ -504,7 +629,7 @@ export function BlueRidgeSvgMap({ violations = [], className }: BlueRidgeSvgMapP
             </button>
             <button
               type="button"
-              className="rounded border border-slate-600 px-2 text-xs text-slate-300"
+              className="rounded border border-slate-600 bg-[#0f172a]/80 px-2 text-xs text-slate-300 backdrop-blur-sm"
               onClick={() => {
                 setZoom(1);
                 setPan({ x: 0, y: 0 });
@@ -523,12 +648,109 @@ export function BlueRidgeSvgMap({ violations = [], className }: BlueRidgeSvgMapP
               +
             </button>
           </div>
+          <div className="absolute bottom-3 left-3 right-3 z-10 rounded-xl border border-slate-700/80 bg-[#0f172a]/92 p-4 backdrop-blur-sm">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <p className="inline-flex items-center gap-1.5 text-sm font-semibold text-slate-200">
+                {isStreetMode ? <MapPin className="h-4 w-4 text-cyan-300" /> : <Globe className="h-4 w-4 text-cyan-300" />}
+                Street Enforcement Analysis
+              </p>
+              <button
+                type="button"
+                onClick={() =>
+                  navigate(
+                    `/violations?${isStreetMode ? `locationId=${encodeURIComponent(selectedStreetLocationId)}&` : ''}startDate=${periodStartDate}&endDate=${periodEndDate}`,
+                  )
+                }
+                className="inline-flex items-center gap-1 rounded-md border border-slate-600/80 px-2 py-1 text-xs text-slate-300 transition hover:bg-slate-800/60 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                View All Records
+                <ExternalLink className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            <div className={cn('grid grid-cols-1 gap-3 sm:grid-cols-3', !isStreetMode && 'rounded-lg border-2 border-cyan-500/20 p-2')}>
+              <button
+                type="button"
+                onClick={() =>
+                  navigate(
+                    `/violations?status=warning&period=${period}&${isStreetMode ? `locationId=${encodeURIComponent(selectedStreetLocationId)}&` : ''}startDate=${periodStartDate}&endDate=${periodEndDate}`,
+                  )
+                }
+                className="group relative rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-left transition hover:border-amber-400/60 hover:brightness-110"
+              >
+                <p className="text-[11px] uppercase tracking-wide text-slate-400">
+                  {isStreetMode ? 'Total Warnings' : 'Neighborhood Warnings'}
+                </p>
+                <motion.p
+                  key={`warnings-${isStreetMode ? selectedMetric?.streetId : 'global'}-${displayWarnings}`}
+                  initial={{ opacity: 0, y: 5 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="mt-1 text-2xl font-semibold tabular-nums text-[#F59E0B]"
+                >
+                  {displayWarnings}
+                </motion.p>
+                <div className="pointer-events-none absolute -top-2 left-2 right-2 z-30 hidden rounded-md border border-slate-600/80 bg-slate-950/85 p-2 text-[11px] text-slate-100 shadow-xl backdrop-blur-sm group-hover:block">
+                  RECENT PLATES: {displayWarningPlates.length > 0 ? displayWarningPlates.join(', ') : 'No recent plates'}
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  navigate(
+                    `/violations?status=issued&period=${period}&${isStreetMode ? `locationId=${encodeURIComponent(selectedStreetLocationId)}&` : ''}startDate=${periodStartDate}&endDate=${periodEndDate}`,
+                  )
+                }
+                className="group relative rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-left transition hover:border-red-400/60 hover:brightness-110"
+              >
+                <p className="text-[11px] uppercase tracking-wide text-slate-400">
+                  {isStreetMode ? 'Confirmed Tickets' : 'Neighborhood Tickets'}
+                </p>
+                <motion.p
+                  key={`tickets-${isStreetMode ? selectedMetric?.streetId : 'global'}-${displayTickets}`}
+                  initial={{ opacity: 0, y: 5 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="mt-1 text-2xl font-semibold tabular-nums text-[#EF4444]"
+                >
+                  {displayTickets}
+                </motion.p>
+                <div className="pointer-events-none absolute -top-2 left-2 right-2 z-30 hidden rounded-md border border-slate-600/80 bg-slate-950/85 p-2 text-[11px] text-slate-100 shadow-xl backdrop-blur-sm group-hover:block">
+                  RECENT PLATES: {displayTicketPlates.length > 0 ? displayTicketPlates.join(', ') : 'No recent plates'}
+                </div>
+              </button>
+              <div className="group relative rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 transition hover:border-emerald-400/60 hover:brightness-110">
+                <p className="text-[11px] uppercase tracking-wide text-slate-400">
+                  {isStreetMode ? 'Compliance Rate' : 'Avg. Compliance Rate'}
+                </p>
+                <motion.p
+                  key={`compliance-${isStreetMode ? selectedMetric?.streetId : 'global'}-${displayComplianceRate}`}
+                  initial={{ opacity: 0, y: 5 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="mt-1 inline-flex items-center gap-1 text-2xl font-semibold tabular-nums text-[#10B981]"
+                >
+                  <CheckCircle className="h-4 w-4" />
+                  {displayComplianceRate}%
+                </motion.p>
+                <div className="pointer-events-none absolute -top-2 left-2 right-2 z-30 hidden rounded-md border border-slate-600/80 bg-slate-950/85 p-2 text-[11px] text-slate-100 shadow-xl backdrop-blur-sm group-hover:block">
+                  High Compliance: {displayClearedViaSms} vehicles cleared the street state before ticketing was required.
+                </div>
+              </div>
+            </div>
+            <p className="mt-3 text-sm leading-relaxed text-slate-300">
+              {!isStreetMode
+                ? totalPeriodViolations === 0
+                  ? 'All streets are currently in an optimal state. No enforcement actions required.'
+                  : `Currently viewing neighborhood-wide enforcement data for ${analysisPeriodLabel}.`
+                : `Ranking #${selectedRank}: ${selectedMetric.name} is responsible for ${selectedSharePct}% of total infractions this ${period}.`}
+            </p>
+          </div>
         </div>
 
         <aside className="rounded-xl border border-slate-800 bg-[#0f172a] p-3">
-          <p className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-300">Top Streets</p>
+          <p className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-300">Street Violation Ranking</p>
           <p className="mb-3 text-xs text-slate-400">
-            Ranked by enforcement pressure in the selected period (warnings + weighted tickets).
+            Ranking of streets based on accumulated warnings and finalized illegal parking tickets.
           </p>
           {selectedStreetId ? (
             <button
@@ -550,7 +772,7 @@ export function BlueRidgeSvgMap({ violations = [], className }: BlueRidgeSvgMapP
                 <li
                   key={m.streetId}
                   className={cn(
-                    'flex items-center justify-between rounded-md border px-3 py-2 text-sm',
+                    'rounded-md border text-sm',
                     selectedStreetId === m.streetId
                       ? 'border-slate-400 bg-slate-700/40'
                       : 'border-slate-700 bg-slate-900/30',
@@ -558,33 +780,43 @@ export function BlueRidgeSvgMap({ violations = [], className }: BlueRidgeSvgMapP
                 >
                   <button
                     type="button"
-                    className="flex min-w-0 items-center gap-2 text-left"
+                    className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left"
                     onClick={() => setSelectedStreetId((prev) => (prev === m.streetId ? null : m.streetId))}
                   >
-                    <span className="w-5 shrink-0 text-slate-400">{idx + 1}</span>
-                    <span className="truncate">{m.name}</span>
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="w-5 shrink-0 text-slate-400">{idx + 1}</span>
+                      <span className="truncate">{m.name}</span>
+                    </span>
+                    <span className="tabular-nums text-slate-200">{m.score}</span>
+                    <span className="ml-2 inline-flex items-center gap-0.5 text-[11px]">
+                      {(() => {
+                        const prev = previousPeriodMetrics.get(m.streetId) ?? 0;
+                        const pct = prev > 0 ? Math.round(((m.score - prev) / prev) * 100) : m.score > 0 ? 100 : 0;
+                        const isUp = pct > 0;
+                        const isFlat = pct === 0;
+                        const trendTone = isFlat
+                          ? 'text-slate-300 bg-slate-500/10 border-slate-500/20'
+                          : isUp
+                            ? 'text-red-300 bg-red-500/10 border-red-500/25'
+                            : 'text-emerald-300 bg-emerald-500/10 border-emerald-500/25';
+                        return (
+                          <>
+                            {isFlat ? (
+                              <ArrowUpRight className="h-3 w-3 text-slate-400" />
+                            ) : isUp ? (
+                              <ArrowUpRight className="h-3 w-3 text-red-400" />
+                            ) : (
+                              <ArrowDownRight className="h-3 w-3 text-emerald-400" />
+                            )}
+                            <span className={cn('rounded px-1.5 py-0.5 border', trendTone)}>
+                              {pct > 0 ? '+' : ''}
+                              {pct}%
+                            </span>
+                          </>
+                        );
+                      })()}
+                    </span>
                   </button>
-                  <span className="tabular-nums text-slate-200">{m.score}</span>
-                  <span className="ml-2 inline-flex items-center gap-0.5 text-[11px]">
-                    {(() => {
-                      const prev = previousPeriodMetrics.get(m.streetId) ?? 0;
-                      const pct = prev > 0 ? Math.round(((m.score - prev) / prev) * 100) : m.score > 0 ? 100 : 0;
-                      const up = pct >= 0;
-                      return (
-                        <>
-                          {up ? (
-                            <ArrowUpRight className="h-3 w-3 text-emerald-400" />
-                          ) : (
-                            <ArrowDownRight className="h-3 w-3 text-red-400" />
-                          )}
-                          <span className={up ? 'text-emerald-300' : 'text-red-300'}>
-                            {up ? '+' : ''}
-                            {pct}%
-                          </span>
-                        </>
-                      );
-                    })()}
-                  </span>
                 </li>
               ))}
             </ul>
@@ -596,24 +828,12 @@ export function BlueRidgeSvgMap({ violations = [], className }: BlueRidgeSvgMapP
               <p className="flex items-start gap-2"><span className="mt-0.5 h-3 w-3 rounded-full bg-[#10B981]" /><span><strong>Emerald:</strong> Compliant - High turnover; vehicles move within the 2-minute grace period.</span></p>
               <p className="flex items-start gap-2"><span className="mt-0.5 h-3 w-3 rounded-full bg-[#F59E0B]" /><span><strong>Amber:</strong> Warning Zone - High frequency of SMS warnings sent (2-30 min stay).</span></p>
               <p className="flex items-start gap-2"><span className="mt-0.5 h-3 w-3 rounded-full bg-[#EF4444]" /><span><strong>Crimson:</strong> Critical - Frequent illegal parking (Exceeding 30 mins).</span></p>
+              <p className="flex items-start gap-2"><span className="mt-[7px] h-0.5 w-3 border-t border-dashed border-[#06b6d4]" /><span><strong>Blue (Dashed):</strong> Boundary of Blue Ridge B.</span></p>
             </div>
           </div>
         </aside>
       </div>
 
-      <div className="mt-4 rounded-xl border border-slate-800 bg-[#0f172a] p-4">
-        <p className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-200">
-          {selectedMetric?.status === 'critical' ? (
-            <AlertTriangle className="h-4 w-4 text-red-400" />
-          ) : selectedMetric?.status === 'compliant' ? (
-            <CheckCircle className="h-4 w-4 text-emerald-400" />
-          ) : (
-            <Flame className="h-4 w-4 text-amber-400" />
-          )}
-          Actionable Advice
-        </p>
-        <p className="text-sm leading-relaxed text-slate-300">{adviceText}</p>
-      </div>
     </div>
   );
 }
