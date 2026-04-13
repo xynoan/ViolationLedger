@@ -98,9 +98,26 @@ function periodRangeFromQuery(period: string | null): { startDate: string; endDa
   return { startDate: toYmd(start), endDate: toYmd(end) };
 }
 
-function periodLabel(period: PeriodFilter): string {
-  if (period === 'day') return 'Today';
-  if (period === 'week') return 'Last 7 days';
+function periodLabel(period: PeriodFilter, startDate?: string, endDate?: string): string {
+  if (period === 'day') {
+    if (startDate) {
+      const d = new Date(`${startDate}T00:00:00`);
+      return d.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' });
+    }
+    return 'Today';
+  }
+  if (period === 'week') {
+    if (startDate && endDate) {
+      const s = new Date(`${startDate}T00:00:00`);
+      const e = new Date(`${endDate}T00:00:00`);
+      return `${s.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} - ${e.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`;
+    }
+    return 'Last 7 days';
+  }
+  if (startDate) {
+    const d = new Date(`${startDate}T00:00:00`);
+    return d.toLocaleString(undefined, { month: 'long', year: 'numeric' });
+  }
   return new Date().toLocaleString(undefined, { month: 'long', year: 'numeric' });
 }
 
@@ -177,9 +194,16 @@ export default function ViolationsHistory() {
       setPeriodFilter(null);
       return;
     }
+    setPeriodFilter(p);
+    const qsStart = searchParams.get('startDate')?.trim();
+    const qsEnd = searchParams.get('endDate')?.trim();
+    if (qsStart || qsEnd) {
+      setStartDate(qsStart || '');
+      setEndDate(qsEnd || '');
+      return;
+    }
     const range = periodRangeFromQuery(p);
     if (!range) return;
-    setPeriodFilter(p);
     setStartDate(range.startDate);
     setEndDate(range.endDate);
   }, [searchParams]);
@@ -541,7 +565,7 @@ export default function ViolationsHistory() {
           </div>
           {periodFilter && (
             <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs text-primary">
-              <span>Filtering by: {periodLabel(periodFilter)}</span>
+              <span>Filtering by: {periodLabel(periodFilter, startDate, endDate)}</span>
               <button
                 type="button"
                 className="inline-flex h-4 w-4 items-center justify-center rounded-full hover:bg-primary/20"

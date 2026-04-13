@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, ArrowDownRight, ArrowUpRight, CheckCircle, ExternalLink, Globe, MapPin, Pause, Play, ShieldCheck } from 'lucide-react';
+import { Activity, ArrowDownRight, ArrowUpRight, CalendarDays, Camera, CheckCircle, ChevronLeft, ChevronRight, Clock3, ExternalLink, Globe, MapPin, Pause, Play, RotateCcw, ShieldCheck, X } from 'lucide-react';
+import { geoContains } from 'd3-geo';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
@@ -7,7 +8,7 @@ import { BR_SVG_VIEWBOX, createBlueRidgeMercatorEngine } from '@/lib/blueRidgeMe
 import boundaryGeo from '@/assets/blueRidgeBoundary.json';
 import streetsGeo from '@/assets/blueRidgeStreets.json';
 import type { FeatureCollection, Geometry, LineString, MultiLineString } from 'geojson';
-import type { Violation } from '@/types/parking';
+import type { Camera as CameraRecord, Violation } from '@/types/parking';
 import type { ResidentStreetName } from '@/lib/residentStreets';
 import {
   geoNamesForResidentStreet,
@@ -26,6 +27,7 @@ function isLineGeometry(g: Geometry | null): g is LineString | MultiLineString {
 
 export type BlueRidgeSvgMapProps = {
   violations?: Violation[];
+  cameras?: CameraRecord[];
   className?: string;
 };
 
@@ -40,8 +42,13 @@ type StreetMetric = {
   status: StreetStatus;
   score: number;
 };
-
-const PERIOD_ORDER: TemporalPeriod[] = ['day', 'week', 'month'];
+type CameraNode = {
+  id: string;
+  label: string;
+  street: string;
+  x: number;
+  y: number;
+};
 
 const STATUS_COLOR: Record<StreetStatus, string> = {
   neutral: '#2D3748',
@@ -49,12 +56,48 @@ const STATUS_COLOR: Record<StreetStatus, string> = {
   warning: '#F59E0B',
   critical: '#EF4444',
 };
+function toYmd(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 
-function periodCutoff(period: TemporalPeriod): number {
-  const now = Date.now();
-  if (period === 'day') return now - 24 * 60 * 60 * 1000;
-  if (period === 'week') return now - 7 * 24 * 60 * 60 * 1000;
-  return now - 30 * 24 * 60 * 60 * 1000;
+function periodRange(period: TemporalPeriod, anchorDate: Date): {
+  startMs: number;
+  endMs: number;
+  startYmd: string;
+  endYmd: string;
+  label: string;
+} {
+  const start = new Date(anchorDate);
+  const end = new Date(anchorDate);
+  start.setHours(0, 0, 0, 0);
+  end.setHours(23, 59, 59, 999);
+  if (period === 'week') {
+    start.setDate(start.getDate() - 6);
+  } else if (period === 'month') {
+    start.setDate(1);
+    end.setMonth(end.getMonth() + 1, 0);
+    const now = new Date();
+    if (anchorDate.getFullYear() === now.getFullYear() && anchorDate.getMonth() === now.getMonth()) {
+      end.setTime(now.getTime());
+      end.setHours(23, 59, 59, 999);
+    }
+  }
+  const label =
+    period === 'month'
+      ? anchorDate.toLocaleString(undefined, { month: 'long', year: 'numeric' })
+      : period === 'week'
+        ? `${start.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} - ${end.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
+        : anchorDate.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' });
+  return {
+    startMs: start.getTime(),
+    endMs: end.getTime(),
+    startYmd: toYmd(start),
+    endYmd: toYmd(end),
+    label,
+  };
 }
 
 function computeStreetStatus(warnings: number, tickets: number, compliantMoves: number): StreetStatus {
@@ -92,9 +135,10 @@ function mockStreetMeta(metric: StreetMetric): { avgDuration: string; peakHour: 
   return { avgDuration: `${avg} mins`, peakHour: `${hour12}:00 ${suffix}` };
 }
 
-export function BlueRidgeSvgMap({ violations = [], className }: BlueRidgeSvgMapProps) {
+export function BlueRidgeSvgMap({ violations = [], cameras = [], className }: BlueRidgeSvgMapProps) {
   const navigate = useNavigate();
   const [period, setPeriod] = useState<TemporalPeriod>('day');
+  const [currentDate, setCurrentDate] = useState<Date>(() => new Date());
   const [selectedStreetId, setSelectedStreetId] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [zoom, setZoom] = useState(1);
@@ -105,12 +149,34 @@ export function BlueRidgeSvgMap({ violations = [], className }: BlueRidgeSvgMapP
     y: number;
     metric: StreetMetric;
   } | null>(null);
+  const [hoveredStreetId, setHoveredStreetId] = useState<string | null>(null);
+  const [liveViewCamera, setLiveViewCamera] = useState<CameraNode | null>(null);
+  const [liveViewPos, setLiveViewPos] = useState({ x: 24, y: 88 });
+  const [isDraggingLiveView, setIsDraggingLiveView] = useState(false);
+  const [isEditingCameras, setIsEditingCameras] = useState(false);
+  const [cameraOverrides, setCameraOverrides] = useState<Record<string, { x: number; y: number }>>({});
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
+  const datePickerRef = useRef<HTMLInputElement | null>(null);
+  const boundaryPathRef = useRef<SVGPathElement | null>(null);
   const dragRef = useRef<{ pointerId: number; startX: number; startY: number; startPanX: number; startPanY: number } | null>(null);
   const suppressClickRef = useRef(false);
+  const liveDragRef = useRef<{ pointerId: number; startX: number; startY: number; startLeft: number; startTop: number } | null>(null);
+  const cameraDragRef = useRef<{ id: string; pointerId: number; startX: number; startY: number; startCamX: number; startCamY: number } | null>(null);
+  const activeRange = useMemo(() => periodRange(period, currentDate), [period, currentDate]);
+  const previousRange = useMemo(() => {
+    const prev = new Date(currentDate);
+    if (period === 'day') prev.setDate(prev.getDate() - 1);
+    else if (period === 'week') prev.setDate(prev.getDate() - 7);
+    else prev.setMonth(prev.getMonth() - 1);
+    return periodRange(period, prev);
+  }, [period, currentDate]);
+  const isAtPresent = useMemo(() => {
+    const now = new Date();
+    return periodRange(period, now).label === activeRange.label;
+  }, [period, activeRange.label]);
 
-  const { path, boundaryPolygon } = useMemo(
+  const { projection, path, boundaryPolygon } = useMemo(
     () => createBlueRidgeMercatorEngine(BOUNDARY_FC, VIEW_W, VIEW_H, STREETS_FC),
     [],
   );
@@ -142,9 +208,70 @@ export function BlueRidgeSvgMap({ violations = [], className }: BlueRidgeSvgMapP
     }
     return names;
   }, []);
+  const streetAnchorByGeoName = useMemo(() => {
+    const sum = new Map<string, { x: number; y: number; n: number }>();
+    for (const f of STREETS_FC.features) {
+      if (!f.geometry || !isLineGeometry(f.geometry)) continue;
+      const rawName = String((f.properties as { name?: string } | null)?.name ?? '').trim();
+      if (!rawName) continue;
+      const segments = f.geometry.type === 'LineString' ? [f.geometry.coordinates] : f.geometry.coordinates;
+      for (const segment of segments) {
+        for (const [lng, lat] of segment) {
+          if (!geoContains(boundaryPolygon as any, [lng, lat])) continue;
+          const p = projection([lng, lat]);
+          if (!p) continue;
+          const prev = sum.get(rawName) ?? { x: 0, y: 0, n: 0 };
+          sum.set(rawName, { x: prev.x + p[0], y: prev.y + p[1], n: prev.n + 1 });
+        }
+      }
+    }
+    const out = new Map<string, { x: number; y: number }>();
+    for (const [name, v] of sum.entries()) {
+      if (v.n > 0) out.set(name, { x: v.x / v.n, y: v.y / v.n });
+    }
+    return out;
+  }, [projection, boundaryPolygon]);
+  const cameraNodes = useMemo<CameraNode[]>(() => {
+    const out: CameraNode[] = [];
+    const occupied = new Set<string>();
+    for (const cam of cameras) {
+      const loc = String(cam.locationId ?? '').trim();
+      if (!loc) continue;
+      let anchor = streetAnchorByGeoName.get(loc) ?? null;
+      if (!anchor) {
+        const resident = mapGeoNameToResidentStreet(loc);
+        if (resident) {
+          for (const alias of geoNamesForResidentStreet(resident)) {
+            const maybe = streetAnchorByGeoName.get(alias);
+            if (maybe) {
+              anchor = maybe;
+              break;
+            }
+          }
+        }
+      }
+      if (!anchor) continue;
+      let x = anchor.x;
+      let y = anchor.y;
+      const key = `${Math.round(x)}:${Math.round(y)}`;
+      if (occupied.has(key)) {
+        const jitter = 6 + (out.length % 3) * 7;
+        x += jitter;
+        y -= jitter;
+      }
+      occupied.add(`${Math.round(x)}:${Math.round(y)}`);
+      out.push({
+        id: cam.id,
+        label: cam.name || cam.id,
+        street: loc,
+        x: cameraOverrides[cam.id]?.x ?? x,
+        y: cameraOverrides[cam.id]?.y ?? y,
+      });
+    }
+    return out;
+  }, [cameras, streetAnchorByGeoName, cameraOverrides]);
 
   const metrics = useMemo(() => {
-    const cutoff = periodCutoff(period);
     const residents = [...new Set(streetPaths.map((s) => s.resident).filter((s): s is ResidentStreetName => !!s))];
     const base = new Map<ResidentStreetName, StreetMetric>();
     for (const street of residents) {
@@ -159,7 +286,10 @@ export function BlueRidgeSvgMap({ violations = [], className }: BlueRidgeSvgMapP
       });
     }
 
-    const scoped = violations.filter((v) => new Date(v.timeDetected).getTime() >= cutoff);
+    const scoped = violations.filter((v) => {
+      const t = new Date(v.timeDetected).getTime();
+      return t >= activeRange.startMs && t <= activeRange.endMs;
+    });
     for (const v of scoped) {
       for (const street of residents) {
         if (!violationMatchesResidentStreet(v, street)) continue;
@@ -184,15 +314,9 @@ export function BlueRidgeSvgMap({ violations = [], className }: BlueRidgeSvgMapP
     });
     out.sort((a, b) => b.score - a.score || b.tickets - a.tickets || b.warnings - a.warnings);
     return out;
-  }, [violations, period, streetPaths]);
+  }, [violations, streetPaths, activeRange.startMs, activeRange.endMs]);
 
   const previousPeriodMetrics = useMemo(() => {
-    const now = Date.now();
-    const span =
-      period === 'day' ? 24 * 60 * 60 * 1000 : period === 'week' ? 7 * 24 * 60 * 60 * 1000 : 30 * 24 * 60 * 60 * 1000;
-    const prevStart = now - span * 2;
-    const prevEnd = now - span;
-
     const residents = [...new Set(streetPaths.map((s) => s.resident).filter((s): s is ResidentStreetName => !!s))];
     const base = new Map<ResidentStreetName, StreetMetric>();
     for (const street of residents) {
@@ -209,7 +333,7 @@ export function BlueRidgeSvgMap({ violations = [], className }: BlueRidgeSvgMapP
 
     for (const v of violations) {
       const t = new Date(v.timeDetected).getTime();
-      if (t < prevStart || t >= prevEnd) continue;
+      if (t < previousRange.startMs || t > previousRange.endMs) continue;
       for (const street of residents) {
         if (!violationMatchesResidentStreet(v, street)) continue;
         const m = base.get(street);
@@ -230,24 +354,26 @@ export function BlueRidgeSvgMap({ violations = [], className }: BlueRidgeSvgMapP
       out.set(m.streetId, m.warnings + m.tickets * 2);
     }
     return out;
-  }, [violations, period, streetPaths]);
+  }, [violations, streetPaths, previousRange.startMs, previousRange.endMs]);
 
   const totalPeriodViolations = useMemo(
     () => metrics.reduce((sum, m) => sum + m.warnings + m.tickets, 0),
     [metrics],
   );
+  const scopedViolations = useMemo(() => {
+    return violations.filter((v) => {
+      const t = new Date(v.timeDetected).getTime();
+      return t >= activeRange.startMs && t <= activeRange.endMs;
+    });
+  }, [violations, activeRange.startMs, activeRange.endMs]);
   const selectedMetric = metrics.find((m) => m.streetId === selectedStreetId) ?? null;
   const hottestStreet = metrics.find((m) => m.score > 0) ?? metrics[0] ?? null;
   const previousPeriodTotal = useMemo(() => {
-    const now = Date.now();
-    const span = period === 'day' ? 24 * 60 * 60 * 1000 : period === 'week' ? 7 * 24 * 60 * 60 * 1000 : 30 * 24 * 60 * 60 * 1000;
-    const prevStart = now - span * 2;
-    const prevEnd = now - span;
     return violations.filter((v) => {
       const t = new Date(v.timeDetected).getTime();
-      return t >= prevStart && t < prevEnd;
+      return t >= previousRange.startMs && t <= previousRange.endMs;
     }).length;
-  }, [violations, period]);
+  }, [violations, previousRange.startMs, previousRange.endMs]);
   const trendPct = previousPeriodTotal > 0
     ? Math.round(((totalPeriodViolations - previousPeriodTotal) / previousPeriodTotal) * 100)
     : 0;
@@ -276,30 +402,67 @@ export function BlueRidgeSvgMap({ violations = [], className }: BlueRidgeSvgMapP
   const globalComplianceRate = globalWarnings > 0 ? Math.round(((globalWarnings - globalTickets) / globalWarnings) * 100) : 100;
   const globalClearedViaSms = useMemo(() => metrics.reduce((sum, m) => sum + m.compliantMoves, 0), [metrics]);
   const globalWarningPlates = useMemo(() => {
-    const cutoff = periodCutoff(period);
     return [...violations]
-      .filter((v) => new Date(v.timeDetected).getTime() >= cutoff && (v.status === 'warning' || v.status === 'pending'))
+      .filter((v) => {
+        const t = new Date(v.timeDetected).getTime();
+        return t >= activeRange.startMs && t <= activeRange.endMs && (v.status === 'warning' || v.status === 'pending');
+      })
       .sort((a, b) => new Date(b.timeDetected).getTime() - new Date(a.timeDetected).getTime())
       .map((v) => v.plateNumber)
       .filter((plate, idx, arr) => !!plate && arr.indexOf(plate) === idx)
       .slice(0, 3);
-  }, [period, violations]);
+  }, [violations, activeRange.startMs, activeRange.endMs]);
   const globalTicketPlates = useMemo(() => {
-    const cutoff = periodCutoff(period);
     return [...violations]
-      .filter((v) => new Date(v.timeDetected).getTime() >= cutoff && v.status === 'issued')
+      .filter((v) => {
+        const t = new Date(v.timeDetected).getTime();
+        return t >= activeRange.startMs && t <= activeRange.endMs && v.status === 'issued';
+      })
       .sort((a, b) => new Date(b.timeDetected).getTime() - new Date(a.timeDetected).getTime())
       .map((v) => v.plateNumber)
       .filter((plate, idx, arr) => !!plate && arr.indexOf(plate) === idx)
       .slice(0, 3);
-  }, [period, violations]);
+  }, [violations, activeRange.startMs, activeRange.endMs]);
+  const peakActivityWindow = useMemo(() => {
+    if (scopedViolations.length === 0) return 'N/A';
+    const counts = new Array<number>(24).fill(0);
+    for (const v of scopedViolations) counts[new Date(v.timeDetected).getHours()] += 1;
+    let bestHour = 0;
+    let bestCount = -1;
+    for (let h = 0; h < 24; h += 1) {
+      const twoHour = counts[h] + counts[(h + 1) % 24];
+      if (twoHour > bestCount) {
+        bestCount = twoHour;
+        bestHour = h;
+      }
+    }
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${pad(bestHour)}:00 - ${pad((bestHour + 2) % 24)}:00`;
+  }, [scopedViolations]);
+  const criticalPeakDay = useMemo(() => {
+    if (scopedViolations.length === 0) return 'N/A';
+    const dayCounts = new Array<number>(7).fill(0);
+    for (const v of scopedViolations) dayCounts[new Date(v.timeDetected).getDay()] += 1;
+    let bestDay = 0;
+    let bestCount = -1;
+    for (let d = 0; d < 7; d += 1) {
+      if (dayCounts[d] > bestCount) {
+        bestCount = dayCounts[d];
+        bestDay = d;
+      }
+    }
+    const names = ['Sundays', 'Mondays', 'Tuesdays', 'Wednesdays', 'Thursdays', 'Fridays', 'Saturdays'];
+    return names[bestDay];
+  }, [scopedViolations]);
   const selectedStreetWarningPlates = useMemo(() => {
     if (!selectedMetric) return [];
-    const cutoff = periodCutoff(period);
     return [...violations]
       .filter(
         (v) =>
-          new Date(v.timeDetected).getTime() >= cutoff &&
+          (() => {
+            const t = new Date(v.timeDetected).getTime();
+            return t >= activeRange.startMs && t <= activeRange.endMs;
+          })() &&
           violationMatchesResidentStreet(v, selectedMetric.name) &&
           (v.status === 'warning' || v.status === 'pending'),
       )
@@ -307,14 +470,16 @@ export function BlueRidgeSvgMap({ violations = [], className }: BlueRidgeSvgMapP
       .map((v) => v.plateNumber)
       .filter((plate, idx, arr) => !!plate && arr.indexOf(plate) === idx)
       .slice(0, 3);
-  }, [selectedMetric, period, violations]);
+  }, [selectedMetric, violations, activeRange.startMs, activeRange.endMs]);
   const selectedStreetTicketPlates = useMemo(() => {
     if (!selectedMetric) return [];
-    const cutoff = periodCutoff(period);
     return [...violations]
       .filter(
         (v) =>
-          new Date(v.timeDetected).getTime() >= cutoff &&
+          (() => {
+            const t = new Date(v.timeDetected).getTime();
+            return t >= activeRange.startMs && t <= activeRange.endMs;
+          })() &&
           violationMatchesResidentStreet(v, selectedMetric.name) &&
           v.status === 'issued',
       )
@@ -322,29 +487,12 @@ export function BlueRidgeSvgMap({ violations = [], className }: BlueRidgeSvgMapP
       .map((v) => v.plateNumber)
       .filter((plate, idx, arr) => !!plate && arr.indexOf(plate) === idx)
       .slice(0, 3);
-  }, [selectedMetric, period, violations]);
+  }, [selectedMetric, violations, activeRange.startMs, activeRange.endMs]);
   const selectedStreetLocationId = selectedMetric
     ? geoNamesForResidentStreet(selectedMetric.name).find((name) => geoStreetNameSet.has(name)) ?? selectedMetric.name
     : '';
-  const periodStartDate = useMemo(() => {
-    const d = new Date();
-    if (period === 'month') {
-      d.setDate(1);
-    } else if (period === 'week') {
-      d.setDate(d.getDate() - 6);
-    }
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${y}-${m}-${day}`;
-  }, [period]);
-  const periodEndDate = useMemo(() => {
-    const d = new Date();
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${y}-${m}-${day}`;
-  }, [period]);
+  const periodStartDate = activeRange.startYmd;
+  const periodEndDate = activeRange.endYmd;
   const isStreetMode = !!selectedMetric;
   const displayWarnings = isStreetMode ? selectedMetric.warnings : globalWarnings;
   const displayTickets = isStreetMode ? selectedMetric.tickets : globalTickets;
@@ -352,7 +500,7 @@ export function BlueRidgeSvgMap({ violations = [], className }: BlueRidgeSvgMapP
   const displayClearedViaSms = isStreetMode ? selectedMetric.compliantMoves : globalClearedViaSms;
   const displayWarningPlates = isStreetMode ? selectedStreetWarningPlates : globalWarningPlates;
   const displayTicketPlates = isStreetMode ? selectedStreetTicketPlates : globalTicketPlates;
-  const analysisPeriodLabel = period.charAt(0).toUpperCase() + period.slice(1);
+  const analysisPeriodLabel = activeRange.label;
   const canZoomOut = zoom > 1;
   const canZoomIn = zoom < 2.6;
   const clampPan = useCallback((next: { x: number; y: number }) => {
@@ -383,10 +531,16 @@ export function BlueRidgeSvgMap({ violations = [], className }: BlueRidgeSvgMapP
   useEffect(() => {
     if (!isPlaying) return;
     const timer = window.setInterval(() => {
-      setPeriod((prev) => PERIOD_ORDER[(PERIOD_ORDER.indexOf(prev) + 1) % PERIOD_ORDER.length]);
+      setCurrentDate((prev) => {
+        const next = new Date(prev);
+        if (period === 'day') next.setDate(next.getDate() + 1);
+        else if (period === 'week') next.setDate(next.getDate() + 7);
+        else next.setMonth(next.getMonth() + 1);
+        return next;
+      });
     }, 2000);
     return () => window.clearInterval(timer);
-  }, [isPlaying]);
+  }, [isPlaying, period]);
   const setZoomClamped = (next: number) => {
     const z = Math.min(2.6, Math.max(1, Number(next.toFixed(2))));
     setZoom(z);
@@ -395,6 +549,84 @@ export function BlueRidgeSvgMap({ violations = [], className }: BlueRidgeSvgMapP
     } else {
       setPan((p) => clampPan(p));
     }
+  };
+  const shiftTemporal = (dir: -1 | 1) => {
+    setIsPlaying(false);
+    setCurrentDate((prev) => {
+      const next = new Date(prev);
+      if (period === 'day') next.setDate(next.getDate() + dir);
+      else if (period === 'week') next.setDate(next.getDate() + dir * 7);
+      else next.setMonth(next.getMonth() + dir);
+      return next;
+    });
+  };
+  const resetTemporal = () => {
+    setIsPlaying(false);
+    setCurrentDate(new Date());
+  };
+  const beginLiveViewDrag = (e: React.PointerEvent<HTMLDivElement>) => {
+    liveDragRef.current = {
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      startLeft: liveViewPos.x,
+      startTop: liveViewPos.y,
+    };
+    setIsDraggingLiveView(true);
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const onLiveViewPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = liveDragRef.current;
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    const next = {
+      x: Math.max(8, drag.startLeft + (e.clientX - drag.startX)),
+      y: Math.max(8, drag.startTop + (e.clientY - drag.startY)),
+    };
+    setLiveViewPos(next);
+  };
+
+  const endLiveViewDrag = (e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = liveDragRef.current;
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+    liveDragRef.current = null;
+    setIsDraggingLiveView(false);
+  };
+  const beginCameraDrag = (e: React.PointerEvent<HTMLButtonElement>, cam: CameraNode) => {
+    if (!isEditingCameras) return;
+    e.preventDefault();
+    e.stopPropagation();
+    cameraDragRef.current = {
+      id: cam.id,
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      startCamX: cam.x,
+      startCamY: cam.y,
+    };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const moveCameraDrag = (e: React.PointerEvent<HTMLButtonElement>) => {
+    const drag = cameraDragRef.current;
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    const svg = svgRef.current;
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    const dxView = ((e.clientX - drag.startX) * VIEW_W) / Math.max(1, rect.width) / Math.max(1, zoom);
+    const dyView = ((e.clientY - drag.startY) * VIEW_H) / Math.max(1, rect.height) / Math.max(1, zoom);
+    const nextX = drag.startCamX + dxView;
+    const nextY = drag.startCamY + dyView;
+    const boundaryPath = boundaryPathRef.current;
+    const inside = boundaryPath ? boundaryPath.isPointInFill(new DOMPoint(nextX, nextY)) : true;
+    if (!inside) return;
+    setCameraOverrides((prev) => ({ ...prev, [drag.id]: { x: nextX, y: nextY } }));
+  };
+  const endCameraDrag = (e: React.PointerEvent<HTMLButtonElement>) => {
+    const drag = cameraDragRef.current;
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+    cameraDragRef.current = null;
   };
 
   return (
@@ -439,6 +671,63 @@ export function BlueRidgeSvgMap({ violations = [], className }: BlueRidgeSvgMapP
               </button>
             ))}
           </div>
+          <div className="relative inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-[#0f172a] px-2 py-1">
+            <button
+              type="button"
+              onClick={() => shiftTemporal(-1)}
+              className="rounded p-1 text-slate-300 transition hover:bg-slate-800"
+              aria-label="Previous period"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const input = datePickerRef.current;
+                if (!input) return;
+                if (typeof (input as any).showPicker === 'function') {
+                  (input as any).showPicker();
+                } else {
+                  input.focus();
+                  input.click();
+                }
+              }}
+              className="min-w-[140px] rounded px-1 text-center text-xs font-medium text-slate-200 transition hover:bg-slate-800"
+              title="Pick specific date"
+            >
+              {activeRange.label}
+            </button>
+            <button
+              type="button"
+              onClick={() => shiftTemporal(1)}
+              className="rounded p-1 text-slate-300 transition hover:bg-slate-800"
+              aria-label="Next period"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+            <input
+              ref={datePickerRef}
+              type="date"
+              value={toYmd(currentDate)}
+              onChange={(e) => {
+                if (!e.target.value) return;
+                setCurrentDate(new Date(`${e.target.value}T12:00:00`));
+              }}
+              className="pointer-events-none absolute h-0 w-0 opacity-0"
+              tabIndex={-1}
+              aria-hidden="true"
+            />
+          </div>
+          {!isAtPresent ? (
+            <button
+              type="button"
+              onClick={resetTemporal}
+              className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-[#0f172a] px-2 py-1 text-xs text-slate-300 transition hover:bg-slate-800"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              Today
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -458,6 +747,8 @@ export function BlueRidgeSvgMap({ violations = [], className }: BlueRidgeSvgMapP
             }}
             onPointerDown={(e) => {
               if (zoom <= 1) return;
+              const target = e.target as HTMLElement | null;
+              if (target?.closest('[data-map-interactive="true"]')) return;
               const svg = svgRef.current;
               if (!svg) return;
               dragRef.current = {
@@ -530,6 +821,13 @@ export function BlueRidgeSvgMap({ violations = [], className }: BlueRidgeSvgMapP
                     : null;
                   const color = metric ? STATUS_COLOR[metric.status] : '#2D3748';
                   const isSelected = metric?.streetId === selectedStreetId;
+                  const isHovered = metric?.streetId === hoveredStreetId;
+                  const baseWidth = street.decorative ? 1.4 : 4;
+                  const strokeWidth = isSelected ? 5 : isHovered ? baseWidth + 1.25 : baseWidth;
+                  const hoverGlow = isHovered
+                    ? `drop-shadow(0 0 12px ${isSelected ? '#ffffff' : color})`
+                    : undefined;
+                  const statusGlow = metric ? glowFilterForStatus(metric.status) : undefined;
                   return (
                     <motion.path
                       key={street.key}
@@ -537,14 +835,20 @@ export function BlueRidgeSvgMap({ violations = [], className }: BlueRidgeSvgMapP
                       fill="none"
                       animate={{
                         stroke: isSelected ? '#ffffff' : color,
-                        strokeWidth: isSelected ? 5 : street.decorative ? 1.4 : 4,
+                        strokeWidth,
                       }}
                       transition={{ duration: 0.45, ease: 'easeInOut' }}
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       opacity={street.decorative ? 0.35 : 1}
                       className={cn(!street.decorative && 'cursor-pointer')}
-                      style={metric ? { filter: glowFilterForStatus(metric.status) } : undefined}
+                      style={
+                        metric
+                          ? {
+                              filter: [statusGlow, hoverGlow].filter(Boolean).join(' ') || undefined,
+                            }
+                          : undefined
+                      }
                       onClick={() => {
                         if (suppressClickRef.current) return;
                         if (!metric) return;
@@ -552,18 +856,24 @@ export function BlueRidgeSvgMap({ violations = [], className }: BlueRidgeSvgMapP
                       }}
                       onMouseEnter={(e) => {
                         if (!metric) return;
+                        setHoveredStreetId(metric.streetId);
                         setHoveredStreet({ x: e.clientX, y: e.clientY, metric });
                       }}
                       onMouseMove={(e) => {
                         if (!metric) return;
+                        setHoveredStreetId(metric.streetId);
                         setHoveredStreet({ x: e.clientX, y: e.clientY, metric });
                       }}
-                      onMouseLeave={() => setHoveredStreet(null)}
+                      onMouseLeave={() => {
+                        setHoveredStreetId(null);
+                        setHoveredStreet(null);
+                      }}
                     />
                   );
                 })}
               </g>
               <path
+                ref={boundaryPathRef}
                 d={boundaryPathD}
                 fill="none"
                 stroke="#06b6d4"
@@ -572,9 +882,34 @@ export function BlueRidgeSvgMap({ violations = [], className }: BlueRidgeSvgMapP
                 style={{ filter: 'drop-shadow(0 0 5px rgba(6,182,212,0.55))' }}
                 pointerEvents="none"
               />
+              <g clipPath="url(#br-boundary-clip)">
+                {cameraNodes.map((cam) => (
+                  <foreignObject key={cam.id} x={cam.x - 12} y={cam.y - 12} width={24} height={24}>
+                    <button
+                      type="button"
+                      data-map-interactive="true"
+                      className={cn(
+                        'flex h-6 w-6 items-center justify-center rounded-full border bg-[#0f172a]/85 text-cyan-200 shadow-[0_0_12px_rgba(34,211,238,0.35)] transition hover:scale-105 hover:bg-cyan-500/20',
+                        isEditingCameras ? 'cursor-grab border-amber-300/80' : 'cursor-pointer border-cyan-300/70',
+                      )}
+                      title={`${cam.label} - ${cam.street}`}
+                      onPointerDown={(e) => beginCameraDrag(e, cam)}
+                      onPointerMove={moveCameraDrag}
+                      onPointerUp={endCameraDrag}
+                      onPointerCancel={endCameraDrag}
+                      onClick={() => {
+                        if (isEditingCameras) return;
+                        setLiveViewCamera(cam);
+                      }}
+                    >
+                    <Camera className="h-3.5 w-3.5" />
+                    </button>
+                  </foreignObject>
+                ))}
+              </g>
             </g>
           </svg>
-          <div className="pointer-events-none absolute left-3 top-3 z-20 w-[240px] rounded-xl border border-cyan-200/20 bg-gradient-to-br from-white/18 via-white/10 to-white/5 p-3 text-slate-100 shadow-[0_10px_30px_rgba(2,6,23,0.55)] backdrop-blur-xl">
+          <div className="pointer-events-none absolute left-3 top-3 z-20 w-[240px] min-h-[126px] rounded-xl border border-cyan-200/20 bg-gradient-to-br from-white/18 via-white/10 to-white/5 p-3 text-slate-100 shadow-[0_10px_30px_rgba(2,6,23,0.55)] backdrop-blur-xl">
             <p className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-cyan-100/80">
               <Activity className="h-3.5 w-3.5 text-cyan-200" />
               Street Status Summary
@@ -600,6 +935,41 @@ export function BlueRidgeSvgMap({ violations = [], className }: BlueRidgeSvgMapP
               </>
             )}
           </div>
+          <motion.div
+            key={`ribbon-${period}-${activeRange.label}`}
+            initial={{ opacity: 0, x: 18 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.26, ease: 'easeOut' }}
+            className="pointer-events-none absolute left-[255px] right-3 top-3 z-20 rounded-xl border border-cyan-200/20 bg-gradient-to-r from-white/12 via-white/8 to-white/5 px-3 py-2 text-slate-100 shadow-[0_10px_24px_rgba(2,6,23,0.45)] backdrop-blur-xl"
+          >
+            <div className="flex items-center gap-3 text-[11px]">
+              <div className="min-w-0">
+                <p className="uppercase tracking-[0.1em] text-slate-300/90">Total Infractions</p>
+                <p className="mt-0.5 text-base font-semibold tabular-nums text-slate-100">{totalPeriodViolations}</p>
+              </div>
+              <span className="h-7 w-px bg-slate-500/40" />
+              <div className="min-w-0">
+                <p className="inline-flex items-center gap-1 text-[10px] uppercase tracking-[0.1em] text-slate-300/90">
+                  <Clock3 className="h-3 w-3 text-amber-200" />
+                  Peak Activity Window
+                </p>
+                <p className="mt-0.5 text-base font-semibold tabular-nums text-amber-200">{peakActivityWindow}</p>
+              </div>
+              <span className="h-7 w-px bg-slate-500/40" />
+              <div className="min-w-0">
+                <p className="inline-flex items-center gap-1 text-[10px] uppercase tracking-[0.1em] text-slate-300/90">
+                  <CalendarDays className="h-3 w-3 text-violet-200" />
+                  Critical Peak Day
+                </p>
+                <p className="mt-0.5 text-base font-semibold tabular-nums text-violet-200">{criticalPeakDay}</p>
+              </div>
+              <span className="h-7 w-px bg-slate-500/40" />
+              <div className="min-w-0">
+                <p className="uppercase tracking-[0.1em] text-slate-300/90">CCTV Nodes</p>
+                <p className="mt-0.5 text-base font-semibold tabular-nums text-cyan-200">{cameraNodes.length}</p>
+              </div>
+            </div>
+          </motion.div>
           {hoveredStreet ? (
             <div
               className="pointer-events-none fixed z-[240] rounded-md border border-slate-600/70 bg-slate-900/80 px-3 py-2 text-xs text-slate-100 shadow-lg backdrop-blur-sm"
@@ -618,6 +988,18 @@ export function BlueRidgeSvgMap({ violations = [], className }: BlueRidgeSvgMapP
             </div>
           ) : null}
           <div className="absolute bottom-[15rem] right-4 z-20 flex items-center gap-1.5">
+            <button
+              type="button"
+              className={cn(
+                'rounded border px-2 py-1 text-[11px] backdrop-blur-sm',
+                isEditingCameras
+                  ? 'border-amber-400 bg-amber-500/20 text-amber-100'
+                  : 'border-slate-600 bg-[#0f172a]/80 text-slate-300',
+              )}
+              onClick={() => setIsEditingCameras((v) => !v)}
+            >
+              {isEditingCameras ? 'Done Editing Cameras' : 'Edit Camera Positions'}
+            </button>
             <button
               type="button"
               className="h-7 w-7 rounded border border-slate-600 text-sm text-slate-200 disabled:opacity-40"
@@ -648,6 +1030,47 @@ export function BlueRidgeSvgMap({ violations = [], className }: BlueRidgeSvgMapP
               +
             </button>
           </div>
+          {liveViewCamera ? (
+            <div
+              data-map-interactive="true"
+              className="absolute z-30 w-[320px] rounded-xl border border-cyan-300/30 bg-[#0f172a]/95 shadow-2xl backdrop-blur-md"
+              style={{ left: liveViewPos.x, top: liveViewPos.y }}
+            >
+              <div
+                className={cn(
+                  'flex cursor-move items-center justify-between rounded-t-xl border-b border-slate-700 px-3 py-2',
+                  isDraggingLiveView ? 'bg-slate-800/90' : 'bg-slate-900/70',
+                )}
+                onPointerDown={beginLiveViewDrag}
+                onPointerMove={onLiveViewPointerMove}
+                onPointerUp={endLiveViewDrag}
+                onPointerCancel={endLiveViewDrag}
+              >
+                <p className="text-xs font-semibold text-slate-200">
+                  Live View - {liveViewCamera.label} ({liveViewCamera.street})
+                </p>
+                <button
+                  type="button"
+                  className="rounded p-1 text-slate-300 transition hover:bg-slate-700 hover:text-white"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={() => setLiveViewCamera(null)}
+                  aria-label="Close live view"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="p-3">
+                <div className="relative aspect-video rounded-lg border border-slate-700 bg-gradient-to-br from-slate-800 via-slate-900 to-slate-950">
+                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_20%,rgba(56,189,248,0.18),transparent_55%)]" />
+                  <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
+                    <Camera className="mb-2 h-6 w-6 text-cyan-300" />
+                    <p className="text-sm font-medium text-slate-100">{liveViewCamera.street}</p>
+                    <p className="text-[11px] text-slate-400">Live feed placeholder image</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : null}
           <div className="absolute bottom-3 left-3 right-3 z-10 rounded-xl border border-slate-700/80 bg-[#0f172a]/92 p-4 backdrop-blur-sm">
             <div className="mb-3 flex items-center justify-between gap-2">
               <p className="inline-flex items-center gap-1.5 text-sm font-semibold text-slate-200">
@@ -747,7 +1170,7 @@ export function BlueRidgeSvgMap({ violations = [], className }: BlueRidgeSvgMapP
           </div>
         </div>
 
-        <aside className="rounded-xl border border-slate-800 bg-[#0f172a] p-3">
+        <aside className="flex min-h-[min(62vh,520px)] flex-col rounded-xl border border-slate-800 bg-[#0f172a] p-3">
           <p className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-300">Street Violation Ranking</p>
           <p className="mb-3 text-xs text-slate-400">
             Ranking of streets based on accumulated warnings and finalized illegal parking tickets.
@@ -761,12 +1184,7 @@ export function BlueRidgeSvgMap({ violations = [], className }: BlueRidgeSvgMapP
               Clear selection
             </button>
           ) : null}
-          {totalPeriodViolations === 0 ? (
-            <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-100">
-              🎉 Great Job! No violations recorded this {period}. Blue Ridge B is maintaining a perfect street
-              state.
-            </div>
-          ) : (
+          <div className="flex-1">
             <ul className="space-y-2">
               {metrics.slice(0, 8).map((m, idx) => (
                 <li
@@ -820,7 +1238,7 @@ export function BlueRidgeSvgMap({ violations = [], className }: BlueRidgeSvgMapP
                 </li>
               ))}
             </ul>
-          )}
+          </div>
           <div className="mt-4 rounded-md border border-slate-700 bg-slate-900/30 p-3 text-xs text-slate-300">
             <p className="mb-1 font-semibold">Legend</p>
             <div className="space-y-1.5">

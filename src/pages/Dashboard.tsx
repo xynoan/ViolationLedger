@@ -1248,6 +1248,7 @@ export default function Dashboard() {
                   >
                     <BlueRidgeSvgMap
                       violations={violations}
+                      cameras={cameras}
                       className=""
                     />
                   </div>
