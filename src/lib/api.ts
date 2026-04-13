@@ -351,6 +351,9 @@ export interface AnalyticsResponse {
       avgInfractionDurationMinutes: number | null;
       avgInfractionToActionMinutes: number | null;
       avgInfractionToActionLabel: string;
+      byVehicleType: Array<{ vehicleType: string; count: number }>;
+      topVehicleType: { vehicleType: string; count: number } | null;
+      aiNarrative: string | null;
       repeatOffenders: {
         uniqueVehicles: number;
         recurringVehicles: number;

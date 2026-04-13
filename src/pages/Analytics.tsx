@@ -221,6 +221,11 @@ export default function Analytics() {
     count: byHourMap.get(hour) || 0,
   }));
   const hasPeakHoursData = peakHoursData.some((item) => item.count > 0);
+  const byVehicleTypeData = descriptive?.byVehicleType || [];
+  const hasVehicleTypeData = byVehicleTypeData.some((item) => item.count > 0);
+  const topVehicleTypeLabel = descriptive?.topVehicleType
+    ? `${descriptive.topVehicleType.vehicleType} (${descriptive.topVehicleType.count})`
+    : 'No data';
 
   const violationTrendMeta = getTrendMeta(descriptive?.sevenDayComparison);
   const warningTrendMeta = getTrendMeta(analytics?.warnings.sevenDayComparison);
@@ -484,6 +489,55 @@ export default function Analytics() {
             </CardContent>
           </Card>
         </div>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Car className="h-5 w-5" />
+              Violations by Vehicle Type
+            </CardTitle>
+            <CardDescription>
+              Most frequent violator type: <span className="font-medium">{topVehicleTypeLabel}</span>
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {hasVehicleTypeData ? (
+              <ChartContainer config={{ count: { label: 'Violations', color: '#f97316' } }}>
+                <BarChart data={byVehicleTypeData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="vehicleType" />
+                  <YAxis />
+                  <ChartTooltip content={<ChartTooltipContent />} />
+                  <Bar dataKey="count" fill="#f97316" />
+                </BarChart>
+              </ChartContainer>
+            ) : (
+              <div className="h-[240px] flex items-center justify-center text-muted-foreground">
+                No vehicle-type violation data in selected filters
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>AI Descriptive Analytics</CardTitle>
+            <CardDescription>
+              Auto-generated summary using Gemini ({descriptive?.aiNarrative ? 'live' : 'unavailable'})
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {descriptive?.aiNarrative ? (
+              <div className="text-sm whitespace-pre-wrap text-muted-foreground">
+                {descriptive.aiNarrative}
+              </div>
+            ) : (
+              <div className="text-sm text-muted-foreground">
+                Gemini narrative unavailable. Ensure <code>GEMINI_API_KEY</code> is configured on the server.
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
         {/* Peak Violation Hours */}
         <Card>

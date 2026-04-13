@@ -4,6 +4,7 @@ import db from '../database.js';
 const router = express.Router();
 const REPEAT_OFFENDER_THRESHOLD = 3;
 const DAY_MS = 24 * 60 * 60 * 1000;
+const GEMINI_MODEL = 'gemini-2.0-flash';
 
 function buildPreviousMonthWindow(currentStart, currentEndExclusive) {
   const prevStart = new Date(currentStart);
@@ -40,6 +41,51 @@ function computeTrend(currentTotal, previousTotal) {
     ? Number(((delta / previousTotal) * 100).toFixed(2))
     : (currentTotal > 0 ? 100 : 0);
   return { currentTotal, previousTotal, delta, deltaPct };
+}
+
+async function buildGeminiNarrative(payload) {
+  const apiKey = String(process.env.GEMINI_API_KEY || '').trim();
+  if (!apiKey) return null;
+
+  const prompt = [
+    'You are an analytics assistant for a parking violation monitoring dashboard.',
+    'Generate a concise narrative in plain English with exactly 3 bullet points.',
+    'Focus on actionable observations from this JSON metrics payload.',
+    'Mention trend direction, likely risk area, and one recommended action.',
+    'Keep each bullet to <= 22 words and avoid markdown headings.',
+    '',
+    JSON.stringify(payload),
+  ].join('\n');
+
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(apiKey)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: {
+            temperature: 0.3,
+            maxOutputTokens: 220,
+          },
+        }),
+      },
+    );
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const data = await response.json();
+    const text = data?.candidates?.[0]?.content?.parts
+      ?.map((p) => p?.text || '')
+      .join('\n')
+      .trim();
+    return text || null;
+  } catch {
+    return null;
+  }
 }
 
 router.get('/', async (req, res) => {
@@ -115,6 +161,17 @@ router.get('/', async (req, res) => {
       GROUP BY cameraLocationId
       ORDER BY count DESC
     `).all(...violationParams);
+
+    const violationsByVehicleType = db.prepare(`
+      SELECT
+        COALESCE(NULLIF(TRIM(v.vehicleType), ''), 'unknown') as vehicleType,
+        COUNT(*) as count
+      FROM violations viol
+      LEFT JOIN vehicles v ON UPPER(TRIM(v.plateNumber)) = UPPER(TRIM(viol.plateNumber))
+      ${violationWhere.replace('WHERE', 'WHERE 1=1 AND')}
+      GROUP BY COALESCE(NULLIF(TRIM(v.vehicleType), ''), 'unknown')
+      ORDER BY count DESC
+    `).all(...violationParams);
     
     // Violations over time (daily)
     const violationsOverTime = db.prepare(`
@@ -187,6 +244,7 @@ router.get('/', async (req, res) => {
     const recurringPct = uniqueVehicles > 0
       ? Number(((recurringVehicles / uniqueVehicles) * 100).toFixed(2))
       : 0;
+    const topVehicleType = violationsByVehicleType[0] || null;
 
     const now = new Date();
     const currentEndExclusive = endDate
@@ -402,6 +460,30 @@ router.get('/', async (req, res) => {
       WHERE timestamp >= ? AND class_name != 'none'
     `).get(sevenDaysAgo.toISOString());
 
+    const aiNarrative = await buildGeminiNarrative({
+      period: {
+        startDate: startDate || null,
+        endDate: endDate || null,
+        locationId: locationId || null,
+      },
+      totals: {
+        violations: Number(totalViolations.count || 0),
+        warnings: Number(totalWarnings.count || 0),
+        detections: Number(totalDetections.count || 0),
+      },
+      trends: {
+        violations7d: violationsTrend,
+        warnings7d: warningsTrend,
+      },
+      topLocation: violationsByLocation[0] || null,
+      topVehicleType,
+      repeatOffenders: {
+        uniqueVehicles,
+        recurringVehicles,
+        recurringPct,
+      },
+    });
+
     res.json({
       users: {
         total: totalUsers.count,
@@ -448,7 +530,10 @@ router.get('/', async (req, res) => {
             delta,
             deltaPct,
             basis: 'previous_month_same_span'
-          }
+          },
+          byVehicleType: violationsByVehicleType,
+          topVehicleType,
+          aiNarrative
         }
       },
       warnings: {
