@@ -100,6 +100,21 @@ cd /opt/LedgerMonitor/server
 node create-admin-user.js
 ```
 
+### Install go2rtc (required for live camera + RTSP detection)
+
+Server-side detection and the default RTSP URL use **go2rtc** on `127.0.0.1:8554`. Install the binary once (amd64 Ubuntu):
+
+```bash
+cd /tmp
+curl -fsSLO https://github.com/AlexxIT/go2rtc/releases/latest/download/go2rtc_linux_amd64
+sudo install -m 0755 go2rtc_linux_amd64 /usr/local/bin/go2rtc
+command -v go2rtc
+```
+
+Edit `server/go2rtc/go2rtc.yaml` on the server so each stream’s RTSP source is reachable **from the VPS** (home LAN IPs like `192.168.x.x` will not work unless you use a VPN/tunnel or a public camera URL). Stream names must match each camera’s **device ID** in the app.
+
+If `go2rtc` is not in `/usr/local/bin` or on the default `PATH` PM2 uses, start with an explicit binary, for example: `GO2RTC_BIN=/opt/bin/go2rtc NODE_ENV=production pm2 start ecosystem.config.cjs`.
+
 Run with PM2 so it restarts on reboot:
 
 ```bash
@@ -109,15 +124,18 @@ pm2 save
 pm2 startup   # follow the command it prints to enable on boot
 ```
 
-Equivalent one-liner (same as `ecosystem.config.cjs`):
+This starts **go2rtc** and **ledger-monitor**. To pick up an updated `ecosystem.config.cjs` after `git pull`:
 
 ```bash
-NODE_ENV=production pm2 start server/server.js --name ledger-monitor -i 1
+cd /opt/LedgerMonitor
+pm2 delete ledger-monitor go2rtc 2>/dev/null || true
+NODE_ENV=production pm2 start ecosystem.config.cjs
+pm2 save
 ```
 
-**Important:** The Node app (`server/server.js`) starts RTSP detection by spawning `server/detection_worker.py` with `--camera-id` and `--rtsp-url`. Do **not** register `detection_worker.py` as its own PM2 process. If you see `detection_worker.py: error: the following arguments are required: --camera-id, --rtsp-url` in logs, remove the stray process (`pm2 delete <name>`) and keep only `ledger-monitor`.
+**Important:** The Node app (`server/server.js`) starts RTSP detection by spawning `server/detection_worker.py` with `--camera-id` and `--rtsp-url`. Do **not** register `detection_worker.py` as its own PM2 process. If you see `detection_worker.py: error: the following arguments are required: --camera-id, --rtsp-url` in logs, remove the stray process (`pm2 delete <name>`) and keep only the apps defined in `ecosystem.config.cjs`.
 
-**RTSP `404 Not Found` on DESCRIBE:** Detection builds URLs as `{GO2RTC_RTSP_BASE}/{camera.deviceId}` (default base `rtsp://127.0.0.1:8554`). Ensure go2rtc (or your RTSP server) actually publishes that path and that each camera’s **device ID** in the app matches the stream name (e.g. deviceId `cam1` → `rtsp://127.0.0.1:8554/cam1`).
+**RTSP `404 Not Found` on DESCRIBE:** Usually **go2rtc is not running**, the stream name does not exist in `go2rtc.yaml`, or the upstream camera URL failed so go2rtc never published that path. Detection uses `{GO2RTC_RTSP_BASE}/{camera.deviceId}` (default base `rtsp://127.0.0.1:8554`). Ensure the device ID matches the stream key (e.g. `cam1` → `rtsp://127.0.0.1:8554/cam1`). You can also set a full **Detection RTSP URL** on the camera in the UI to bypass go2rtc.
 
 The app is now listening on **port 3001**. Keep the default port or set `PORT` in `server/.env`.
 
@@ -207,15 +225,12 @@ npm install
 npm run build:prod
 cd server
 npm install
-pm2 restart ledger-monitor
+pm2 reload ecosystem.config.cjs
 ```
 
-## Optional: go2rtc (live camera streams)
+## go2rtc WebSocket (browser live view)
 
-If you use go2rtc for RTSP camera streams, run it on the same server (or another) and either:
-
-- Proxy its WebSocket under your domain (e.g. `/go2rtc` → go2rtc), then set `VITE_GO2RTC_WS_URL=wss://yourdomain.com/go2rtc` and rebuild the frontend, or  
-- Expose go2rtc on a separate port and set `VITE_GO2RTC_WS_URL=wss://yourdomain.com:1984` (and open that port / firewall) when building.
+`ecosystem.config.cjs` runs go2rtc on the same host. For the SPA, either proxy WebSocket under your domain (e.g. `/go2rtc` → `http://127.0.0.1:1984`, as in the Nginx snippet above) and set `VITE_GO2RTC_WS_URL=wss://yourdomain.com/go2rtc` when building, or expose port `1984` and point `VITE_GO2RTC_WS_URL` there.
 
 ## Troubleshooting
 

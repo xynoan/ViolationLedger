@@ -237,7 +237,9 @@ function startWorker(cameraId, rtspUrl) {
 
   proc.stderr.on('data', (data) => {
     const str = data.toString().trim();
-    if (str) console.log(`[Worker ${cameraId}]`, str);
+    // Torch can emit frequent NNPACK CPU capability warnings on small VPS CPUs.
+    // They are noisy but non-fatal, so skip logging them.
+    if (str && !str.includes('NNPACK.cpp:56')) console.log(`[Worker ${cameraId}]`, str);
     if (str.includes('Loading model')) {
       broadcastStatus(cameraId, 'loading_model', 'Loading model...');
     } else if (str.includes('Model loaded') && str.includes('starting detection loop')) {
