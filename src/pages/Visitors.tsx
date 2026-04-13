@@ -52,8 +52,8 @@ const VEHICLE_TYPE_OPTIONS = [
 const RENTED_OPTIONS = ['Court', 'Community Center', 'Barangay Hall'] as const;
 const RENTED_NONE = '__rented_none__';
 
-const PURPOSE_GUEST = ['Visit resident', 'Barangay hall', 'Reservation'] as const;
-const PURPOSE_DELIVERY = ['Delivery', 'Pickup', 'Drop-off', 'Package delivery'] as const;
+const PURPOSE_GUEST = ['Visit resident', 'Barangay hall', 'Reservation', 'Drop-off', 'Delivery'] as const;
+const PURPOSE_DELIVERY = ['Delivery', 'Drop-off', 'Pickup', 'Package delivery'] as const;
 const PURPOSE_RENTAL = ['Short-term rental', 'Event parking', 'Overnight stay'] as const;
 
 type VisitorTab = 'guest' | 'delivery' | 'rental';
@@ -279,7 +279,6 @@ export default function Visitors() {
       });
       return;
     }
-
     const payload = {
       plateNumber: plateTrimmed.toUpperCase(),
       ownerName: ownerTrimmed,
@@ -458,7 +457,6 @@ export default function Visitors() {
                       </Select>
                     </div>
                   ) : null}
-
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div className="space-y-2">
                     <Label htmlFor="v-plate">
@@ -526,7 +524,7 @@ export default function Visitors() {
                     </div>
                     <div className="space-y-2">
                     <Label htmlFor="v-purpose">
-                      Purpose of Visit <span className="text-red-600">*</span>
+                      Purpose of Visit <span className="text-red-600">(Required)</span>
                     </Label>
                     <Select
                       value={purposeSelectValue}
