@@ -43,6 +43,7 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
   onPlateMetaChange,
 }, ref) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const mjpegImgRef = useRef<HTMLImageElement>(null);
   const deviceSource = String(camera.deviceId || '').trim();
   const directMjpegUrl = /^https?:\/\//i.test(deviceSource) ? deviceSource : null;
   const hasStream = stream !== null && camera.deviceId;
@@ -193,6 +194,7 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
 
       {showDirectMjpegFallback && (
         <img
+          ref={mjpegImgRef}
           src={directMjpegUrl as string}
           alt={`${camera.name} live stream`}
           className="absolute inset-0 z-5 w-full h-full object-cover"
@@ -231,33 +233,36 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
 
           const [x1, y1, x2, y2] = detection.bbox;
           const videoElement = videoRef.current;
-          const displayWidth =
-            videoElement?.clientWidth ||
-            videoElement?.parentElement?.clientWidth ||
-            0;
-          const displayHeight =
-            videoElement?.clientHeight ||
-            videoElement?.parentElement?.clientHeight ||
-            0;
+          const mjpegElement = mjpegImgRef.current;
+          const sourceIsVideo =
+            Boolean(videoElement && hasStream && (videoElement.videoWidth || videoElement.videoHeight));
+          const sourceElement = sourceIsVideo ? videoElement : mjpegElement;
 
-          if (!videoElement || !displayWidth || !displayHeight) return null;
+          const displayWidth = sourceElement?.clientWidth || 0;
+          const displayHeight = sourceElement?.clientHeight || 0;
 
-          const videoWidth = videoElement.videoWidth || 1920;
-          const videoHeight = videoElement.videoHeight || 1080;
+          if (!sourceElement || !displayWidth || !displayHeight) return null;
 
-          const videoAspect = videoWidth / videoHeight;
+          const sourceWidth = sourceIsVideo
+            ? (videoElement?.videoWidth || 1920)
+            : (mjpegElement?.naturalWidth || 1920);
+          const sourceHeight = sourceIsVideo
+            ? (videoElement?.videoHeight || 1080)
+            : (mjpegElement?.naturalHeight || 1080);
+
+          const videoAspect = sourceWidth / sourceHeight;
           const displayAspect = displayWidth / displayHeight;
 
           let scaleX: number, scaleY: number, offsetX = 0, offsetY = 0;
 
           if (videoAspect > displayAspect) {
-            scaleX = displayWidth / videoWidth;
+            scaleX = displayWidth / sourceWidth;
             scaleY = scaleX;
-            offsetY = (displayHeight - videoHeight * scaleY) / 2;
+            offsetY = (displayHeight - sourceHeight * scaleY) / 2;
           } else {
-            scaleY = displayHeight / videoHeight;
+            scaleY = displayHeight / sourceHeight;
             scaleX = scaleY;
-            offsetX = (displayWidth - videoWidth * scaleX) / 2;
+            offsetX = (displayWidth - sourceWidth * scaleX) / 2;
           }
 
           const left = x1 * scaleX + offsetX;
