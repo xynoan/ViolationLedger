@@ -237,6 +237,11 @@ export const violationsAPI = {
       method: 'POST',
       timeout: 35000,
     }),
+  assignToMe: (id: string) =>
+    fetchAPI(`/violations/${encodeURIComponent(id)}/assign`, {
+      method: 'PUT',
+      cache: false,
+    }),
   /**
    * Dev / ALLOW_TEST_VIOLATION_SEED: inserts a random warning with random elapsed time since detection.
    */

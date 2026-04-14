@@ -18,6 +18,9 @@ interface WarningTimerProps {
   onIssueTicket?: (id: string) => void;
   /** Manual resend SMS to registered owner (same template as automatic warning SMS). */
   onSendSms?: (id: string) => void | Promise<void>;
+  onAssignToMe?: (id: string) => void | Promise<void>;
+  assigning?: boolean;
+  currentUserId?: string | null;
 }
 
 /** Seconds until expiry; negative = overdue by that many seconds. */
@@ -47,7 +50,15 @@ function tierFromDelta(deltaSec: number | null): 'overdue' | 'urgent' | 'moderat
   return 'calm';
 }
 
-export function WarningTimer({ violation, onCancel, onIssueTicket, onSendSms }: WarningTimerProps) {
+export function WarningTimer({
+  violation,
+  onCancel,
+  onIssueTicket,
+  onSendSms,
+  onAssignToMe,
+  assigning = false,
+  currentUserId = null,
+}: WarningTimerProps) {
   const [deltaSec, setDeltaSec] = useState<number | null>(() => computeDeltaSec(violation.warningExpiresAt));
   const [sendingSms, setSendingSms] = useState(false);
 
@@ -98,12 +109,15 @@ export function WarningTimer({ violation, onCancel, onIssueTicket, onSendSms }: 
   );
 
   const smsSentAt = violation.smsSentAt;
+  const smsScheduledAt = violation.ownerSmsScheduledAt;
   const canSendSms =
     Boolean(onSendSms) &&
     !violation.unregisteredUrgent &&
     violation.plateNumber !== 'NONE' &&
     violation.plateNumber !== 'BLUR' &&
     Boolean(violation.plateNumber);
+  const isAssigned = Boolean(violation.assignedToUserId);
+  const assignedToCurrentUser = isAssigned && violation.assignedToUserId === currentUserId;
 
   const handleSendSmsClick = async () => {
     if (!onSendSms || !canSendSms || sendingSms) return;
@@ -201,7 +215,7 @@ export function WarningTimer({ violation, onCancel, onIssueTicket, onSendSms }: 
                     </Badge>
                   ) : (
                     <Badge variant="secondary" className="text-xs text-muted-foreground font-normal">
-                      No text sent
+                      {smsScheduledAt ? `SMS scheduled · ${smsScheduledAt.toLocaleTimeString()}` : 'No text sent'}
                     </Badge>
                   )}
                 </div>
@@ -265,6 +279,17 @@ export function WarningTimer({ violation, onCancel, onIssueTicket, onSendSms }: 
                 {sendingSms ? 'Sending…' : 'Send SMS'}
               </Button>
             )}
+            {onAssignToMe && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={assigning || (isAssigned && !assignedToCurrentUser)}
+                onClick={() => onAssignToMe(violation.id)}
+                className="disabled:opacity-40 disabled:pointer-events-none"
+              >
+                {assignedToCurrentUser ? 'Assigned to me' : isAssigned ? `Handled by ${violation.assignedToName || 'another user'}` : 'Assign to me'}
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="sm"
@@ -285,6 +310,12 @@ export function WarningTimer({ violation, onCancel, onIssueTicket, onSendSms }: 
               Issue Ticket
             </Button>
           </div>
+          {isAssigned && (
+            <p className="text-xs text-muted-foreground w-full text-right">
+              Being handled by <span className="font-medium">{violation.assignedToName || 'Unknown user'}</span>
+              {violation.assignedAt ? ` since ${new Date(violation.assignedAt).toLocaleString()}` : ''}
+            </p>
+          )}
         </div>
       </div>
     </div>

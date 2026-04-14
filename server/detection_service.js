@@ -13,6 +13,7 @@ import db from './database.js';
 import { getDetectionEnabled } from './detection_state.js';
 import { createViolationFromDetection } from './routes/violations.js';
 import { getPythonExecutable } from './python_executable.js';
+import { sendSmsMessage } from './utils/smsService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -36,6 +37,9 @@ const subscribers = new Map();
 
 /** cameraId -> latest worker status text */
 const workerStatuses = new Map();
+/** cameraId -> epoch ms last vehicle-only Barangay alert */
+const lastNoPlateAlertAt = new Map();
+const NO_PLATE_ALERT_COOLDOWN_MS = 5 * 60 * 1000;
 
 /** HTTP server for WebSocket upgrade */
 let wss = null;
@@ -137,6 +141,77 @@ function saveVehicleDetectionsFromWorker(cameraId, msg) {
   }
 }
 
+async function sendNoPlateBarangayAlert(cameraId, msg) {
+  const vehicles = Array.isArray(msg?.vehicles) ? msg.vehicles : [];
+  const plates = Array.isArray(msg?.plates) ? msg.plates : [];
+  const hasReadablePlate = plates.some(
+    (p) => p?.plateNumber && p.plateNumber !== 'NONE' && p.plateNumber !== 'BLUR'
+  );
+  if (!vehicles.length || hasReadablePlate) return;
+
+  const lastSentAt = lastNoPlateAlertAt.get(cameraId) || 0;
+  if (Date.now() - lastSentAt < NO_PLATE_ALERT_COOLDOWN_MS) return;
+  lastNoPlateAlertAt.set(cameraId, Date.now());
+
+  const camera = db.prepare('SELECT id, locationId, name FROM cameras WHERE id = ?').get(cameraId);
+  const locationLabel = camera?.locationId || 'Unknown location';
+  const cameraLabel = camera?.name || cameraId;
+  const nowIso = new Date().toISOString();
+
+  try {
+    const notificationId = `NOTIF-NOPLATE-${cameraId}-${Date.now()}`;
+    db.prepare(`
+      INSERT INTO notifications (
+        id, type, title, message, cameraId, locationId,
+        incidentId, detectionId, imageUrl, imageBase64,
+        plateNumber, timeDetected, reason, timestamp, read
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      notificationId,
+      'plate_not_visible',
+      'Vehicle detected with no readable plate',
+      `Vehicle detected at ${locationLabel} (${cameraLabel}) but no readable plate was captured. Barangay follow-up is required.`,
+      camera?.id || cameraId,
+      locationLabel,
+      null,
+      null,
+      msg?.imageUrl || null,
+      null,
+      'NONE',
+      nowIso,
+      'vehicle_detected_no_plate',
+      nowIso,
+      0
+    );
+  } catch (error) {
+    console.error('[Detection] Failed to create no-plate notification:', error?.message || error);
+  }
+
+  try {
+    const enforcers = db.prepare(`
+      SELECT id, name, contactNumber
+      FROM users
+      WHERE role = 'barangay_user'
+        AND status = 'active'
+        AND contactNumber IS NOT NULL
+        AND TRIM(contactNumber) != ''
+    `).all();
+    if (!enforcers.length) return;
+
+    const message = `Vehicle detected at ${locationLabel}, but plate number is not readable. Please check camera ${cameraLabel}.`;
+    for (const user of enforcers) {
+      const result = await sendSmsMessage(user.contactNumber, message);
+      if (!result.success) {
+        console.log(
+          `[Detection] No-plate SMS failed for user ${user.id} (${user.contactNumber}): ${result.error}`
+        );
+      }
+    }
+  } catch (error) {
+    console.error('[Detection] Failed sending no-plate Barangay SMS:', error?.message || error);
+  }
+}
+
 function broadcastStatus(cameraId, status, detail = null) {
   const text = detail || status;
   workerStatuses.set(cameraId, text);
@@ -226,6 +301,9 @@ function startWorker(cameraId, rtspUrl) {
         // Fire-and-forget side effects; do not block broadcast.
         handlePlateDetections(cameraId, msg).catch((e) => {
           console.error('[Detection][SMS] handlePlateDetections error:', e);
+        });
+        sendNoPlateBarangayAlert(cameraId, msg).catch((e) => {
+          console.error('[Detection] sendNoPlateBarangayAlert error:', e);
         });
         saveVehicleDetectionsFromWorker(cameraId, msg);
         broadcast(cameraId, msg);

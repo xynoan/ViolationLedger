@@ -406,7 +406,11 @@ async function initDatabase() {
       timeDetected TEXT NOT NULL,
       timeIssued TEXT,
       status TEXT NOT NULL CHECK(status IN ('warning', 'pending', 'issued', 'cancelled', 'cleared', 'resolved')),
-      warningExpiresAt TEXT
+      warningExpiresAt TEXT,
+      ownerSmsScheduledAt TEXT,
+      assignedToUserId TEXT,
+      assignedToName TEXT,
+      assignedAt TEXT
     )
   `);
   
@@ -416,6 +420,38 @@ async function initDatabase() {
     // Violations table supports resolved status
   } catch (error) {
     // Ignore errors
+  }
+  try {
+    db.run('ALTER TABLE violations ADD COLUMN ownerSmsScheduledAt TEXT');
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: violations.ownerSmsScheduledAt migration:', errorMsg);
+    }
+  }
+  try {
+    db.run('ALTER TABLE violations ADD COLUMN assignedToUserId TEXT');
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: violations.assignedToUserId migration:', errorMsg);
+    }
+  }
+  try {
+    db.run('ALTER TABLE violations ADD COLUMN assignedToName TEXT');
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: violations.assignedToName migration:', errorMsg);
+    }
+  }
+  try {
+    db.run('ALTER TABLE violations ADD COLUMN assignedAt TEXT');
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: violations.assignedAt migration:', errorMsg);
+    }
   }
   
   db.run(`

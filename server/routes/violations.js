@@ -1,6 +1,7 @@
 import express from 'express';
 import db from '../database.js';
 import { sendViolationSms } from '../utils/smsService.js';
+import { authenticateToken, requireRole } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -8,6 +9,7 @@ const router = express.Router();
  * Grace period in minutes before a warning elapses (timer on Warnings UI; monitoring uses the same window).
  */
 export const GRACE_PERIOD_MINUTES = 30;
+export const OWNER_SMS_DELAY_MINUTES = 5;
 const OUT_OF_VIEW_NOTE = 'Vehicle is not in the camera view anymore.';
 
 export function normalizePlateForMatch(plateNumber) {
@@ -95,12 +97,15 @@ export async function createViolationFromDetection(plateNumber, cameraLocationId
     
     let messageSent = false;
     let messageLogId = null;
+    const smsScheduledAt = new Date(Date.now() + OWNER_SMS_DELAY_MINUTES * 60 * 1000).toISOString();
     
     // Create violation only if it's a new violation
     if (true) {
       db.prepare(`
-        INSERT INTO violations (id, ticketId, plateNumber, cameraLocationId, timeDetected, status, warningExpiresAt)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO violations (
+          id, ticketId, plateNumber, cameraLocationId, timeDetected, status, warningExpiresAt, ownerSmsScheduledAt
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         violationId,
         null, // ticketId (assigned later)
@@ -108,22 +113,9 @@ export async function createViolationFromDetection(plateNumber, cameraLocationId
         cameraLocationId,
         timeDetected,
         status,
-        expiresAt
+        expiresAt,
+        smsScheduledAt
       );
-      
-      // Send SMS message to vehicle owner (only for new violations)
-      try {
-        const smsResult = await sendViolationSms(canonicalPlateNumber, cameraLocationId, violationId);
-        if (smsResult.success) {
-          messageSent = true;
-          messageLogId = smsResult.messageLogId || null;
-          console.log(`✅ SMS sent to owner for plate ${canonicalPlateNumber} (Log ID: ${smsResult.messageLogId || 'N/A'})`);
-        } else {
-          console.log(`⚠️  SMS not sent for plate ${canonicalPlateNumber}: ${smsResult.error}`);
-        }
-      } catch (smsError) {
-        console.error(`❌ Error sending SMS for plate ${canonicalPlateNumber}:`, smsError);
-      }
       
       // Create notification for new warning
       try {
@@ -132,7 +124,7 @@ export async function createViolationFromDetection(plateNumber, cameraLocationId
         
         const warningNotificationId = `NOTIF-WARNING-${violationId}-${Date.now()}`;
         const warningTitle = `New Warning - ${canonicalPlateNumber}`;
-        const warningMessage = `Illegal parking detected for vehicle ${canonicalPlateNumber} at ${cameraLocationId}. ${GRACE_PERIOD_MINUTES}-minute grace period started.${messageSent ? ' SMS message sent to owner.' : ' SMS message could not be sent to owner.'}`;
+        const warningMessage = `Illegal parking detected for vehicle ${canonicalPlateNumber} at ${cameraLocationId}. ${GRACE_PERIOD_MINUTES}-minute grace period started. Owner SMS is scheduled in ${OWNER_SMS_DELAY_MINUTES} minute(s) if the warning remains active.`;
         
         db.prepare(`
           INSERT INTO notifications (
@@ -351,6 +343,48 @@ router.get('/', (req, res) => {
     res.json(enrichedViolations);
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+router.put('/:id/assign', authenticateToken, requireRole('barangay_user', 'admin'), (req, res) => {
+  try {
+    const violation = db.prepare('SELECT * FROM violations WHERE id = ?').get(req.params.id);
+    if (!violation) {
+      return res.status(404).json({ error: 'Violation not found' });
+    }
+    if (violation.status !== 'warning') {
+      return res.status(400).json({ error: 'Only active warnings can be assigned' });
+    }
+
+    const now = new Date().toISOString();
+    const assigneeName = req.user?.name?.trim() || req.user?.email || 'Barangay User';
+    const assignResult = db.prepare(`
+      UPDATE violations
+      SET assignedToUserId = ?, assignedToName = ?, assignedAt = ?
+      WHERE id = ?
+      AND (assignedToUserId IS NULL OR TRIM(assignedToUserId) = '' OR assignedToUserId = ?)
+    `).run(req.user.id, assigneeName, now, req.params.id, req.user.id);
+
+    if (!assignResult?.changes) {
+      const current = db.prepare('SELECT assignedToUserId, assignedToName, assignedAt FROM violations WHERE id = ?').get(req.params.id);
+      return res.status(409).json({
+        error: `This warning is already assigned to ${current?.assignedToName || 'another user'}.`,
+        assignedToUserId: current?.assignedToUserId || null,
+        assignedToName: current?.assignedToName || null,
+        assignedAt: current?.assignedAt || null,
+      });
+    }
+
+    const updated = db.prepare('SELECT * FROM violations WHERE id = ?').get(req.params.id);
+    return res.json({
+      ...updated,
+      timeDetected: new Date(updated.timeDetected),
+      timeIssued: updated.timeIssued ? new Date(updated.timeIssued) : null,
+      warningExpiresAt: updated.warningExpiresAt ? new Date(updated.warningExpiresAt) : null,
+      assignedAt: updated.assignedAt ? new Date(updated.assignedAt) : null,
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
   }
 });
 
@@ -757,9 +791,16 @@ router.post('/', async (req, res) => {
       expiresAt = expiresDate.toISOString();
     }
     
+    const ownerSmsScheduledAt =
+      status === 'warning' && plateNumber !== 'NONE' && plateNumber !== 'BLUR'
+        ? new Date(Date.now() + OWNER_SMS_DELAY_MINUTES * 60 * 1000).toISOString()
+        : null;
+
     db.prepare(`
-      INSERT INTO violations (id, ticketId, plateNumber, cameraLocationId, timeDetected, status, warningExpiresAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO violations (
+        id, ticketId, plateNumber, cameraLocationId, timeDetected, status, warningExpiresAt, ownerSmsScheduledAt
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       ticketId || null,
@@ -767,7 +808,8 @@ router.post('/', async (req, res) => {
       cameraLocationId,
       timeDetected,
       status,
-      expiresAt || null
+      expiresAt || null,
+      ownerSmsScheduledAt
     );
 
     const violation = db.prepare('SELECT * FROM violations WHERE id = ?').get(id);

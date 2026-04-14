@@ -1,6 +1,7 @@
 import db from './database.js';
 import { shouldCreateNotification } from './routes/notifications.js';
 import { GRACE_PERIOD_MINUTES, normalizePlateForMatch } from './routes/violations.js';
+import { sendViolationSms } from './utils/smsService.js';
 
 /** No plate+location match in this window ⇒ treat vehicle as departed; clears Active Warnings. */
 const PRESENCE_LOOKBACK_MINUTES = 3;
@@ -246,6 +247,7 @@ class MonitoringService {
 
       let notifiedCount = 0;
       let warningsTransitionedToPending = 0;
+      let ownerSmsSentCount = 0;
 
       for (const warning of activeWarnings) {
         const key = `${warning.plateNumber}-${warning.cameraLocationId}`;
@@ -253,6 +255,44 @@ class MonitoringService {
         const now = new Date();
         const expiresAt = warning.warningExpiresAt ? new Date(warning.warningExpiresAt) : null;
         const isExpired = expiresAt && now >= expiresAt;
+        const hasReadablePlate =
+          warning.plateNumber &&
+          warning.plateNumber !== 'NONE' &&
+          warning.plateNumber !== 'BLUR';
+
+        if (hasReadablePlate) {
+          const alreadySent = db.prepare(`
+            SELECT 1 FROM sms_logs
+            WHERE violationId = ?
+              AND status = 'sent'
+            LIMIT 1
+          `).get(warning.id);
+          const smsScheduleAt = warning.ownerSmsScheduledAt
+            ? new Date(warning.ownerSmsScheduledAt)
+            : new Date(new Date(warning.timeDetected).getTime() + 5 * 60 * 1000);
+          const smsDue = now >= smsScheduleAt;
+          if (!alreadySent && smsDue && isStillPresent) {
+            try {
+              const smsResult = await sendViolationSms(
+                warning.plateNumber,
+                warning.cameraLocationId,
+                warning.id,
+              );
+              if (smsResult?.success) {
+                ownerSmsSentCount += 1;
+                console.log(
+                  `✅ Delayed owner SMS sent for violation ${warning.id} (plate ${warning.plateNumber})`
+                );
+              } else {
+                console.log(
+                  `⚠️  Delayed owner SMS failed for violation ${warning.id}: ${smsResult?.error || 'unknown error'}`
+                );
+              }
+            } catch (smsError) {
+              console.error(`❌ Delayed owner SMS error for violation ${warning.id}:`, smsError);
+            }
+          }
+        }
 
         console.log(
           `🔍 Monitoring check for violation ${warning.id}: plate=${warning.plateNumber}, location=${warning.cameraLocationId}, ` +
@@ -428,9 +468,15 @@ class MonitoringService {
         }
       }
 
-      if (notifiedCount > 0 || markedOutOfViewCount > 0 || restoredInViewCount > 0 || warningsTransitionedToPending > 0) {
+      if (
+        notifiedCount > 0 ||
+        markedOutOfViewCount > 0 ||
+        restoredInViewCount > 0 ||
+        warningsTransitionedToPending > 0 ||
+        ownerSmsSentCount > 0
+      ) {
         console.log(
-          `✅ Monitoring check complete: ${markedOutOfViewCount} marked out-of-view, ${restoredInViewCount} restored in-view, ${notifiedCount} notified, ${warningsTransitionedToPending} moved to pending`
+          `✅ Monitoring check complete: ${markedOutOfViewCount} marked out-of-view, ${restoredInViewCount} restored in-view, ${ownerSmsSentCount} owner SMS sent, ${notifiedCount} notified, ${warningsTransitionedToPending} moved to pending`
         );
       } else {
         console.log(`✅ Monitoring check complete: No updates needed`);

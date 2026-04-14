@@ -7,13 +7,16 @@ import { Violation } from '@/types/parking';
 import { violationsAPI } from '@/lib/api';
 import { toast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
+import { useAuth } from '@/hooks/useAuth';
 
 export default function Warnings() {
   usePageTracking();
+  const { user } = useAuth();
   const [violations, setViolations] = useState<Violation[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [testSeedLoading, setTestSeedLoading] = useState(false);
   const [testSeedUnregLoading, setTestSeedUnregLoading] = useState(false);
+  const [assigningViolationId, setAssigningViolationId] = useState<string | null>(null);
   const activeWarnings = violations
     .filter(v => v.status === 'warning')
     .sort((a, b) => {
@@ -44,6 +47,8 @@ export default function Warnings() {
         timeIssued: v.timeIssued ? new Date(v.timeIssued) : undefined,
         warningExpiresAt: v.warningExpiresAt ? new Date(v.warningExpiresAt) : undefined,
         smsSentAt: v.smsSentAt ? new Date(v.smsSentAt) : undefined,
+        ownerSmsScheduledAt: v.ownerSmsScheduledAt ? new Date(v.ownerSmsScheduledAt) : undefined,
+        assignedAt: v.assignedAt ? new Date(v.assignedAt) : undefined,
       }));
       setViolations(processedViolations);
     } catch (error) {
@@ -55,6 +60,26 @@ export default function Warnings() {
       });
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleAssignToMe = async (violationId: string) => {
+    setAssigningViolationId(violationId);
+    try {
+      await violationsAPI.assignToMe(violationId);
+      toast({
+        title: 'Assigned',
+        description: 'This warning is now assigned to you.',
+      });
+      await loadViolations();
+    } catch (error: any) {
+      toast({
+        title: 'Assign failed',
+        description: error?.message || 'Failed to assign warning',
+        variant: 'destructive',
+      });
+    } finally {
+      setAssigningViolationId(null);
     }
   };
 
@@ -219,6 +244,9 @@ export default function Warnings() {
                   onCancel={handleCancelWarning}
                   onIssueTicket={handleIssueTicket}
                   onSendSms={handleSendSms}
+                  onAssignToMe={handleAssignToMe}
+                  assigning={assigningViolationId === violation.id}
+                  currentUserId={user?.id || null}
                 />
               ))}
             </div>

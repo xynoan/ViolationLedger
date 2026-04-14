@@ -14,9 +14,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Vehicle, Camera as CameraType, Violation } from '@/types/parking';
 import { vehiclesAPI, camerasAPI, violationsAPI, detectionsAPI, detectionAPI } from '@/lib/api';
 import { toast } from '@/hooks/use-toast';
+import { useAuth } from '@/hooks/useAuth';
 
 export default function Dashboard() {
   usePageTracking();
+  const { user } = useAuth();
   const navigate = useNavigate();
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [cameras, setCameras] = useState<CameraType[]>([]);
@@ -27,6 +29,7 @@ export default function Dashboard() {
   const [detectionToggleLoading, setDetectionToggleLoading] = useState(false);
   const [testSeedLoading, setTestSeedLoading] = useState(false);
   const [testSeedUnregLoading, setTestSeedUnregLoading] = useState(false);
+  const [assigningViolationId, setAssigningViolationId] = useState<string | null>(null);
 
   const showTestWarningSeed =
     import.meta.env.DEV === true || import.meta.env.VITE_SHOW_TEST_WARNING_BUTTON === 'true';
@@ -88,6 +91,8 @@ export default function Dashboard() {
           timeIssued: v.timeIssued ? new Date(v.timeIssued) : undefined,
           warningExpiresAt: v.warningExpiresAt ? new Date(v.warningExpiresAt) : undefined,
           smsSentAt: v.smsSentAt ? new Date(v.smsSentAt) : undefined,
+          ownerSmsScheduledAt: v.ownerSmsScheduledAt ? new Date(v.ownerSmsScheduledAt) : undefined,
+          assignedAt: v.assignedAt ? new Date(v.assignedAt) : undefined,
         })),
       );
       // Count all detections (captures) - filter out "none" detections
@@ -164,6 +169,26 @@ export default function Dashboard() {
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to send SMS';
         toast({ title: 'SMS failed', description: message, variant: 'destructive' });
+      }
+    },
+    [loadData],
+  );
+
+  const handleAssignToMe = useCallback(
+    async (violationId: string) => {
+      setAssigningViolationId(violationId);
+      try {
+        await violationsAPI.assignToMe(violationId);
+        toast({
+          title: 'Assigned',
+          description: 'This warning is now assigned to you.',
+        });
+        await loadData();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to assign warning';
+        toast({ title: 'Assign failed', description: message, variant: 'destructive' });
+      } finally {
+        setAssigningViolationId(null);
       }
     },
     [loadData],
@@ -411,6 +436,9 @@ export default function Dashboard() {
                         onCancel={handleClearWarning}
                         onIssueTicket={handleMarkTicketed}
                         onSendSms={handleSendSms}
+                        onAssignToMe={handleAssignToMe}
+                        assigning={assigningViolationId === warning.id}
+                        currentUserId={user?.id || null}
                       />
                     ))}
                   </div>
