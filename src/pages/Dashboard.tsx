@@ -439,6 +439,7 @@ export default function Dashboard() {
                         onAssignToMe={handleAssignToMe}
                         assigning={assigningViolationId === warning.id}
                         currentUserId={user?.id || null}
+                        showThumbnail={false}
                       />
                     ))}
                   </div>

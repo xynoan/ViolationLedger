@@ -1,7 +1,12 @@
 import db from './database.js';
 import { shouldCreateNotification } from './routes/notifications.js';
-import { GRACE_PERIOD_MINUTES, normalizePlateForMatch } from './routes/violations.js';
+import { normalizePlateForMatch } from './routes/violations.js';
 import { sendViolationSms } from './utils/smsService.js';
+import {
+  getGracePeriodMinutes,
+  getOwnerSmsDelayConfig,
+  setOwnerSmsDelayDisabledForDemo,
+} from './runtime_config.js';
 
 /** No plate+location match in this window ⇒ treat vehicle as departed; clears Active Warnings. */
 const PRESENCE_LOOKBACK_MINUTES = 3;
@@ -47,6 +52,18 @@ class MonitoringService {
     }
     this.isRunning = false;
     console.log('🛑 Monitoring service stopped');
+  }
+
+  getOwnerSmsDelayConfig() {
+    return getOwnerSmsDelayConfig();
+  }
+
+  setDisableOwnerSmsDelayForDemo(disabled) {
+    const updatedConfig = setOwnerSmsDelayDisabledForDemo(disabled);
+    console.log(
+      `⚙️  Owner SMS delay demo mode: ${updatedConfig.disabledForDemo ? 'disabled (send immediately)' : `enabled (${updatedConfig.delayMinutes} minutes)`}`,
+    );
+    return updatedConfig;
   }
 
   async startVideoAnalysis() {
@@ -221,7 +238,7 @@ class MonitoringService {
       const detectionMap = new Map();
       recentDetections.forEach(detection => {
         if (detection.locationId) {
-          const key = `${detection.plateNumber}-${detection.locationId}`;
+          const key = `${normalizePlateForMatch(detection.plateNumber)}-${detection.locationId}`;
           detectionMap.set(key, true);
         }
       });
@@ -230,7 +247,7 @@ class MonitoringService {
       // detections with cameraId = 'MANUAL-UPLOAD-CAM' (no cameras row), so they
       // were excluded above. Treat them as "still present" for the full grace period.
       const gracePeriodAgo = new Date();
-      gracePeriodAgo.setMinutes(gracePeriodAgo.getMinutes() - GRACE_PERIOD_MINUTES);
+      gracePeriodAgo.setMinutes(gracePeriodAgo.getMinutes() - getGracePeriodMinutes());
       for (const warning of activeWarnings) {
         const hasManualUploadDetection = db.prepare(`
           SELECT 1 FROM detections
@@ -240,7 +257,7 @@ class MonitoringService {
           AND (plateNumber NOT IN ('NONE', 'BLUR'))
         `).get(warning.plateNumber, gracePeriodAgo.toISOString());
         if (hasManualUploadDetection) {
-          const key = `${warning.plateNumber}-${warning.cameraLocationId}`;
+          const key = `${normalizePlateForMatch(warning.plateNumber)}-${warning.cameraLocationId}`;
           detectionMap.set(key, true);
         }
       }
@@ -250,7 +267,7 @@ class MonitoringService {
       let ownerSmsSentCount = 0;
 
       for (const warning of activeWarnings) {
-        const key = `${warning.plateNumber}-${warning.cameraLocationId}`;
+        const key = `${normalizePlateForMatch(warning.plateNumber)}-${warning.cameraLocationId}`;
         const isStillPresent = detectionMap.has(key);
         const now = new Date();
         const expiresAt = warning.warningExpiresAt ? new Date(warning.warningExpiresAt) : null;
@@ -267,11 +284,14 @@ class MonitoringService {
               AND status = 'sent'
             LIMIT 1
           `).get(warning.id);
+          const smsDelayConfig = getOwnerSmsDelayConfig();
           const smsScheduleAt = warning.ownerSmsScheduledAt
             ? new Date(warning.ownerSmsScheduledAt)
-            : new Date(new Date(warning.timeDetected).getTime() + 5 * 60 * 1000);
-          const smsDue = now >= smsScheduleAt;
-          if (!alreadySent && smsDue && isStillPresent) {
+            : new Date(
+                new Date(warning.timeDetected).getTime() + smsDelayConfig.delayMinutes * 60 * 1000,
+              );
+          const smsDue = smsDelayConfig.disabledForDemo ? true : now >= smsScheduleAt;
+          if (!alreadySent && smsDue) {
             try {
               const smsResult = await sendViolationSms(
                 warning.plateNumber,
@@ -369,10 +389,11 @@ class MonitoringService {
             }
 
             if (userId && shouldCreateNotification(userId, 'warning_expired')) {
+              const gracePeriodMinutes = getGracePeriodMinutes();
               // Create notification
               const notificationId = `NOTIF-${Date.now()}-${warning.id}`;
               const notificationTitle = 'Vehicle Still Present After Warning';
-              const notificationMessage = `Vehicle with plate ${warning.plateNumber} is still illegally parked at ${warning.cameraLocationId} after the ${GRACE_PERIOD_MINUTES}-minute grace period. Immediate Barangay action required.`;
+              const notificationMessage = `Vehicle with plate ${warning.plateNumber} is still illegally parked at ${warning.cameraLocationId} after the ${gracePeriodMinutes}-minute grace period. Immediate Barangay action required.`;
 
               try {
                 db.prepare(`
@@ -394,12 +415,12 @@ class MonitoringService {
                   imageBase64,
                   warning.plateNumber,
                   warning.timeDetected,
-                  `Vehicle still present after ${GRACE_PERIOD_MINUTES} minutes`,
+                  `Vehicle still present after ${gracePeriodMinutes} minutes`,
                   new Date().toISOString(),
                   0 // not read
                 );
                 notifiedCount++;
-                console.log(`🔔 Created notification ${notificationId} - Vehicle still present after ${GRACE_PERIOD_MINUTES} minutes`);
+                console.log(`🔔 Created notification ${notificationId} - Vehicle still present after ${gracePeriodMinutes} minutes`);
               } catch (notifError) {
                 console.error(`❌ Error creating notification for violation ${warning.id}:`, notifError);
               }
@@ -424,7 +445,7 @@ class MonitoringService {
                 console.log(
                   `📱 Preparing to send follow-up SMS to ${enforcers.length} Barangay user(s) for plate ${warning.plateNumber} (violation ${warning.id}).`
                 );
-                const message = `Vehicle with plate ${warning.plateNumber} was warned but is still illegally parked at ${warning.cameraLocationId} after the ${GRACE_PERIOD_MINUTES}-minute grace period. You may now ticket this vehicle.`;
+                const message = `Vehicle with plate ${warning.plateNumber} was warned but is still illegally parked at ${warning.cameraLocationId} after the ${getGracePeriodMinutes()}-minute grace period. You may now ticket this vehicle.`;
 
                 for (const user of enforcers) {
                   const result = await sendSmsMessage(user.contactNumber, message);

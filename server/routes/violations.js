@@ -2,15 +2,17 @@ import express from 'express';
 import db from '../database.js';
 import { sendViolationSms } from '../utils/smsService.js';
 import { authenticateToken, requireRole } from '../middleware/auth.js';
+import { getGracePeriodMinutes, getOwnerSmsDelayConfig } from '../runtime_config.js';
 
 const router = express.Router();
 
-/**
- * Grace period in minutes before a warning elapses (timer on Warnings UI; monitoring uses the same window).
- */
-export const GRACE_PERIOD_MINUTES = 30;
-export const OWNER_SMS_DELAY_MINUTES = 5;
 const OUT_OF_VIEW_NOTE = 'Vehicle is not in the camera view anymore.';
+
+function computeOwnerSmsScheduledAtIso() {
+  const smsDelayConfig = getOwnerSmsDelayConfig();
+  const delayMinutes = Number(smsDelayConfig?.effectiveDelayMinutes ?? 5);
+  return new Date(Date.now() + delayMinutes * 60 * 1000).toISOString();
+}
 
 export function normalizePlateForMatch(plateNumber) {
   if (!plateNumber) return '';
@@ -29,7 +31,7 @@ function clampWarningExpiresAtForResponse(violation) {
     return violation.warningExpiresAt ? new Date(violation.warningExpiresAt) : null;
   }
   const detectedAt = new Date(violation.timeDetected);
-  const cap = new Date(detectedAt.getTime() + GRACE_PERIOD_MINUTES * 60 * 1000);
+  const cap = new Date(detectedAt.getTime() + getGracePeriodMinutes() * 60 * 1000);
   let w = new Date(violation.warningExpiresAt);
   if (w.getTime() > cap.getTime()) w = cap;
   if (w.getTime() < detectedAt.getTime()) w = cap;
@@ -92,12 +94,13 @@ export async function createViolationFromDetection(plateNumber, cameraLocationId
     
     // Set warningExpiresAt to grace period from now
     const expiresDate = new Date();
-    expiresDate.setMinutes(expiresDate.getMinutes() + GRACE_PERIOD_MINUTES);
+    const gracePeriodMinutes = getGracePeriodMinutes();
+    expiresDate.setMinutes(expiresDate.getMinutes() + gracePeriodMinutes);
     const expiresAt = expiresDate.toISOString();
     
     let messageSent = false;
     let messageLogId = null;
-    const smsScheduledAt = new Date(Date.now() + OWNER_SMS_DELAY_MINUTES * 60 * 1000).toISOString();
+    const smsScheduledAt = computeOwnerSmsScheduledAtIso();
     
     // Create violation only if it's a new violation
     if (true) {
@@ -124,7 +127,8 @@ export async function createViolationFromDetection(plateNumber, cameraLocationId
         
         const warningNotificationId = `NOTIF-WARNING-${violationId}-${Date.now()}`;
         const warningTitle = `New Warning - ${canonicalPlateNumber}`;
-        const warningMessage = `Illegal parking detected for vehicle ${canonicalPlateNumber} at ${cameraLocationId}. ${GRACE_PERIOD_MINUTES}-minute grace period started. Owner SMS is scheduled in ${OWNER_SMS_DELAY_MINUTES} minute(s) if the warning remains active.`;
+        const ownerSmsDelayConfig = getOwnerSmsDelayConfig();
+        const warningMessage = `Illegal parking detected for vehicle ${canonicalPlateNumber} at ${cameraLocationId}. ${gracePeriodMinutes}-minute grace period started. Owner SMS is scheduled in ${ownerSmsDelayConfig.effectiveDelayMinutes} minute(s) if the warning remains active.`;
         
         db.prepare(`
           INSERT INTO notifications (
@@ -273,7 +277,7 @@ router.get('/', (req, res) => {
     // Batch fetch recent detections (last grace period for all violations)
     const detectionsMap = new Map();
     if (locationIds.length > 0) {
-      const gracePeriodAgo = new Date(Date.now() - GRACE_PERIOD_MINUTES * 60 * 1000).toISOString();
+      const gracePeriodAgo = new Date(Date.now() - getGracePeriodMinutes() * 60 * 1000).toISOString();
       const cameraIds = Array.from(camerasMap.values());
       if (cameraIds.length > 0) {
         const placeholders = cameraIds.map(() => '?').join(',');
@@ -527,7 +531,7 @@ router.post('/test-seed-active-warning', (req, res) => {
     const now = Date.now();
     const timeDetected = new Date(now - elapsedMinutes * 60 * 1000).toISOString();
     const warningExpiresAt = new Date(
-      new Date(timeDetected).getTime() + GRACE_PERIOD_MINUTES * 60 * 1000,
+      new Date(timeDetected).getTime() + getGracePeriodMinutes() * 60 * 1000,
     ).toISOString();
 
     const violationId = `VIOL-TEST-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -787,13 +791,13 @@ router.post('/', async (req, res) => {
     
     if (status === 'warning' && !expiresAt) {
       const expiresDate = new Date();
-      expiresDate.setMinutes(expiresDate.getMinutes() + GRACE_PERIOD_MINUTES);
+      expiresDate.setMinutes(expiresDate.getMinutes() + getGracePeriodMinutes());
       expiresAt = expiresDate.toISOString();
     }
     
     const ownerSmsScheduledAt =
       status === 'warning' && plateNumber !== 'NONE' && plateNumber !== 'BLUR'
-        ? new Date(Date.now() + OWNER_SMS_DELAY_MINUTES * 60 * 1000).toISOString()
+        ? computeOwnerSmsScheduledAtIso()
         : null;
 
     db.prepare(`

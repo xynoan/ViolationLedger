@@ -4,13 +4,14 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Violation } from '@/types/parking';
 import { cn } from '@/lib/utils';
+import { healthAPI } from '@/lib/api';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 const SERVER_BASE_URL = API_BASE_URL.replace('/api', '');
 
 const TWENTY_MIN = 20 * 60;
 const TEN_MIN = 10 * 60;
-const OUT_OF_VIEW_NOTE = 'not in the camera view anymore';
+const OUT_OF_VIEW_MESSAGE_PATTERN = /\s*Vehicle is not in the camera view anymore\.?/gi;
 
 interface WarningTimerProps {
   violation: Violation;
@@ -21,6 +22,7 @@ interface WarningTimerProps {
   onAssignToMe?: (id: string) => void | Promise<void>;
   assigning?: boolean;
   currentUserId?: string | null;
+  showThumbnail?: boolean;
 }
 
 /** Seconds until expiry; negative = overdue by that many seconds. */
@@ -58,9 +60,11 @@ export function WarningTimer({
   onAssignToMe,
   assigning = false,
   currentUserId = null,
+  showThumbnail = true,
 }: WarningTimerProps) {
   const [deltaSec, setDeltaSec] = useState<number | null>(() => computeDeltaSec(violation.warningExpiresAt));
   const [sendingSms, setSendingSms] = useState(false);
+  const [ownerSmsDelayDisabledForDemo, setOwnerSmsDelayDisabledForDemo] = useState(false);
 
   useEffect(() => {
     const tick = () => {
@@ -71,11 +75,26 @@ export function WarningTimer({
     return () => clearInterval(interval);
   }, [violation.warningExpiresAt]);
 
+  useEffect(() => {
+    let mounted = true;
+    healthAPI
+      .getOwnerSmsDelayConfig()
+      .then((config) => {
+        if (!mounted) return;
+        setOwnerSmsDelayDisabledForDemo(Boolean(config?.disabledForDemo));
+      })
+      .catch(() => {
+        if (!mounted) return;
+        setOwnerSmsDelayDisabledForDemo(false);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   const tier = tierFromDelta(deltaSec);
   const isOverdue = deltaSec !== null && deltaSec <= 0;
   const overdueSeconds = isOverdue && deltaSec !== null ? Math.abs(deltaSec) : 0;
-  const messageText = String(violation.message || '');
-  const isOutOfView = messageText.toLowerCase().includes(OUT_OF_VIEW_NOTE);
   const canIssueTicket = deltaSec !== null && deltaSec <= 0;
 
   const borderClass = {
@@ -100,22 +119,30 @@ export function WarningTimer({
   };
 
   const imageSrc = getImageSrc();
-  const displayMessage = violation.message || (
+  const rawDisplayMessage = violation.message || (
     violation.plateNumber === 'BLUR'
       ? `Vehicle illegally parked at location ${violation.cameraLocationId}. License plate is visible but unclear or blurry - cannot be read. Immediate Barangay attention required.`
       : violation.plateNumber === 'NONE'
         ? `Vehicle illegally parked at location ${violation.cameraLocationId}. License plate is not visible or readable. Immediate Barangay attention required.`
         : `Vehicle with plate ${violation.plateNumber} detected illegally parked at ${violation.cameraLocationId}. Immediate action required.`
   );
+  const displayMessage = rawDisplayMessage.replace(OUT_OF_VIEW_MESSAGE_PATTERN, '').trim();
 
   const smsSentAt = violation.smsSentAt;
   const smsScheduledAt = violation.ownerSmsScheduledAt;
+  const ownerSmsCountdownSec = smsScheduledAt ? computeDeltaSec(smsScheduledAt) : null;
   const canSendSms =
     Boolean(onSendSms) &&
     !violation.unregisteredUrgent &&
     violation.plateNumber !== 'NONE' &&
     violation.plateNumber !== 'BLUR' &&
     Boolean(violation.plateNumber);
+  const showOwnerSmsPrimaryTimer =
+    !smsSentAt &&
+    canSendSms &&
+    !ownerSmsDelayDisabledForDemo &&
+    ownerSmsCountdownSec !== null &&
+    ownerSmsCountdownSec > 0;
   const isAssigned = Boolean(violation.assignedToUserId);
   const assignedToCurrentUser = isAssigned && violation.assignedToUserId === currentUserId;
 
@@ -138,26 +165,27 @@ export function WarningTimer({
       )}
     >
       <div className="flex flex-col gap-0 sm:flex-row sm:items-stretch">
-        {/* Reserved 1:1 detection thumbnail */}
-        <div className="w-full shrink-0 sm:w-36 md:w-40">
-          <div className="relative aspect-square w-full bg-muted sm:min-h-[9rem]">
-            {imageSrc ? (
-              <img
-                src={imageSrc}
-                alt={`Detection at ${violation.cameraLocationId}`}
-                className="absolute inset-0 h-full w-full object-cover"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).style.display = 'none';
-                }}
-              />
-            ) : (
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-muted-foreground p-2">
-                <ImageOff className="h-8 w-8 opacity-50" aria-hidden />
-                <span className="text-[10px] uppercase tracking-wide text-center">No thumbnail</span>
-              </div>
-            )}
+        {showThumbnail && (
+          <div className="w-full shrink-0 sm:w-36 md:w-40">
+            <div className="relative aspect-square w-full bg-muted sm:min-h-[9rem]">
+              {imageSrc ? (
+                <img
+                  src={imageSrc}
+                  alt={`Detection at ${violation.cameraLocationId}`}
+                  className="absolute inset-0 h-full w-full object-cover"
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).style.display = 'none';
+                  }}
+                />
+              ) : (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-muted-foreground p-2">
+                  <ImageOff className="h-8 w-8 opacity-50" aria-hidden />
+                  <span className="text-[10px] uppercase tracking-wide text-center">No thumbnail</span>
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+        )}
 
         <div className="flex min-w-0 flex-1 flex-col gap-3 p-4">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -213,6 +241,13 @@ export function WarningTimer({
                     >
                       Text sent · {smsSentAt.toLocaleString()}
                     </Badge>
+                  ) : ownerSmsDelayDisabledForDemo ? (
+                    <Badge
+                      variant="secondary"
+                      className="text-xs border-amber-500/30 bg-amber-500/10 text-amber-900 dark:text-amber-300"
+                    >
+                      SMS immediate · demo mode
+                    </Badge>
                   ) : (
                     <Badge variant="secondary" className="text-xs text-muted-foreground font-normal">
                       {smsScheduledAt ? `SMS scheduled · ${smsScheduledAt.toLocaleTimeString()}` : 'No text sent'}
@@ -223,39 +258,61 @@ export function WarningTimer({
                 <p className="text-xs text-muted-foreground">
                   Detected at {new Date(violation.timeDetected).toLocaleString()}
                 </p>
+                {!smsSentAt && canSendSms && (
+                  <p className="text-xs text-muted-foreground">
+                    Owner SMS timer:{' '}
+                    {ownerSmsDelayDisabledForDemo
+                      ? 'Immediate (demo mode)'
+                      : ownerSmsCountdownSec !== null
+                        ? ownerSmsCountdownSec <= 0
+                          ? 'Due now'
+                          : formatHms(ownerSmsCountdownSec)
+                        : 'Not scheduled'}
+                  </p>
+                )}
               </div>
             </div>
 
             <div className="flex shrink-0 flex-col items-stretch gap-2 sm:items-end lg:ml-4 lg:min-w-[11rem]">
               <div className="flex items-center justify-end gap-2 text-muted-foreground">
                 <Clock className="h-4 w-4 shrink-0" />
-                {isOutOfView ? (
+                {showOwnerSmsPrimaryTimer ? (
                   <div className="text-right">
-                    <div className="font-mono text-lg font-bold text-muted-foreground">PAUSED</div>
-                    <div className="text-[10px] text-muted-foreground">vehicle out of camera view</div>
-                  </div>
-                ) : isOverdue ? (
-                  <div className="text-right">
-                    <div className="font-mono text-lg font-bold text-red-600">OVERDUE</div>
-                    <div className="font-mono text-sm font-semibold text-red-600 tabular-nums">
-                      +{formatHms(overdueSeconds)}
+                    <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Owner SMS in</div>
+                    <div className="font-mono text-xl font-bold tabular-nums text-blue-600">
+                      {formatHms(ownerSmsCountdownSec)}
                     </div>
-                    <div className="text-[10px] text-muted-foreground">since grace ended</div>
+                    <div className="text-[10px] text-muted-foreground">before grace timer</div>
                   </div>
-                ) : deltaSec !== null ? (
-                  <span
-                    className={cn(
-                      'font-mono text-xl font-bold tabular-nums',
-                      tier === 'urgent' && 'text-orange-500 animate-pulse',
-                      tier === 'moderate' && 'text-amber-600',
-                      tier === 'calm' && 'text-teal-700 dark:text-teal-300',
-                      tier === 'unknown' && 'text-foreground',
-                    )}
-                  >
-                    {formatHms(deltaSec)}
-                  </span>
                 ) : (
-                  <span className="text-sm text-muted-foreground">—</span>
+                  <>
+                    {isOverdue ? (
+                      <div className="text-right">
+                        <div className="font-mono text-lg font-bold text-red-600">OVERDUE</div>
+                        <div className="font-mono text-sm font-semibold text-red-600 tabular-nums">
+                          +{formatHms(overdueSeconds)}
+                        </div>
+                        <div className="text-[10px] text-muted-foreground">since grace ended</div>
+                      </div>
+                    ) : deltaSec !== null ? (
+                      <div className="text-right">
+                        <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Grace ends in</div>
+                        <span
+                          className={cn(
+                            'font-mono text-xl font-bold tabular-nums',
+                            tier === 'urgent' && 'text-orange-500 animate-pulse',
+                            tier === 'moderate' && 'text-amber-600',
+                            tier === 'calm' && 'text-teal-700 dark:text-teal-300',
+                            tier === 'unknown' && 'text-foreground',
+                          )}
+                        >
+                          {formatHms(deltaSec)}
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="text-sm text-muted-foreground">—</span>
+                    )}
+                  </>
                 )}
               </div>
             </div>

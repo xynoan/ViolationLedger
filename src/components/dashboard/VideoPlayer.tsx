@@ -1,4 +1,4 @@
-import { useRef, useEffect, memo, useImperativeHandle, forwardRef } from 'react';
+import { useRef, useEffect, useMemo, memo, useImperativeHandle, forwardRef } from 'react';
 import { Camera as CameraIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Camera } from '@/types/parking';
@@ -9,6 +9,11 @@ export interface Detection {
   class_name: string;
   confidence: number;
   plateNumber?: string;
+}
+
+function normalizePlate(plate: unknown): string {
+  if (typeof plate !== 'string') return '';
+  return plate.replace(/\W+/g, '').toUpperCase();
 }
 
 interface VideoPlayerProps {
@@ -81,8 +86,36 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
     : apiDetections;
   const registeredPlateSet = new Set(
     registeredPlates
-      .map((plate) => String(plate || '').replace(/\s+/g, '').toUpperCase())
+      .map((plate) => normalizePlate(plate))
       .filter(Boolean)
+  );
+  const recognizedPlates = useMemo(() => {
+    const deduped = new Map<string, { plate: string; status: 'REGISTERED' | 'UNREGISTERED' | null }>();
+
+    detections.forEach((detection) => {
+      const rawPlate = typeof detection.plateNumber === 'string' ? detection.plateNumber.trim() : '';
+      if (!rawPlate) return;
+      const normalized = normalizePlate(rawPlate);
+      if (!normalized || normalized === 'NONE' || normalized === 'BLUR') return;
+      if (deduped.has(normalized)) return;
+
+      const status = registeredPlateSet.has(normalized) ? 'REGISTERED' : 'UNREGISTERED';
+      deduped.set(normalized, { plate: rawPlate, status });
+    });
+
+    return [...deduped.values()];
+  }, [detections, registeredPlateSet]);
+  const hasVehicleDetection = useMemo(
+    () =>
+      detections.some(
+        (detection) =>
+          detection.class_name === 'car' ||
+          detection.class_name === 'motorcycle' ||
+          detection.class_name === 'truck' ||
+          detection.class_name === 'bus' ||
+          detection.class_name === 'vehicle'
+      ),
+    [detections]
   );
 
   // Expose capture function via ref
@@ -292,9 +325,7 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
             detection.class_name === 'bus' ||
             detection.class_name === 'vehicle';
           const normalizedPlate =
-            typeof plateLabel === 'string'
-              ? plateLabel.replace(/\s+/g, '').toUpperCase()
-              : '';
+            typeof plateLabel === 'string' ? normalizePlate(plateLabel) : '';
           const hasReadablePlate =
             typeof plateLabel === 'string' &&
             plateLabel.trim().length > 0 &&
@@ -304,10 +335,8 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
             ? plateLabel
             : `${detection.class_name} ${(detection.confidence * 100).toFixed(0)}%`;
           const plateStatus =
-            registeredPlateSet.size > 0 && hasReadablePlate
-              ? registeredPlateSet.has(normalizedPlate)
-                ? 'Registered'
-                : 'Unregistered'
+            hasReadablePlate
+              ? (registeredPlateSet.has(normalizedPlate) ? 'REGISTERED' : 'UNREGISTERED')
               : null;
           const label: string = isVehicleClass
               ? `${baseLabel} Detected`
@@ -327,14 +356,24 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
               {plateStatus && (
                 <div
                   className={cn(
-                    'absolute -top-7 left-0 z-50 rounded-md border px-2 py-0.5 font-semibold shadow-lg backdrop-blur-sm',
-                    plateStatus === 'Registered'
+                    'absolute -top-12 left-0 z-50 rounded-md border px-2 py-0.5 font-semibold shadow-lg backdrop-blur-sm',
+                    plateStatus === 'REGISTERED'
                       ? 'border-emerald-300 bg-emerald-600 text-white'
-                      : 'border-rose-300 bg-rose-600 text-white',
+                      : 'border-red-200 bg-red-700 text-white ring-1 ring-red-300/70',
                     fullscreen ? 'text-xs' : 'text-[10px]'
                   )}
                 >
                   {plateStatus}
+                </div>
+              )}
+              {hasReadablePlate && (
+                <div
+                  className={cn(
+                    'absolute -top-7 left-0 z-50 rounded-md border border-slate-300 bg-slate-900/90 px-2 py-0.5 font-mono font-semibold text-white shadow-lg backdrop-blur-sm',
+                    fullscreen ? 'text-xs' : 'text-[10px]'
+                  )}
+                >
+                  PLATE: {plateLabel}
                 </div>
               )}
               <div
@@ -349,6 +388,54 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           );
         })}
       </div>
+
+      {(recognizedPlates.length > 0 || hasVehicleDetection) && (
+        <div
+          className={cn(
+            'absolute left-2 bottom-2 z-30 rounded-md border border-white/20 bg-black/70 px-2 py-1.5 text-white backdrop-blur-sm',
+            fullscreen ? 'max-w-[70%]' : 'max-w-[80%]'
+          )}
+        >
+          <div className={cn('font-semibold', fullscreen ? 'text-xs' : 'text-[10px]')}>
+            Plate Number Detected:
+          </div>
+          <div className="mt-1 flex flex-col gap-1">
+            {recognizedPlates.length > 0 ? (
+              <>
+                {recognizedPlates.slice(0, 5).map((entry) => (
+                  <div key={entry.plate} className="flex items-center gap-2">
+                    <span className={cn('font-mono', fullscreen ? 'text-xs' : 'text-[10px]')}>
+                      {entry.plate}
+                    </span>
+                    {entry.status && (
+                      <span
+                        className={cn(
+                          'rounded border px-1 py-0.5 font-semibold',
+                          entry.status === 'REGISTERED'
+                            ? 'border-emerald-300 bg-emerald-700/80 text-emerald-100'
+                            : 'border-red-200 bg-red-700 text-red-50 ring-1 ring-red-300/70',
+                          fullscreen ? 'text-[10px]' : 'text-[9px]'
+                        )}
+                      >
+                        {entry.status}
+                      </span>
+                    )}
+                  </div>
+                ))}
+                {recognizedPlates.length > 5 && (
+                  <div className={cn('text-muted-foreground', fullscreen ? 'text-[10px]' : 'text-[9px]')}>
+                    +{recognizedPlates.length - 5} more
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className={cn('italic text-muted-foreground', fullscreen ? 'text-[10px]' : 'text-[9px]')}>
+                No readable plate recognized
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
     </>
   );

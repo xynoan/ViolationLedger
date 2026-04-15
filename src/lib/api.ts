@@ -332,6 +332,24 @@ export const detectionAPI = {
 // Health API
 export const healthAPI = {
   getStatus: () => fetchAPI('/health/status', { cache: false, timeout: 15000 }),
+  getOwnerSmsDelayConfig: () => fetchAPI('/health/owner-sms-delay', { cache: false }),
+  setOwnerSmsDelay: (payload: { disabledForDemo?: boolean; delayMinutes?: number }) =>
+    fetchAPI('/health/owner-sms-delay', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      cache: false,
+    }),
+  getRuntimeConfig: () => fetchAPI('/health/runtime-config', { cache: false }),
+  updateRuntimeConfig: (payload: {
+    ownerSmsDelayMinutes?: number;
+    ownerSmsDelayDisabledForDemo?: boolean;
+    gracePeriodMinutes?: number;
+  }) =>
+    fetchAPI('/health/runtime-config', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      cache: false,
+    }),
 };
 
 // Analytics API

@@ -5,7 +5,8 @@ import path from 'path';
 import { writeFile, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import { analyzeImageWithAI, processDetectionResults } from '../ai_detection_service.js';
-import { createViolationFromDetection, GRACE_PERIOD_MINUTES } from './violations.js';
+import { getGracePeriodMinutes } from '../runtime_config.js';
+import { createViolationFromDetection } from './violations.js';
 import monitoringService from '../monitoring_service.js';
 import { shouldCreateNotification } from './notifications.js';
 
@@ -453,7 +454,7 @@ router.post('/:cameraId', async (req, res) => {
           const violationId = `VIOL-UNREADABLE-${detection.cameraId}-${Date.now()}`;
           const timeDetected = new Date().toISOString();
           const expiresDate = new Date();
-          expiresDate.setMinutes(expiresDate.getMinutes() + GRACE_PERIOD_MINUTES);
+          expiresDate.setMinutes(expiresDate.getMinutes() + getGracePeriodMinutes());
           
           try {
             // Check if violation already exists for this location with same plate status

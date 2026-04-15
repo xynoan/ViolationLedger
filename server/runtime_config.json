@@ -1,0 +1,5 @@
+{
+  "ownerSmsDelayMinutes": 5,
+  "ownerSmsDelayDisabledForDemo": false,
+  "gracePeriodMinutes": 30
+}
