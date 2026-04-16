@@ -1,7 +1,5 @@
 import { useState, useCallback, memo } from 'react';
 import { Camera as CameraIcon } from 'lucide-react';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Camera } from '@/types/parking';
 import { cn } from '@/lib/utils';
 import { useCameraStream } from '@/hooks/useCameraStream';
@@ -13,7 +11,6 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
@@ -30,8 +27,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { RefreshCw } from 'lucide-react';
-import { camerasAPI } from '@/lib/api';
-import { toast } from '@/hooks/use-toast';
+import { getJurisdictionKindForLocationId } from '@/lib/blueRidgeGeofence';
 
 interface CameraFeedProps {
   camera: Camera;
@@ -50,19 +46,30 @@ export const CameraFeed = memo(function CameraFeed({
 }: CameraFeedProps) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
-  const [editStreamOpen, setEditStreamOpen] = useState(false);
-  const [detectionRtspDraft, setDetectionRtspDraft] = useState('');
-  const [savingStreamUrl, setSavingStreamUrl] = useState(false);
   const isOnline = camera.status === 'online';
 
+  // Custom hooks: stream from go2rtc, detections from server-side RTSP worker
   const { stream, refresh: refreshStream } = useCameraStream({
     deviceId: camera.deviceId,
     isOnline,
   });
-  const {
-    detections,
-    workerStatus,
-  } = useYoloDetection(camera.id, isOnline);
+  const { detections, workerStatus, lastDetectionAt } = useYoloDetection(camera.id, isOnline);
+
+  const lastMotionLabel = (() => {
+    const capMs = new Date(camera.lastCapture).getTime();
+    const ms =
+      isOnline && lastDetectionAt != null
+        ? Math.max(lastDetectionAt, Number.isFinite(capMs) ? capMs : lastDetectionAt)
+        : Number.isFinite(capMs)
+          ? capMs
+          : lastDetectionAt;
+    if (ms == null || !Number.isFinite(ms)) return 'Waiting for first frame…';
+    const diff = Date.now() - ms;
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return 'just now';
+    if (mins === 1) return '1 min ago';
+    return `${mins} mins ago`;
+  })();
 
   const handleRefresh = useCallback(() => {
     refreshStream();
@@ -78,52 +85,7 @@ export const CameraFeed = memo(function CameraFeed({
     setShowDeleteDialog(false);
   }, [camera.id, onDelete]);
 
-  const openEditStream = useCallback(() => {
-    setDetectionRtspDraft(camera.detectionRtspUrl?.trim() || '');
-    setEditStreamOpen(true);
-  }, [camera.detectionRtspUrl]);
-
-  const saveDetectionRtsp = useCallback(async () => {
-    const trimmed = detectionRtspDraft.trim();
-    if (trimmed && !/^rtsp:\/\//i.test(trimmed)) {
-      toast({
-        title: 'Invalid URL',
-        description: 'Detection RTSP URL must start with rtsp://',
-        variant: 'destructive',
-      });
-      return;
-    }
-    setSavingStreamUrl(true);
-    try {
-      await camerasAPI.update(camera.id, {
-        name: camera.name,
-        locationId: camera.locationId,
-        status: camera.status,
-        deviceId: camera.deviceId ?? null,
-        isFixed: camera.isFixed ?? true,
-        illegalParkingZone: camera.illegalParkingZone ?? true,
-        detectionRtspUrl: trimmed || null,
-      });
-      toast({ title: 'Saved', description: 'Detection stream URL updated.' });
-      setEditStreamOpen(false);
-      if (onRefresh) onRefresh();
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : 'Failed to save';
-      toast({ title: 'Error', description: msg, variant: 'destructive' });
-    } finally {
-      setSavingStreamUrl(false);
-    }
-  }, [
-    camera.deviceId,
-    camera.id,
-    camera.illegalParkingZone,
-    camera.isFixed,
-    camera.locationId,
-    camera.name,
-    camera.status,
-    detectionRtspDraft,
-    onRefresh,
-  ]);
+  const jurisdiction = getJurisdictionKindForLocationId(camera.locationId);
 
   return (
     <>
@@ -131,9 +93,18 @@ export const CameraFeed = memo(function CameraFeed({
         <CameraHeader
           camera={camera}
           isOnline={isOnline}
-          onEditStream={canDelete ? openEditStream : undefined}
           onDelete={canDelete && onDelete ? () => setShowDeleteDialog(true) : undefined}
         />
+
+        <div className="border-b border-border bg-muted/30 px-4 py-2">
+          <p className="text-xs text-muted-foreground">
+            Last motion detected:{' '}
+            <span className="font-medium text-foreground">{lastMotionLabel}</span>
+            <span className="text-muted-foreground/80">
+              {isOnline ? ' · AI worker stream' : ' · last server capture'}
+            </span>
+          </p>
+        </div>
 
         <div className={cn('relative bg-muted flex items-center justify-center overflow-hidden aspect-video')}>
           <VideoPlayer
@@ -147,11 +118,16 @@ export const CameraFeed = memo(function CameraFeed({
         </div>
 
         <div className="border-t border-border bg-muted/40 px-4 py-2">
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <span className="status-indicator status-active" />
             <span className="font-mono">
               {workerStatus || (isOnline ? 'Connecting detection worker...' : 'Detection offline')}
             </span>
+            {jurisdiction === 'out' ? (
+              <Badge variant="destructive" className="text-[10px] font-semibold">
+                Out of Jurisdiction
+              </Badge>
+            ) : null}
           </div>
         </div>
 
@@ -210,36 +186,6 @@ export const CameraFeed = memo(function CameraFeed({
               </Button>
             </div>
           </div>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={editStreamOpen} onOpenChange={setEditStreamOpen}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Detection RTSP URL</DialogTitle>
-            <DialogDescription>
-              Optional full RTSP URL for server-side detection. Leave empty to use go2rtc (
-              <code className="text-xs">GO2RTC_RTSP_BASE</code> + stream name).
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-2 py-2">
-            <Label htmlFor={`det-rtsp-${camera.id}`}>rtsp://…</Label>
-            <Input
-              id={`det-rtsp-${camera.id}`}
-              placeholder="rtsp://user:pass@host:554/path"
-              value={detectionRtspDraft}
-              onChange={(e) => setDetectionRtspDraft(e.target.value)}
-              className="font-mono text-sm"
-            />
-          </div>
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button variant="outline" onClick={() => setEditStreamOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={saveDetectionRtsp} disabled={savingStreamUrl}>
-              {savingStreamUrl ? 'Saving…' : 'Save'}
-            </Button>
-          </DialogFooter>
         </DialogContent>
       </Dialog>
 

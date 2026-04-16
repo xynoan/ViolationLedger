@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { Camera, Car, Bike, Truck, Bus, Image as ImageIcon, Calendar, Clock, ZoomIn, ChevronDown, Eye } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -12,7 +12,9 @@ import {
   getDwellBadgeClasses,
   getDwellToneLabel,
   formatDuration,
+  type DwellStatus,
 } from '@/lib/captureInsights';
+import { getJurisdictionKindForLocationId } from '@/lib/blueRidgeGeofence';
 import {
   Dialog,
   DialogContent,
@@ -53,24 +55,51 @@ interface CaptureResult {
 
 interface CaptureResultsProps {
   autoRefresh?: boolean;
+  /** `feed`: compact activity list for dashboard; `default`: full collapsible cards. */
+  variant?: 'default' | 'feed';
+  className?: string;
+  /** Max rows in `feed` mode (default 12). */
+  maxItems?: number;
+  /** In `feed` mode, show a small dwell-status dot next to each row. */
+  showStatusDot?: boolean;
 }
 
-export function CaptureResults({ autoRefresh = true }: CaptureResultsProps) {
+function dwellDotClass(tone: DwellStatus['tone']): string {
+  if (tone === 'normal') return 'bg-emerald-500';
+  if (tone === 'warning') return 'bg-amber-500';
+  return 'bg-red-500';
+}
+
+function getPrimaryPlate(result: CaptureResult): string {
+  const hit = result.detections.find((d) => isReadablePlate(d.plateNumber));
+  if (hit?.plateNumber) return String(hit.plateNumber).trim().toUpperCase();
+  return '—';
+}
+
+export function CaptureResults({
+  autoRefresh = true,
+  variant = 'default',
+  className,
+  maxItems,
+  showStatusDot = false,
+}: CaptureResultsProps) {
   const navigate = useNavigate();
   const [captureResults, setCaptureResults] = useState<CaptureResult[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [cameras, setCameras] = useState<CameraType[]>([]);
   const [selectedImage, setSelectedImage] = useState<{ src: string; alt: string } | null>(null);
-  const refreshDebounceRef = useRef<number | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
     loadCaptureResults();
-  }, []);
+    if (!autoRefresh) return;
+    // Refresh more frequently for near real-time updates
+    const interval = setInterval(loadCaptureResults, 5000);
+    return () => clearInterval(interval);
+  }, [autoRefresh]);
 
-  const loadCaptureResults = useCallback(async (silent = false) => {
+  const loadCaptureResults = async () => {
     try {
-      if (!silent) setIsLoading(true);
+      setIsLoading(true);
       
       const camerasData = await camerasAPI.getAll();
       setCameras(camerasData);
@@ -149,55 +178,9 @@ export function CaptureResults({ autoRefresh = true }: CaptureResultsProps) {
     } catch (error) {
       console.error('Error loading capture results:', error);
     } finally {
-      if (!silent) setIsLoading(false);
+      setIsLoading(false);
     }
-  }, []);
-
-  useEffect(() => {
-    if (!autoRefresh || cameras.length === 0) return;
-
-    const cameraIds = cameras.map((c) => c.id).filter(Boolean);
-    if (cameraIds.length === 0) return;
-
-    const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
-    const wsBase = apiBase.replace(/^http/, 'ws').replace(/\/api\/?$/, '');
-    const wsUrl = `${wsBase}/api/detect/ws?cameraIds=${encodeURIComponent(cameraIds.join(','))}`;
-
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
-
-    ws.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data);
-        if (msg?.type !== 'detection') return;
-        const vehicleCount = Array.isArray(msg.vehicles) ? msg.vehicles.length : 0;
-        const plateCount = Array.isArray(msg.plates) ? msg.plates.length : 0;
-        // Refresh only when a real vehicle/plate detection exists.
-        if (vehicleCount + plateCount <= 0) return;
-
-        if (refreshDebounceRef.current) {
-          window.clearTimeout(refreshDebounceRef.current);
-        }
-        // Allow DB write from worker before refreshing capture list.
-        refreshDebounceRef.current = window.setTimeout(() => {
-          void loadCaptureResults(true);
-        }, 1000);
-      } catch {
-        // Ignore malformed stream payloads.
-      }
-    };
-
-    return () => {
-      if (refreshDebounceRef.current) {
-        window.clearTimeout(refreshDebounceRef.current);
-        refreshDebounceRef.current = null;
-      }
-      if (wsRef.current) {
-        wsRef.current.close();
-        wsRef.current = null;
-      }
-    };
-  }, [autoRefresh, cameras, loadCaptureResults]);
+  };
 
   const getVehicleCounts = (detections: CaptureResult['detections']) => {
     const counts = {
@@ -256,7 +239,7 @@ export function CaptureResults({ autoRefresh = true }: CaptureResultsProps) {
 
   if (isLoading) {
     return (
-      <div className="glass-card rounded-xl p-6 text-center">
+      <div className={cn('glass-card rounded-xl p-6 text-center', className)}>
         <p className="text-muted-foreground">Loading capture results...</p>
       </div>
     );
@@ -264,10 +247,63 @@ export function CaptureResults({ autoRefresh = true }: CaptureResultsProps) {
 
   if (captureResults.length === 0) {
     return (
-      <div className="glass-card rounded-xl p-6 sm:p-8 text-center">
+      <div className={cn('glass-card rounded-xl p-6 sm:p-8 text-center', className)}>
         <Camera className="h-10 w-10 sm:h-12 sm:w-12 text-muted-foreground mx-auto mb-3" />
         <p className="text-muted-foreground text-sm sm:text-base">No capture results yet</p>
         <p className="text-xs text-muted-foreground mt-2">Captures will appear here after the first analysis</p>
+      </div>
+    );
+  }
+
+  if (variant === 'feed') {
+    const limit = maxItems ?? 12;
+    const feedItems = captureResults.slice(0, limit);
+    return (
+      <div
+        className={cn(
+          'rounded-xl border border-border bg-card text-card-foreground shadow-sm overflow-hidden flex flex-col min-h-0',
+          className,
+        )}
+      >
+        <div className="max-h-[min(280px,40vh)] overflow-y-auto divide-y divide-border/80">
+          {feedItems.map((result) => {
+            const t = new Date(result.timestamp);
+            const dwell = getDwellStatus(getDwellMinutes(result.firstDetected, result.lastSeen));
+            return (
+              <button
+                key={`${result.cameraId}-${result.timestamp}`}
+                type="button"
+                onClick={() => navigate('/tickets')}
+                className="w-full text-left px-3 py-1.5 hover:bg-muted/50 transition-colors flex items-center justify-between gap-2"
+              >
+                <span className="flex items-center gap-2 min-w-0">
+                  {showStatusDot ? (
+                    <span
+                      className={cn('h-2 w-2 shrink-0 rounded-full', dwellDotClass(dwell.tone))}
+                      title={dwell.label}
+                      aria-label={dwell.label}
+                    />
+                  ) : null}
+                  <span className="font-mono text-sm font-semibold text-foreground truncate">{getPrimaryPlate(result)}</span>
+                  {getJurisdictionKindForLocationId(result.locationId) === 'out' ? (
+                    <Badge variant="destructive" className="h-5 shrink-0 px-1.5 text-[9px] font-semibold">
+                      Out of Jurisdiction
+                    </Badge>
+                  ) : null}
+                </span>
+                <span className="text-xs text-muted-foreground tabular-nums shrink-0">
+                  {t.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="border-t border-border/80 px-3 py-2 flex justify-end bg-muted/20">
+          <Link to="/tickets" className="text-xs text-muted-foreground hover:text-foreground underline-offset-4 hover:underline">
+            View all ({captureResults.length}
+            {captureResults.length > limit ? `, showing ${limit}` : ''})
+          </Link>
+        </div>
       </div>
     );
   }
@@ -306,10 +342,13 @@ export function CaptureResults({ autoRefresh = true }: CaptureResultsProps) {
                   )}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
+                  <div className="flex flex-wrap items-center gap-2 mb-1">
                     <Camera className="h-4 w-4 text-muted-foreground" />
                     <span className="font-medium text-foreground">{result.cameraName}</span>
                     <Badge variant="secondary" className="text-xs">{result.locationId}</Badge>
+                    {getJurisdictionKindForLocationId(result.locationId) === 'out' ? (
+                      <Badge variant="destructive" className="text-[10px] font-semibold">Out of Jurisdiction</Badge>
+                    ) : null}
                   </div>
                   <div className="flex items-center gap-4 text-xs text-muted-foreground mt-2">
                     <div className="flex items-center gap-1">
@@ -470,7 +509,7 @@ export function CaptureResults({ autoRefresh = true }: CaptureResultsProps) {
   };
 
   return (
-    <div className="space-y-4">
+    <div className={cn('space-y-4', className)}>
       {/* Show only first 4 results, rest are hidden */}
       {firstFour.map(renderCaptureResult)}
       

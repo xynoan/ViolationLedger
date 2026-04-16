@@ -1,6 +1,10 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import db from '../database.js';
 import { pathToFileURL } from 'url';
 import { RESIDENT_STREET_OPTIONS, composeResidentAddress } from '../residentStreets.js';
+import { composeResidentDisplayName } from '../residentName.js';
 import { getGracePeriodMinutes } from '../runtime_config.js';
 
 const RESET_MODE = process.argv.includes('--reset');
@@ -67,6 +71,26 @@ function uniquePlate(rng, used, index) {
   return p;
 }
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+/** Unique `properties.name` values from `src/assets/blueRidgeStreets.json` (SVG heatmap match). */
+function loadBlueRidgeOsmStreetNames() {
+  try {
+    const p = path.join(__dirname, '../../src/assets/blueRidgeStreets.json');
+    const fc = JSON.parse(fs.readFileSync(p, 'utf8'));
+    const names = new Set();
+    for (const f of fc.features || []) {
+      const n = f.properties?.name?.trim();
+      if (n) names.add(n);
+    }
+    return [...names].sort((a, b) => a.localeCompare(b));
+  } catch {
+    return [];
+  }
+}
+
+const BLUE_RIDGE_OSM_STREET_NAMES = loadBlueRidgeOsmStreetNames();
+
 function mockStreetLocationId(zeroBasedSlot) {
   const n = RESIDENT_STREET_OPTIONS.length;
   const street = RESIDENT_STREET_OPTIONS[zeroBasedSlot % n];
@@ -75,7 +99,57 @@ function mockStreetLocationId(zeroBasedSlot) {
 }
 
 function cameraLocationForIndex(camIndex) {
+  if (BLUE_RIDGE_OSM_STREET_NAMES.length > 0) {
+    return BLUE_RIDGE_OSM_STREET_NAMES[camIndex % BLUE_RIDGE_OSM_STREET_NAMES.length];
+  }
   return mockStreetLocationId(camIndex % Math.max(RESIDENT_STREET_OPTIONS.length, 1));
+}
+
+/**
+ * After violations are built, reassign active (warning + pending) rows so each OSM street gets a
+ * visibly different count for the D3 SVG heatmap demo (exact match to GeoJSON `properties.name`).
+ */
+function redistributeActiveViolationsAcrossOsmStreets(violations, streetNames, rng) {
+  if (!streetNames.length) return;
+  const activeIdx = [];
+  for (let i = 0; i < violations.length; i += 1) {
+    const st = violations[i].status;
+    if (st === 'warning' || st === 'pending') activeIdx.push(i);
+  }
+  if (!activeIdx.length) return;
+
+  for (let i = activeIdx.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(rng() * (i + 1));
+    [activeIdx[i], activeIdx[j]] = [activeIdx[j], activeIdx[i]];
+  }
+
+  const nSt = streetNames.length;
+  const pattern = [4, 0, 2, 5, 1, 3, 0, 2, 1, 4, 2, 3, 1, 0, 5];
+  const base = streetNames.map((_, si) => pattern[si % pattern.length]);
+  let sum = base.reduce((a, b) => a + b, 0);
+  const cap = activeIdx.length;
+  let targets = base.map((v) => (sum > 0 ? Math.max(0, Math.floor((v * cap) / sum)) : 0));
+  let tSum = targets.reduce((a, b) => a + b, 0);
+  let deficit = cap - tSum;
+  let z = 0;
+  while (deficit > 0) {
+    targets[z % nSt] += 1;
+    deficit -= 1;
+    z += 1;
+  }
+
+  let k = 0;
+  for (let si = 0; si < nSt; si += 1) {
+    for (let t = 0; t < targets[si]; t += 1) {
+      if (k >= activeIdx.length) return;
+      violations[activeIdx[k]].cameraLocationId = streetNames[si];
+      k += 1;
+    }
+  }
+  while (k < activeIdx.length) {
+    violations[activeIdx[k]].cameraLocationId = streetNames[k % nSt];
+    k += 1;
+  }
 }
 
 const MOCK_FIRST_NAMES = [
@@ -320,8 +394,8 @@ function run() {
   let vehSeq = 0;
 
   const residentStmt = db.prepare(
-    `INSERT OR REPLACE INTO residents (id, name, contactNumber, address, houseNumber, streetName, createdAt, residentStatus, residentType)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO residents (id, name, firstName, middleName, lastName, nameSuffix, contactNumber, address, houseNumber, streetName, createdAt, residentStatus, residentType)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
 
   for (let i = 0; i < numResidents; i += 1) {
@@ -334,9 +408,21 @@ function run() {
     const residentStatus = rng() < 0.88 ? 'verified' : 'guest';
     const contact = `09${String(1700000000 + idx * 17 + randInt(rng, 0, 999)).slice(-9)}`;
 
+    const full = names[i].trim();
+    const sp = full.indexOf(' ');
+    const firstName = sp === -1 ? '' : full.slice(0, sp).trim();
+    const lastName = sp === -1 ? full : full.slice(sp + 1).trim();
+    const middleName = '';
+    const nameSuffix = '';
+    const displayName = composeResidentDisplayName(firstName, middleName, lastName, nameSuffix) || full;
+
     residentStmt.run(
       residentId,
-      names[i],
+      displayName,
+      firstName,
+      middleName,
+      lastName,
+      nameSuffix,
       contact,
       composed,
       hn,
@@ -346,7 +432,7 @@ function run() {
       residentType,
     );
 
-    residents.push({ id: residentId, name: names[i], contactNumber: contact });
+    residents.push({ id: residentId, name: displayName, contactNumber: contact });
 
     const numVeh = pickWeighted(rng, [
       { v: 1, p: 48 },
@@ -361,7 +447,7 @@ function run() {
       vehicles.push({
         id: id('VEH', vehSeq),
         plateNumber: plate,
-        ownerName: names[i],
+        ownerName: displayName,
         contactNumber: contact,
         registeredAt: isoHoursAgo(rng, 1, 24 * 120),
         dataSource: pickWeighted(rng, [
@@ -651,6 +737,8 @@ function run() {
       inc.status,
     );
   }
+
+  redistributeActiveViolationsAcrossOsmStreets(violations, BLUE_RIDGE_OSM_STREET_NAMES, rng);
 
   const violationStmt = db.prepare(
     `INSERT OR REPLACE INTO violations

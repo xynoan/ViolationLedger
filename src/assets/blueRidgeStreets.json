@@ -1,0 +1,941 @@
+{
+  "type": "FeatureCollection",
+  "generator": "overpass-turbo",
+  "copyright": "The data included in this document is from www.openstreetmap.org. The data is made available under ODbL.",
+  "timestamp": "2026-04-13T04:11:01Z",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "@id": "way/8038217",
+        "access": "destination",
+        "highway": "residential",
+        "name": "Hillside Loop",
+        "postal_code": "1109"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            121.0756672,
+            14.621848
+          ],
+          [
+            121.0758525,
+            14.6214491
+          ],
+          [
+            121.0761298,
+            14.6210372
+          ],
+          [
+            121.0761213,
+            14.6209293
+          ],
+          [
+            121.0755662,
+            14.6200521
+          ],
+          [
+            121.0755242,
+            14.619985
+          ],
+          [
+            121.0752715,
+            14.6195815
+          ]
+        ]
+      },
+      "id": "way/8038217"
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "@id": "way/8038219",
+        "access": "destination",
+        "highway": "residential",
+        "name": "Starline Road",
+        "postal_code": "1109"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            121.0774297,
+            14.6183103
+          ],
+          [
+            121.0765493,
+            14.6187554
+          ],
+          [
+            121.076346,
+            14.6189001
+          ],
+          [
+            121.0762374,
+            14.6189505
+          ],
+          [
+            121.076005,
+            14.6189832
+          ],
+          [
+            121.0758399,
+            14.6190214
+          ],
+          [
+            121.0756479,
+            14.6191212
+          ],
+          [
+            121.0755297,
+            14.6192318
+          ],
+          [
+            121.0753574,
+            14.6194675
+          ],
+          [
+            121.0752715,
+            14.6195815
+          ]
+        ]
+      },
+      "id": "way/8038219"
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "@id": "way/8038227",
+        "access": "destination",
+        "highway": "residential",
+        "lit": "yes",
+        "name": "Twin Peaks Drive",
+        "postal_code": "1109",
+        "surface": "asphalt"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            121.074984,
+            14.6175801
+          ],
+          [
+            121.075151,
+            14.6178563
+          ],
+          [
+            121.0752067,
+            14.6180537
+          ],
+          [
+            121.0752125,
+            14.6182979
+          ],
+          [
+            121.0752613,
+            14.6185644
+          ],
+          [
+            121.0753197,
+            14.6187439
+          ],
+          [
+            121.0755297,
+            14.6192318
+          ]
+        ]
+      },
+      "id": "way/8038227"
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "@id": "way/8038231",
+        "access": "destination",
+        "highway": "residential",
+        "lit": "yes",
+        "name": "Milkyway Drive",
+        "oneway": "yes",
+        "postal_code": "1109",
+        "surface": "asphalt"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            121.0757643,
+            14.6180185
+          ],
+          [
+            121.0757395,
+            14.617161
+          ],
+          [
+            121.0757017,
+            14.6170234
+          ],
+          [
+            121.075632,
+            14.6169178
+          ],
+          [
+            121.0755605,
+            14.616866
+          ],
+          [
+            121.0754188,
+            14.6168381
+          ],
+          [
+            121.0753548,
+            14.6168442
+          ],
+          [
+            121.0752681,
+            14.6168755
+          ],
+          [
+            121.0752029,
+            14.6169345
+          ],
+          [
+            121.0751711,
+            14.6170045
+          ],
+          [
+            121.0751603,
+            14.6170864
+          ],
+          [
+            121.0751771,
+            14.617275
+          ],
+          [
+            121.0751342,
+            14.6173829
+          ],
+          [
+            121.074984,
+            14.6175801
+          ]
+        ]
+      },
+      "id": "way/8038231"
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "@id": "way/16851465",
+        "highway": "unclassified",
+        "lanes": "2",
+        "lit": "yes",
+        "name": "Riverview Drive",
+        "sidewalk": "both",
+        "surface": "concrete"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            121.0761226,
+            14.6164511
+          ],
+          [
+            121.076201,
+            14.6169806
+          ],
+          [
+            121.0762835,
+            14.6173159
+          ],
+          [
+            121.0763486,
+            14.6174754
+          ],
+          [
+            121.0764504,
+            14.6176138
+          ],
+          [
+            121.0765595,
+            14.6176749
+          ],
+          [
+            121.0766604,
+            14.6177315
+          ],
+          [
+            121.0769522,
+            14.6177576
+          ],
+          [
+            121.0771241,
+            14.6177321
+          ]
+        ]
+      },
+      "id": "way/16851465"
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "@id": "way/28663956",
+        "access": "private",
+        "highway": "residential",
+        "name": "Milkyway Drive",
+        "postal_code": "1109"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            121.0754188,
+            14.6168381
+          ],
+          [
+            121.0754163,
+            14.6164409
+          ]
+        ]
+      },
+      "id": "way/28663956"
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "@id": "way/28663968",
+        "access": "destination",
+        "highway": "residential",
+        "name": "Riverview Drive",
+        "postal_code": "1109"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            121.0774297,
+            14.6183103
+          ],
+          [
+            121.0774366,
+            14.6182149
+          ],
+          [
+            121.07742,
+            14.618047
+          ],
+          [
+            121.0773779,
+            14.6178455
+          ]
+        ]
+      },
+      "id": "way/28663968"
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "@id": "way/28664039",
+        "access": "destination",
+        "highway": "residential",
+        "lit": "yes",
+        "name": "Evening Glow Road",
+        "postal_code": "1109"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            121.0764124,
+            14.6176791
+          ],
+          [
+            121.0763588,
+            14.6177547
+          ],
+          [
+            121.0762623,
+            14.6178367
+          ],
+          [
+            121.0761068,
+            14.6179502
+          ],
+          [
+            121.0760498,
+            14.6179706
+          ],
+          [
+            121.0757643,
+            14.6180185
+          ]
+        ]
+      },
+      "id": "way/28664039"
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "@id": "way/165279746",
+        "access": "destination",
+        "highway": "residential",
+        "lit": "yes",
+        "name": "Comets Loop",
+        "not:name": "Twin Peaks Drive",
+        "oneway": "yes",
+        "surface": "asphalt"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            121.0741468,
+            14.6176816
+          ],
+          [
+            121.0737808,
+            14.6169516
+          ],
+          [
+            121.0737663,
+            14.6168658
+          ],
+          [
+            121.0737778,
+            14.6167846
+          ],
+          [
+            121.0738084,
+            14.6167187
+          ],
+          [
+            121.0738997,
+            14.6166384
+          ],
+          [
+            121.0740752,
+            14.6165253
+          ],
+          [
+            121.07413,
+            14.6164949
+          ],
+          [
+            121.0741491,
+            14.6164859
+          ]
+        ]
+      },
+      "id": "way/165279746"
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "@id": "way/165279748",
+        "access": "destination",
+        "highway": "residential",
+        "lit": "yes",
+        "name": "Evening Glow Road",
+        "oneway": "yes",
+        "postal_code": "1109",
+        "surface": "asphalt"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            121.0752067,
+            14.6180537
+          ],
+          [
+            121.0757643,
+            14.6180185
+          ]
+        ]
+      },
+      "id": "way/165279748"
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "@id": "way/165279751",
+        "access": "destination",
+        "highway": "residential",
+        "name": "Moonlight Loop",
+        "oneway": "yes"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            121.0752125,
+            14.6182979
+          ],
+          [
+            121.0747511,
+            14.6183034
+          ],
+          [
+            121.0745961,
+            14.6184132
+          ],
+          [
+            121.0745577,
+            14.6185316
+          ],
+          [
+            121.0746002,
+            14.618698
+          ],
+          [
+            121.0749674,
+            14.6194721
+          ],
+          [
+            121.0751049,
+            14.6195575
+          ],
+          [
+            121.0752715,
+            14.6195815
+          ]
+        ]
+      },
+      "id": "way/165279751"
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "@id": "way/165279752",
+        "access": "destination",
+        "highway": "residential",
+        "lit": "yes",
+        "name": "Promenade Line",
+        "postal_code": "1109"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            121.0762623,
+            14.6178367
+          ],
+          [
+            121.0765493,
+            14.6187554
+          ]
+        ]
+      },
+      "id": "way/165279752"
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "@id": "way/165279753",
+        "access": "destination",
+        "highway": "residential",
+        "name": "Union Lane",
+        "postal_code": "1109"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            121.0741468,
+            14.6176816
+          ],
+          [
+            121.0738556,
+            14.6177903
+          ],
+          [
+            121.0735045,
+            14.6179213
+          ]
+        ]
+      },
+      "id": "way/165279753"
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "@id": "way/563802169",
+        "access": "destination",
+        "highway": "residential",
+        "name": "Twin Peaks Drive",
+        "oneway": "yes"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            121.0741491,
+            14.6164859
+          ],
+          [
+            121.0741279,
+            14.6164308
+          ]
+        ]
+      },
+      "id": "way/563802169"
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "@id": "way/563802170",
+        "access": "destination",
+        "highway": "residential",
+        "name": "Twin Peaks Drive",
+        "oneway": "yes",
+        "postal_code": "1109"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            121.074236,
+            14.6164242
+          ],
+          [
+            121.0742387,
+            14.6164363
+          ]
+        ]
+      },
+      "id": "way/563802170"
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "@id": "way/795548875",
+        "access": "destination",
+        "highway": "residential",
+        "lit": "yes",
+        "name": "Milkyway Drive",
+        "postal_code": "1109"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            121.076005,
+            14.6189832
+          ],
+          [
+            121.075922,
+            14.6188
+          ],
+          [
+            121.0758561,
+            14.6186104
+          ],
+          [
+            121.0758076,
+            14.618416
+          ],
+          [
+            121.0757769,
+            14.6182182
+          ],
+          [
+            121.0757643,
+            14.6180185
+          ]
+        ]
+      },
+      "id": "way/795548875"
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "@id": "way/795548876",
+        "access": "destination",
+        "bicycle": "yes",
+        "foot": "yes",
+        "highway": "residential",
+        "horse": "yes",
+        "lanes": "1",
+        "maxspeed": "30",
+        "motor_vehicle": "yes",
+        "name": "Comets Loop",
+        "oneway": "yes",
+        "surface": "asphalt"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            121.074984,
+            14.6175801
+          ],
+          [
+            121.0747812,
+            14.6177127
+          ],
+          [
+            121.074598,
+            14.6177588
+          ],
+          [
+            121.0743433,
+            14.6177418
+          ],
+          [
+            121.0741468,
+            14.6176816
+          ]
+        ]
+      },
+      "id": "way/795548876"
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "@id": "way/894465163",
+        "access": "destination",
+        "highway": "residential",
+        "name": "Riverview Drive"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            121.0774297,
+            14.6183103
+          ],
+          [
+            121.0775623,
+            14.6185415
+          ],
+          [
+            121.077609,
+            14.6186287
+          ]
+        ]
+      },
+      "id": "way/894465163"
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "@id": "way/1076644329",
+        "access": "destination",
+        "highway": "residential",
+        "lit": "yes",
+        "name": "Twin Peaks Drive",
+        "oneway": "yes",
+        "postal_code": "1109",
+        "surface": "asphalt"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            121.074257,
+            14.6165219
+          ],
+          [
+            121.0743011,
+            14.6165899
+          ],
+          [
+            121.0749491,
+            14.6175347
+          ],
+          [
+            121.074984,
+            14.6175801
+          ]
+        ]
+      },
+      "id": "way/1076644329"
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "@id": "way/1110147270",
+        "access": "destination",
+        "highway": "residential",
+        "lit": "yes",
+        "name": "Twin Peaks Drive",
+        "oneway": "yes",
+        "surface": "asphalt"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            121.0741491,
+            14.6164859
+          ],
+          [
+            121.074257,
+            14.6165219
+          ]
+        ]
+      },
+      "id": "way/1110147270"
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "@id": "way/1154905349",
+        "highway": "residential",
+        "name": "Twin Peaks Drive",
+        "oneway": "yes"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            121.0741252,
+            14.6164226
+          ],
+          [
+            121.0740875,
+            14.6163334
+          ],
+          [
+            121.0740808,
+            14.6162352
+          ]
+        ]
+      },
+      "id": "way/1154905349"
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "@id": "way/1154905350",
+        "highway": "residential",
+        "name": "Twin Peaks Drive",
+        "oneway": "yes",
+        "postal_code": "1109"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            121.0742295,
+            14.6162936
+          ],
+          [
+            121.0742223,
+            14.6163266
+          ],
+          [
+            121.0742209,
+            14.616362
+          ],
+          [
+            121.074236,
+            14.6164242
+          ]
+        ]
+      },
+      "id": "way/1154905350"
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "@id": "way/1237958299",
+        "access": "destination",
+        "highway": "residential",
+        "name": "Twin Peaks Drive",
+        "oneway": "yes",
+        "postal_code": "1109"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            121.0742387,
+            14.6164363
+          ],
+          [
+            121.074257,
+            14.6165219
+          ]
+        ]
+      },
+      "id": "way/1237958299"
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "@id": "way/1237958300",
+        "access": "destination",
+        "highway": "residential",
+        "name": "Twin Peaks Drive",
+        "oneway": "yes"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            121.0741279,
+            14.6164308
+          ],
+          [
+            121.0741252,
+            14.6164226
+          ]
+        ]
+      },
+      "id": "way/1237958300"
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "@id": "way/1289823627",
+        "access": "destination",
+        "highway": "residential",
+        "lit": "yes",
+        "name": "Evening Glow Road",
+        "postal_code": "1109"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            121.0764208,
+            14.6176658
+          ],
+          [
+            121.0764124,
+            14.6176791
+          ]
+        ]
+      },
+      "id": "way/1289823627"
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "@id": "way/1289823628",
+        "highway": "residential",
+        "lit": "yes",
+        "name": "Evening Glow Road",
+        "postal_code": "1109"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            121.0764504,
+            14.6176138
+          ],
+          [
+            121.0764208,
+            14.6176658
+          ]
+        ]
+      },
+      "id": "way/1289823628"
+    }
+  ]
+}

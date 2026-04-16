@@ -1,4 +1,4 @@
-import { useRef, useEffect, useMemo, memo, useImperativeHandle, forwardRef } from 'react';
+import { useRef, useEffect, memo, useImperativeHandle, forwardRef } from 'react';
 import { Camera as CameraIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Camera } from '@/types/parking';
@@ -9,11 +9,6 @@ export interface Detection {
   class_name: string;
   confidence: number;
   plateNumber?: string;
-}
-
-function normalizePlate(plate: unknown): string {
-  if (typeof plate !== 'string') return '';
-  return plate.replace(/\W+/g, '').toUpperCase();
 }
 
 interface VideoPlayerProps {
@@ -48,11 +43,7 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
   onPlateMetaChange,
 }, ref) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const mjpegImgRef = useRef<HTMLImageElement>(null);
-  const deviceSource = String(camera.deviceId || '').trim();
-  const directMjpegUrl = /^https?:\/\//i.test(deviceSource) ? deviceSource : null;
   const hasStream = stream !== null && camera.deviceId;
-  const showDirectMjpegFallback = !hasStream && !!directMjpegUrl;
   const {
     detections: plateDetections,
     plateCount,
@@ -86,37 +77,61 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
     : apiDetections;
   const registeredPlateSet = new Set(
     registeredPlates
-      .map((plate) => normalizePlate(plate))
+      .map((plate) => String(plate || '').replace(/\s+/g, '').toUpperCase())
       .filter(Boolean)
   );
-  const recognizedPlates = useMemo(() => {
-    const deduped = new Map<string, { plate: string; status: 'REGISTERED' | 'UNREGISTERED' | null }>();
+  const plateDetectionsOnly = detections.filter((d) => d.class_name === 'plate');
 
-    detections.forEach((detection) => {
-      const rawPlate = typeof detection.plateNumber === 'string' ? detection.plateNumber.trim() : '';
-      if (!rawPlate) return;
-      const normalized = normalizePlate(rawPlate);
-      if (!normalized || normalized === 'NONE' || normalized === 'BLUR') return;
-      if (deduped.has(normalized)) return;
+  const normalizePlate = (plate: unknown) => {
+    if (typeof plate !== 'string') return '';
+    return plate.replace(/\s+/g, '').toUpperCase();
+  };
 
-      const status = registeredPlateSet.has(normalized) ? 'REGISTERED' : 'UNREGISTERED';
-      deduped.set(normalized, { plate: rawPlate, status });
-    });
+  const getAssociatedPlate = (detection: Detection) => {
+    const directPlate =
+      typeof detection.plateNumber === 'string' && detection.plateNumber.trim().length > 0
+        ? detection.plateNumber
+        : null;
 
-    return [...deduped.values()];
-  }, [detections, registeredPlateSet]);
-  const hasVehicleDetection = useMemo(
-    () =>
-      detections.some(
-        (detection) =>
-          detection.class_name === 'car' ||
-          detection.class_name === 'motorcycle' ||
-          detection.class_name === 'truck' ||
-          detection.class_name === 'bus' ||
-          detection.class_name === 'vehicle'
-      ),
-    [detections]
-  );
+    if (directPlate) return directPlate;
+
+    if (detection.class_name === 'plate') {
+      return directPlate;
+    }
+
+    if (!plateDetectionsOnly.length || !detection.bbox || detection.bbox.length !== 4) {
+      return null;
+    }
+
+    const [x1, y1, x2, y2] = detection.bbox;
+    const vehicleCenterX = (x1 + x2) / 2;
+    const vehicleCenterY = (y1 + y2) / 2;
+
+    let bestPlate: string | null = null;
+    let bestDistance = Number.POSITIVE_INFINITY;
+
+    for (const plateDetection of plateDetectionsOnly) {
+      if (!plateDetection.bbox || plateDetection.bbox.length !== 4) continue;
+      const plateNumber = typeof plateDetection.plateNumber === 'string'
+        ? plateDetection.plateNumber.trim()
+        : '';
+      if (!plateNumber) continue;
+
+      const [px1, py1, px2, py2] = plateDetection.bbox;
+      const withinVehicle =
+        px1 >= x1 && py1 >= y1 && px2 <= x2 && py2 <= y2;
+      const plateCenterX = (px1 + px2) / 2;
+      const plateCenterY = (py1 + py2) / 2;
+      const distance = Math.hypot(vehicleCenterX - plateCenterX, vehicleCenterY - plateCenterY);
+
+      if (withinVehicle || distance < bestDistance) {
+        bestDistance = distance;
+        bestPlate = plateNumber;
+      }
+    }
+
+    return bestPlate;
+  };
 
   // Expose capture function via ref
   useImperativeHandle(ref, () => ({
@@ -224,19 +239,9 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           !hasStream && "opacity-0" // Hide video visually when no stream, but keep element in DOM
         )}
       />
-
-      {showDirectMjpegFallback && (
-        <img
-          ref={mjpegImgRef}
-          src={directMjpegUrl as string}
-          alt={`${camera.name} live stream`}
-          className="absolute inset-0 z-5 w-full h-full object-cover"
-          loading="eager"
-        />
-      )}
       
       {/* Placeholder overlay when stream is not yet available but camera is online */}
-      {!hasStream && !showDirectMjpegFallback && (
+      {!hasStream && (
         <>
           <div className="absolute inset-0 z-10 bg-gradient-to-t from-foreground/10 to-transparent" />
           <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 text-muted-foreground">
@@ -266,36 +271,33 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
 
           const [x1, y1, x2, y2] = detection.bbox;
           const videoElement = videoRef.current;
-          const mjpegElement = mjpegImgRef.current;
-          const sourceIsVideo =
-            Boolean(videoElement && hasStream && (videoElement.videoWidth || videoElement.videoHeight));
-          const sourceElement = sourceIsVideo ? videoElement : mjpegElement;
+          const displayWidth =
+            videoElement?.clientWidth ||
+            videoElement?.parentElement?.clientWidth ||
+            0;
+          const displayHeight =
+            videoElement?.clientHeight ||
+            videoElement?.parentElement?.clientHeight ||
+            0;
 
-          const displayWidth = sourceElement?.clientWidth || 0;
-          const displayHeight = sourceElement?.clientHeight || 0;
+          if (!videoElement || !displayWidth || !displayHeight) return null;
 
-          if (!sourceElement || !displayWidth || !displayHeight) return null;
+          const videoWidth = videoElement.videoWidth || 1920;
+          const videoHeight = videoElement.videoHeight || 1080;
 
-          const sourceWidth = sourceIsVideo
-            ? (videoElement?.videoWidth || 1920)
-            : (mjpegElement?.naturalWidth || 1920);
-          const sourceHeight = sourceIsVideo
-            ? (videoElement?.videoHeight || 1080)
-            : (mjpegElement?.naturalHeight || 1080);
-
-          const videoAspect = sourceWidth / sourceHeight;
+          const videoAspect = videoWidth / videoHeight;
           const displayAspect = displayWidth / displayHeight;
 
           let scaleX: number, scaleY: number, offsetX = 0, offsetY = 0;
 
           if (videoAspect > displayAspect) {
-            scaleX = displayWidth / sourceWidth;
+            scaleX = displayWidth / videoWidth;
             scaleY = scaleX;
-            offsetY = (displayHeight - sourceHeight * scaleY) / 2;
+            offsetY = (displayHeight - videoHeight * scaleY) / 2;
           } else {
-            scaleY = displayHeight / sourceHeight;
+            scaleY = displayHeight / videoHeight;
             scaleX = scaleY;
-            offsetX = (displayWidth - sourceWidth * scaleX) / 2;
+            offsetX = (displayWidth - videoWidth * scaleX) / 2;
           }
 
           const left = x1 * scaleX + offsetX;
@@ -314,33 +316,28 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
                     ? 'border-yellow-500 bg-yellow-500/20'
                     : detection.class_name === 'truck'
                       ? 'border-red-500 bg-red-500/20'
-                      : detection.class_name === 'bus'
+              : detection.class_name === 'bus'
                         ? 'border-green-500 bg-green-500/20'
                         : 'border-orange-500 bg-orange-500/20';
-          const plateLabel = (detection as { plateNumber?: unknown }).plateNumber;
+          const associatedPlate = getAssociatedPlate(detection);
+          const normalizedPlate = normalizePlate(associatedPlate);
+          const hasReadablePlate =
+            normalizedPlate.length > 0 &&
+            normalizedPlate !== 'NONE' &&
+            normalizedPlate !== 'BLUR';
           const isVehicleClass =
             detection.class_name === 'car' ||
             detection.class_name === 'motorcycle' ||
             detection.class_name === 'truck' ||
             detection.class_name === 'bus' ||
             detection.class_name === 'vehicle';
-          const normalizedPlate =
-            typeof plateLabel === 'string' ? normalizePlate(plateLabel) : '';
-          const hasReadablePlate =
-            typeof plateLabel === 'string' &&
-            plateLabel.trim().length > 0 &&
-            normalizedPlate !== 'NONE' &&
-            normalizedPlate !== 'BLUR';
-          const baseLabel = typeof plateLabel === 'string' && plateLabel.trim().length > 0
-            ? plateLabel
-            : `${detection.class_name} ${(detection.confidence * 100).toFixed(0)}%`;
-          const plateStatus =
+          const label = detection.class_name;
+          const residencyStatus =
             hasReadablePlate
-              ? (registeredPlateSet.has(normalizedPlate) ? 'REGISTERED' : 'UNREGISTERED')
+              ? registeredPlateSet.has(normalizedPlate)
+                ? 'Resident'
+                : 'Unregistered'
               : null;
-          const label: string = isVehicleClass
-              ? `${baseLabel} Detected`
-              : baseLabel;
 
           return (
             <div
@@ -353,89 +350,38 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
                 height: `${height}px`,
               }}
             >
-              {plateStatus && (
+              {isVehicleClass && hasReadablePlate && residencyStatus !== null && (
                 <div
                   className={cn(
-                    'absolute -top-12 left-0 z-50 rounded-md border px-2 py-0.5 font-semibold shadow-lg backdrop-blur-sm',
-                    plateStatus === 'REGISTERED'
-                      ? 'border-emerald-300 bg-emerald-600 text-white'
-                      : 'border-red-200 bg-red-700 text-white ring-1 ring-red-300/70',
+                    'absolute top-1 left-1 z-50 rounded-md border bg-black/85 px-2 py-1 text-white shadow-lg backdrop-blur-sm',
+                    residencyStatus === 'Resident'
+                      ? 'border-emerald-300'
+                      : 'border-rose-300',
                     fullscreen ? 'text-xs' : 'text-[10px]'
                   )}
                 >
-                  {plateStatus}
+                  <div className="font-mono leading-none">
+                    {associatedPlate}
+                  </div>
+                  <div className="leading-none opacity-90">
+                    {residencyStatus}
+                  </div>
                 </div>
               )}
-              {hasReadablePlate && (
+              {isVehicleClass && (
                 <div
                   className={cn(
-                    'absolute -top-7 left-0 z-50 rounded-md border border-slate-300 bg-slate-900/90 px-2 py-0.5 font-mono font-semibold text-white shadow-lg backdrop-blur-sm',
+                    'absolute -top-6 left-0 bg-black/80 text-white px-2 py-0.5 rounded whitespace-nowrap',
                     fullscreen ? 'text-xs' : 'text-[10px]'
                   )}
                 >
-                  PLATE: {plateLabel}
+                  {label}
                 </div>
               )}
-              <div
-                className={cn(
-                  'absolute -top-6 left-0 bg-black/80 text-white px-2 py-0.5 rounded whitespace-nowrap',
-                  fullscreen ? 'text-xs' : 'text-[10px]'
-                )}
-              >
-                {label}
-              </div>
             </div>
           );
         })}
       </div>
-
-      {(recognizedPlates.length > 0 || hasVehicleDetection) && (
-        <div
-          className={cn(
-            'absolute left-2 bottom-2 z-30 rounded-md border border-white/20 bg-black/70 px-2 py-1.5 text-white backdrop-blur-sm',
-            fullscreen ? 'max-w-[70%]' : 'max-w-[80%]'
-          )}
-        >
-          <div className={cn('font-semibold', fullscreen ? 'text-xs' : 'text-[10px]')}>
-            Plate Number Detected:
-          </div>
-          <div className="mt-1 flex flex-col gap-1">
-            {recognizedPlates.length > 0 ? (
-              <>
-                {recognizedPlates.slice(0, 5).map((entry) => (
-                  <div key={entry.plate} className="flex items-center gap-2">
-                    <span className={cn('font-mono', fullscreen ? 'text-xs' : 'text-[10px]')}>
-                      {entry.plate}
-                    </span>
-                    {entry.status && (
-                      <span
-                        className={cn(
-                          'rounded border px-1 py-0.5 font-semibold',
-                          entry.status === 'REGISTERED'
-                            ? 'border-emerald-300 bg-emerald-700/80 text-emerald-100'
-                            : 'border-red-200 bg-red-700 text-red-50 ring-1 ring-red-300/70',
-                          fullscreen ? 'text-[10px]' : 'text-[9px]'
-                        )}
-                      >
-                        {entry.status}
-                      </span>
-                    )}
-                  </div>
-                ))}
-                {recognizedPlates.length > 5 && (
-                  <div className={cn('text-muted-foreground', fullscreen ? 'text-[10px]' : 'text-[9px]')}>
-                    +{recognizedPlates.length - 5} more
-                  </div>
-                )}
-              </>
-            ) : (
-              <div className={cn('italic text-muted-foreground', fullscreen ? 'text-[10px]' : 'text-[9px]')}>
-                No readable plate recognized
-              </div>
-            )}
-          </div>
-        </div>
-      )}
 
     </>
   );

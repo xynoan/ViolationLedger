@@ -34,7 +34,7 @@ const ROUTE_LABELS: Record<string, string> = {
   '/violations': 'Violations History',
   '/upload': 'Upload Image',
   '/settings': 'Settings',
-  '/analytics': 'Analytics',
+  '/analytics': 'Dashboard',
   '/users': 'User List',
   '/audit-logs': 'Activity Logs',
 };
@@ -216,7 +216,7 @@ export function formatLogTimestamp(iso: string): string {
   const datePart = d.toLocaleDateString('en-US', {
     month: 'short',
     day: 'numeric',
-    ...(sameYear ? {} : { year: 'numeric' }),
+    year: 'numeric',
   });
   const timePart = d.toLocaleTimeString('en-US', {
     hour: 'numeric',

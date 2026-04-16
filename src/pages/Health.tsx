@@ -276,29 +276,37 @@ export default function Health() {
             <CardContent className="space-y-4">
               {/* Monitoring Service */}
               <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium">Vehicle Monitoring</span>
-                  <StatusBadge status={healthStatus.services.monitoring?.monitoring?.status || 'error'} />
-                </div>
-                <div className="flex items-center justify-between text-xs text-muted-foreground pl-4">
-                  <span>Interval: {healthStatus.services.monitoring?.monitoring?.interval || 'N/A'}</span>
-                  <Badge variant={healthStatus.services.monitoring?.monitoring?.running ? 'default' : 'destructive'} className="text-xs">
-                    {healthStatus.services.monitoring?.monitoring?.running ? 'Running' : 'Stopped'}
-                  </Badge>
+                <div className="flex items-start justify-between gap-4">
+                  <div className="space-y-1">
+                    <span className="text-sm font-medium">Vehicle Monitoring</span>
+                    <div className="text-xs text-muted-foreground pl-4">
+                      Interval: {healthStatus.services.monitoring?.monitoring?.interval || 'N/A'}
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 flex-col items-end gap-2">
+                    <StatusBadge status={healthStatus.services.monitoring?.monitoring?.status || 'error'} />
+                    <Badge variant={healthStatus.services.monitoring?.monitoring?.running ? 'default' : 'destructive'} className="text-xs">
+                      {healthStatus.services.monitoring?.monitoring?.running ? 'Running' : 'Stopped'}
+                    </Badge>
+                  </div>
                 </div>
 
                 {/* SMS Retry Service */}
                 {healthStatus.services.monitoring?.smsRetry && (
                   <div className="pt-2 border-t">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium">SMS Retry</span>
-                      <StatusBadge status={healthStatus.services.monitoring.smsRetry.status || 'error'} />
-                    </div>
-                    <div className="flex items-center justify-between text-xs text-muted-foreground pl-4">
-                      <span>Interval: {healthStatus.services.monitoring.smsRetry.interval || 'N/A'}</span>
-                      <Badge variant={healthStatus.services.monitoring.smsRetry.running ? 'default' : 'destructive'} className="text-xs">
-                        {healthStatus.services.monitoring.smsRetry.running ? 'Running' : 'Stopped'}
-                      </Badge>
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="space-y-1">
+                        <span className="text-sm font-medium">SMS Retry</span>
+                        <div className="text-xs text-muted-foreground pl-4">
+                          Interval: {healthStatus.services.monitoring.smsRetry.interval || 'N/A'}
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 flex-col items-end gap-2">
+                        <StatusBadge status={healthStatus.services.monitoring.smsRetry.status || 'error'} />
+                        <Badge variant={healthStatus.services.monitoring.smsRetry.running ? 'default' : 'destructive'} className="text-xs">
+                          {healthStatus.services.monitoring.smsRetry.running ? 'Running' : 'Stopped'}
+                        </Badge>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -306,15 +314,19 @@ export default function Health() {
                 {/* SMS Polling Service */}
                 {healthStatus.services.monitoring?.smsPolling && (
                   <div className="pt-2 border-t">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium">SMS Polling</span>
-                      <StatusBadge status={healthStatus.services.monitoring.smsPolling.status || 'error'} />
-                    </div>
-                    <div className="flex items-center justify-between text-xs text-muted-foreground pl-4">
-                      <span>Interval: {healthStatus.services.monitoring.smsPolling.interval || 'N/A'}</span>
-                      <Badge variant={healthStatus.services.monitoring.smsPolling.enabled ? 'default' : 'outline'} className="text-xs">
-                        {healthStatus.services.monitoring.smsPolling.enabled ? 'Enabled' : 'Disabled'}
-                      </Badge>
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="space-y-1">
+                        <span className="text-sm font-medium">SMS Polling</span>
+                        <div className="text-xs text-muted-foreground pl-4">
+                          Interval: {healthStatus.services.monitoring.smsPolling.interval || 'N/A'}
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 flex-col items-end gap-2">
+                        <StatusBadge status={healthStatus.services.monitoring.smsPolling.status || 'error'} />
+                        <Badge variant={healthStatus.services.monitoring.smsPolling.enabled ? 'default' : 'outline'} className="text-xs">
+                          {healthStatus.services.monitoring.smsPolling.enabled ? 'Enabled' : 'Disabled'}
+                        </Badge>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -322,18 +334,22 @@ export default function Health() {
                 {/* Cleanup Service */}
                 {healthStatus.services.monitoring?.cleanup && (
                   <div className="pt-2 border-t">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium">Cleanup Service</span>
-                      <StatusBadge status={healthStatus.services.monitoring.cleanup.status || 'error'} />
-                    </div>
-                    <div className="flex items-center justify-between text-xs text-muted-foreground pl-4">
-                      <span>Runs every: {healthStatus.services.monitoring.cleanup.interval || 'N/A'}</span>
-                      <Badge variant={healthStatus.services.monitoring.cleanup.running ? 'default' : 'destructive'} className="text-xs">
-                        {healthStatus.services.monitoring.cleanup.running ? 'Running' : 'Stopped'}
-                      </Badge>
-                    </div>
-                    <div className="text-xs text-muted-foreground pl-4 mt-1">
-                      Deletes empty detections older than {healthStatus.services.monitoring.cleanup.retention || 'N/A'}
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="space-y-1">
+                        <span className="text-sm font-medium">Cleanup Service</span>
+                        <div className="text-xs text-muted-foreground pl-4">
+                          Runs every: {healthStatus.services.monitoring.cleanup.interval || 'N/A'}
+                        </div>
+                        <div className="text-xs text-muted-foreground pl-4">
+                          Deletes empty detections older than {healthStatus.services.monitoring.cleanup.retention || 'N/A'}
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 flex-col items-end gap-2">
+                        <StatusBadge status={healthStatus.services.monitoring.cleanup.status || 'error'} />
+                        <Badge variant={healthStatus.services.monitoring.cleanup.running ? 'default' : 'destructive'} className="text-xs">
+                          {healthStatus.services.monitoring.cleanup.running ? 'Running' : 'Stopped'}
+                        </Badge>
+                      </div>
                     </div>
                   </div>
                 )}

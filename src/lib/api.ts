@@ -369,6 +369,8 @@ export interface AnalyticsResponse {
     byLocation: Array<{ cameraLocationId: string; count: number }>;
     overTime: Array<{ date: string; count: number }>;
     byHour: Array<{ hour: number; count: number }>;
+    topResidents?: Array<{ name: string; count: number }>;
+    topVisitors?: Array<{ plateNumber: string; count: number }>;
     descriptive: {
       hourHeatmap: Array<{ hour: number; count: number }>;
       avgInfractionDurationMinutes: number | null;
@@ -416,6 +418,7 @@ export interface AnalyticsResponse {
     total: number;
     byClass: Record<string, number>;
     overTime: Array<{ date: string; count: number }>;
+    byHour: Array<{ hour: number; count: number }>;
   };
   sms: {
     total: number;

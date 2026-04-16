@@ -29,7 +29,12 @@ export type ResidentType = 'homeowner' | 'tenant';
 
 export interface Resident {
   id: string;
+  /** Composed display name (search, sorting, legacy). */
   name: string;
+  firstName?: string;
+  middleName?: string;
+  lastName?: string;
+  nameSuffix?: string;
   contactNumber: string;
   /** Composed from house number + street (kept for search and legacy rows). */
   address?: string;
@@ -70,6 +75,11 @@ export interface Violation {
   ticketId?: string;
   plateNumber: string;
   cameraLocationId: string;
+  /**
+   * When set, the D3 SVG heatmap matches this string to GeoJSON `properties.name` on street features.
+   * If omitted, `cameraLocationId` is used for the same strict match.
+   */
+  location?: string;
   timeDetected: Date;
   timeIssued?: Date;
   status: 'warning' | 'pending' | 'issued' | 'cancelled' | 'cleared' | 'resolved';

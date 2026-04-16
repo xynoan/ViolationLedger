@@ -14,6 +14,7 @@ import {
   CheckCircle,
   Info,
   Home,
+  X,
 } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
@@ -71,10 +72,61 @@ function errMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
+const URL_PRESETTABLE_STATUSES = new Set(
+  STATUS_OPTIONS.filter((o) => o.value !== 'all').map((o) => o.value as string),
+);
+
+type PeriodFilter = 'day' | 'week' | 'month';
+
+function periodRangeFromQuery(period: string | null): { startDate: string; endDate: string } | null {
+  if (period !== 'day' && period !== 'week' && period !== 'month') return null;
+  const end = new Date();
+  const start = new Date(end);
+  if (period === 'day') {
+    // keep same calendar day window
+  } else if (period === 'week') {
+    start.setDate(start.getDate() - 6);
+  } else {
+    start.setDate(1);
+  }
+  const toYmd = (d: Date) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
+  return { startDate: toYmd(start), endDate: toYmd(end) };
+}
+
+function periodLabel(period: PeriodFilter, startDate?: string, endDate?: string): string {
+  if (period === 'day') {
+    if (startDate) {
+      const d = new Date(`${startDate}T00:00:00`);
+      return d.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' });
+    }
+    return 'Today';
+  }
+  if (period === 'week') {
+    if (startDate && endDate) {
+      const s = new Date(`${startDate}T00:00:00`);
+      const e = new Date(`${endDate}T00:00:00`);
+      return `${s.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} - ${e.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`;
+    }
+    return 'Last 7 days';
+  }
+  if (startDate) {
+    const d = new Date(`${startDate}T00:00:00`);
+    return d.toLocaleString(undefined, { month: 'long', year: 'numeric' });
+  }
+  return new Date().toLocaleString(undefined, { month: 'long', year: 'numeric' });
+}
+
 export default function ViolationsHistory() {
   usePageTracking();
   const [searchParams, setSearchParams] = useSearchParams();
   const location = useLocation();
+  const periodParam = searchParams.get('period');
+  const periodPreset = periodRangeFromQuery(periodParam);
   const appliedPlatePresetRef = useRef(false);
   const [violations, setViolations] = useState<Violation[]>([]);
   const [cameras, setCameras] = useState<Camera[]>([]);
@@ -83,15 +135,29 @@ export default function ViolationsHistory() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isLoadingStats, setIsLoadingStats] = useState(true);
   
-  // Filters
-  const [statusFilter, setStatusFilter] = useState<ViolationStatus | 'all'>('all');
-  const [locationFilter, setLocationFilter] = useState<string>('all');
-  const [startDate, setStartDate] = useState<string>('');
-  const [endDate, setEndDate] = useState<string>('');
+  // Filters (initialize from URL when opening ledger links from the dashboard)
+  const [statusFilter, setStatusFilter] = useState<ViolationStatus | 'all'>(() => {
+    const s = searchParams.get('status')?.trim().toLowerCase();
+    if (s && URL_PRESETTABLE_STATUSES.has(s)) return s as ViolationStatus;
+    return 'all';
+  });
+  const [locationFilter, setLocationFilter] = useState<string>(() => {
+    return searchParams.get('locationId')?.trim() || 'all';
+  });
+  const [startDate, setStartDate] = useState<string>(
+    () => searchParams.get('startDate')?.trim() || periodPreset?.startDate || '',
+  );
+  const [endDate, setEndDate] = useState<string>(
+    () => searchParams.get('endDate')?.trim() || periodPreset?.endDate || '',
+  );
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState<string>('');
   const [registryHasViolations, setRegistryHasViolations] = useState(false);
   const [clearingId, setClearingId] = useState<string | null>(null);
+  const [periodFilter, setPeriodFilter] = useState<PeriodFilter | null>(() => {
+    const p = searchParams.get('period');
+    return p === 'day' || p === 'week' || p === 'month' ? p : null;
+  });
 
   const multiPlateContext = useMemo(() => {
     const plates = (location.state as { relatedPlates?: string[] } | null)?.relatedPlates;
@@ -121,6 +187,26 @@ export default function ViolationsHistory() {
       cancelled = true;
     };
   }, [residentFilterId]);
+
+  useEffect(() => {
+    const p = searchParams.get('period');
+    if (p !== 'day' && p !== 'week' && p !== 'month') {
+      setPeriodFilter(null);
+      return;
+    }
+    setPeriodFilter(p);
+    const qsStart = searchParams.get('startDate')?.trim();
+    const qsEnd = searchParams.get('endDate')?.trim();
+    if (qsStart || qsEnd) {
+      setStartDate(qsStart || '');
+      setEndDate(qsEnd || '');
+      return;
+    }
+    const range = periodRangeFromQuery(p);
+    if (!range) return;
+    setStartDate(range.startDate);
+    setEndDate(range.endDate);
+  }, [searchParams]);
 
   useEffect(() => {
     if (appliedPlatePresetRef.current) return;
@@ -356,10 +442,12 @@ export default function ViolationsHistory() {
         next.delete('plate');
         next.delete('violationId');
         next.delete('residentId');
+        next.delete('period');
         return next;
       },
       { replace: true },
     );
+    setPeriodFilter(null);
   };
 
   const clearResidentFilter = useCallback(() => {
@@ -475,6 +563,31 @@ export default function ViolationsHistory() {
             <Filter className="h-5 w-5 text-muted-foreground" />
             <h3 className="font-semibold text-foreground">Filters</h3>
           </div>
+          {periodFilter && (
+            <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs text-primary">
+              <span>Filtering by: {periodLabel(periodFilter, startDate, endDate)}</span>
+              <button
+                type="button"
+                className="inline-flex h-4 w-4 items-center justify-center rounded-full hover:bg-primary/20"
+                onClick={() => {
+                  setPeriodFilter(null);
+                  setStartDate('');
+                  setEndDate('');
+                  setSearchParams((prev) => {
+                    const next = new URLSearchParams(prev);
+                    next.delete('period');
+                    next.delete('startDate');
+                    next.delete('endDate');
+                    return next;
+                  }, { replace: true });
+                }}
+                aria-label="Clear period filter"
+                title="Clear period filter"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          )}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
             <div className="space-y-2">
               <label className="text-sm font-medium text-foreground">Status</label>

@@ -27,7 +27,7 @@ import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Resident, ResidentType, Vehicle, Violation } from '@/types/parking';
+import { Resident, ResidentStatus, ResidentType, Vehicle, Violation } from '@/types/parking';
 import {
   Dialog,
   DialogContent,
@@ -176,10 +176,48 @@ function resolveResidentType(r: Resident): ResidentType {
   return 'homeowner';
 }
 
+function resolveResidentStatus(r: Resident): ResidentStatus {
+  const s = r.residentStatus?.toLowerCase?.();
+  if (s === 'guest') return 'guest';
+  return 'verified';
+}
+
 function residentTypeBadgeClass(type: ResidentType): string {
   return type === 'tenant'
     ? 'border-purple-600/55 bg-purple-600 text-white shadow-none hover:bg-purple-600/95 dark:bg-purple-700'
     : 'border-blue-600/55 bg-blue-600 text-white shadow-none hover:bg-blue-600/95 dark:bg-blue-700';
+}
+
+function ReqMark() {
+  return (
+    <span className="text-destructive font-semibold" aria-hidden>
+      {' '}
+      *
+    </span>
+  );
+}
+
+/** Prefill atomized name fields; split legacy `lastName` that holds a full name when `firstName` is empty. */
+function deriveNamePartsForForm(r: Resident) {
+  let first = (r.firstName || '').trim();
+  const middle = (r.middleName || '').trim();
+  let last = (r.lastName || '').trim();
+  const sfx = (r.nameSuffix || '').trim();
+  if (!first && last && /\s/.test(last)) {
+    const parts = last.split(/\s+/).filter(Boolean);
+    first = parts[0] || '';
+    last = parts.slice(1).join(' ') || first;
+  }
+  if (!first && !last && r.name?.trim()) {
+    const parts = r.name.trim().split(/\s+/).filter(Boolean);
+    if (parts.length <= 1) {
+      last = parts[0] || '';
+    } else {
+      first = parts[0] || '';
+      last = parts.slice(1).join(' ');
+    }
+  }
+  return { firstName: first, middleName: middle, lastName: last, nameSuffix: sfx };
 }
 
 /** Issued + pending violations on linked plates (unpaid / open enforcement). */
@@ -288,33 +326,6 @@ function errMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
-function splitResidentName(fullName: string) {
-  const parts = fullName.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) {
-    return {
-      firstName: '',
-      middleName: '',
-      lastName: '',
-      prefixSuffix: '',
-    };
-  }
-  if (parts.length === 1) {
-    return {
-      firstName: parts[0],
-      middleName: '',
-      lastName: '',
-      prefixSuffix: '',
-    };
-  }
-
-  return {
-    firstName: parts[0],
-    middleName: parts.length > 2 ? parts.slice(1, -1).join(' ') : '',
-    lastName: parts[parts.length - 1],
-    prefixSuffix: '',
-  };
-}
-
 export default function Residents() {
   usePageTracking();
   const queryClient = useQueryClient();
@@ -346,11 +357,12 @@ export default function Residents() {
     firstName: '',
     middleName: '',
     lastName: '',
-    prefixSuffix: '',
+    nameSuffix: '',
     contactNumber: '',
     houseNumber: '',
     streetName: '',
     residentType: 'homeowner' as ResidentType,
+    residentStatus: 'verified' as ResidentStatus,
   });
 
   const syncResidentIdToUrl = useCallback(
@@ -657,11 +669,12 @@ export default function Residents() {
       firstName: '',
       middleName: '',
       lastName: '',
-      prefixSuffix: '',
+      nameSuffix: '',
       contactNumber: '',
       houseNumber: '',
       streetName: '',
       residentType: 'homeowner',
+      residentStatus: 'verified',
     });
     setEditingResident(null);
   };
@@ -677,16 +690,14 @@ export default function Residents() {
     }
     if (resident) {
       setEditingResident(resident);
-      const splitName = splitResidentName(resident.name);
+      const parts = deriveNamePartsForForm(resident);
       setFormData({
-        firstName: splitName.firstName,
-        middleName: splitName.middleName,
-        lastName: splitName.lastName,
-        prefixSuffix: splitName.prefixSuffix,
+        ...parts,
         contactNumber: resident.contactNumber,
         houseNumber: resident.houseNumber || '',
         streetName: resident.streetName || '',
         residentType: resolveResidentType(resident),
+        residentStatus: resolveResidentStatus(resident),
       });
     } else {
       resetForm();
@@ -708,12 +719,7 @@ export default function Residents() {
       });
       return;
     }
-    const firstName = formData.firstName.trim();
-    const middleName = formData.middleName.trim();
-    const lastName = formData.lastName.trim();
-    const prefixSuffix = formData.prefixSuffix.trim();
-    const fullName = [firstName, middleName, lastName, prefixSuffix].filter(Boolean).join(' ');
-    if (!firstName || !lastName || !formData.contactNumber.trim()) {
+    if (!formData.firstName.trim() || !formData.lastName.trim() || !formData.contactNumber.trim()) {
       toast({
         title: 'Validation Error',
         description: 'Please fill in first name, last name, and contact number',
@@ -721,10 +727,11 @@ export default function Residents() {
       });
       return;
     }
-    if (!formData.houseNumber.trim()) {
+    const hn = formData.houseNumber.trim();
+    if (!hn) {
       toast({
         title: 'Validation Error',
-        description: 'Please fill in all required address fields',
+        description: 'Please enter house / lot number',
         variant: 'destructive',
       });
       return;
@@ -748,11 +755,15 @@ export default function Residents() {
     }
 
     const payload = {
-      name: fullName,
-      contactNumber: formData.contactNumber.trim(),
-      houseNumber: formData.houseNumber.trim(),
+      firstName: formData.firstName.trim(),
+      middleName: formData.middleName.trim(),
+      lastName: formData.lastName.trim(),
+      nameSuffix: formData.nameSuffix.trim(),
+      contactNumber: formData.contactNumber,
+      houseNumber: hn,
       streetName: street,
       residentType: formData.residentType,
+      residentStatus: formData.residentStatus,
     };
 
     try {
@@ -965,7 +976,7 @@ export default function Residents() {
                   Add Resident
                 </Button>
               </DialogTrigger>
-              <DialogContent className="bg-card border-border mx-4 sm:mx-auto max-w-[calc(100vw-2rem)] sm:max-w-4xl">
+              <DialogContent className="bg-card border-border mx-4 sm:mx-auto max-w-[calc(100vw-2rem)] sm:max-w-3xl">
                 <DialogHeader>
                   <DialogTitle>{editingResident ? 'Edit Resident' : 'Add New Resident'}</DialogTitle>
                   <DialogDescription>
@@ -974,56 +985,60 @@ export default function Residents() {
                       : 'Enter the resident details to add them to the system.'}
                   </DialogDescription>
                 </DialogHeader>
-                <div className="space-y-4 py-4 max-h-[78vh] overflow-y-auto">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div className="space-y-2">
-                      <Label htmlFor="firstName">
-                        First Name <span className="text-red-600">(Required)</span>
-                      </Label>
-                      <Input
-                        id="firstName"
-                        placeholder="Juan"
-                        value={formData.firstName}
-                        onChange={(e) => setFormData({ ...formData, firstName: e.target.value })}
-                        className="bg-secondary"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="middleName">Middle Name</Label>
-                      <Input
-                        id="middleName"
-                        placeholder="Santos"
-                        value={formData.middleName}
-                        onChange={(e) => setFormData({ ...formData, middleName: e.target.value })}
-                        className="bg-secondary"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="lastName">
-                        Last Name <span className="text-red-600">(Required)</span>
-                      </Label>
-                      <Input
-                        id="lastName"
-                        placeholder="Dela Cruz"
-                        value={formData.lastName}
-                        onChange={(e) => setFormData({ ...formData, lastName: e.target.value })}
-                        className="bg-secondary"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="prefixSuffix">Prefix / Suffix</Label>
-                      <Input
-                        id="prefixSuffix"
-                        placeholder="Jr., Sr., III"
-                        value={formData.prefixSuffix}
-                        onChange={(e) => setFormData({ ...formData, prefixSuffix: e.target.value })}
-                        className="bg-secondary"
-                      />
-                    </div>
+                <div className="grid gap-4 py-4 sm:grid-cols-2 sm:gap-x-6">
+                  <div className="space-y-2 sm:col-span-1">
+                    <Label htmlFor="firstName">
+                      First name
+                      <ReqMark />
+                    </Label>
+                    <Input
+                      id="firstName"
+                      placeholder="Juan"
+                      value={formData.firstName}
+                      onChange={(e) => setFormData({ ...formData, firstName: e.target.value })}
+                      className="bg-secondary"
+                      autoComplete="given-name"
+                    />
                   </div>
-                  <div className="space-y-2">
+                  <div className="space-y-2 sm:col-span-1">
+                    <Label htmlFor="middleName">Middle name (optional)</Label>
+                    <Input
+                      id="middleName"
+                      placeholder="Santos"
+                      value={formData.middleName}
+                      onChange={(e) => setFormData({ ...formData, middleName: e.target.value })}
+                      className="bg-secondary"
+                      autoComplete="additional-name"
+                    />
+                  </div>
+                  <div className="space-y-2 sm:col-span-1">
+                    <Label htmlFor="lastName">
+                      Last name
+                      <ReqMark />
+                    </Label>
+                    <Input
+                      id="lastName"
+                      placeholder="dela Cruz"
+                      value={formData.lastName}
+                      onChange={(e) => setFormData({ ...formData, lastName: e.target.value })}
+                      className="bg-secondary"
+                      autoComplete="family-name"
+                    />
+                  </div>
+                  <div className="space-y-2 sm:col-span-1">
+                    <Label htmlFor="nameSuffix">Prefix / suffix (optional)</Label>
+                    <Input
+                      id="nameSuffix"
+                      placeholder="Jr., III, Dr."
+                      value={formData.nameSuffix}
+                      onChange={(e) => setFormData({ ...formData, nameSuffix: e.target.value })}
+                      className="bg-secondary"
+                    />
+                  </div>
+                  <div className="space-y-2 sm:col-span-2">
                     <Label htmlFor="contactNumber">
-                      Contact Number <span className="text-red-600">(Required)</span>
+                      Contact number
+                      <ReqMark />
                     </Label>
                     <Input
                       id="contactNumber"
@@ -1031,54 +1046,58 @@ export default function Residents() {
                       value={formData.contactNumber}
                       onChange={(e) => setFormData({ ...formData, contactNumber: e.target.value })}
                       className="bg-secondary"
+                      autoComplete="tel"
                     />
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div className="space-y-2">
-                      <Label htmlFor="houseNumber">
-                        House/Lot No. <span className="text-red-600">(Required)</span>
-                      </Label>
-                      <Input
-                        id="houseNumber"
-                        placeholder="e.g. 12-A"
-                        value={formData.houseNumber}
-                        onChange={(e) => setFormData({ ...formData, houseNumber: e.target.value })}
-                        className="bg-secondary"
-                      />
-                    </div>
-                    <div className="space-y-2 sm:col-span-1">
-                      <Label htmlFor="streetName">
-                        Street <span className="text-red-600">(Required)</span>
-                      </Label>
-                      <Select
-                        value={formData.streetName || '__unset__'}
-                        onValueChange={(v) =>
-                          setFormData({ ...formData, streetName: v === '__unset__' ? '' : v })
-                        }
-                      >
-                        <SelectTrigger id="streetName" className="bg-secondary">
-                          <SelectValue placeholder="Select street" />
-                        </SelectTrigger>
-                        <SelectContent className="max-h-[280px]">
-                          <SelectItem value="__unset__" className="text-muted-foreground">
-                            Select street
-                          </SelectItem>
-                          {RESIDENT_STREET_OPTIONS.map((s) => (
-                            <SelectItem key={s} value={s}>
-                              {s}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
+                  <div className="space-y-2 sm:col-span-1">
+                    <Label htmlFor="houseNumber">
+                      House / lot no.
+                      <ReqMark />
+                    </Label>
+                    <Input
+                      id="houseNumber"
+                      placeholder="e.g. 12-A"
+                      value={formData.houseNumber}
+                      onChange={(e) => setFormData({ ...formData, houseNumber: e.target.value })}
+                      className="bg-secondary"
+                    />
                   </div>
-                  <div className="space-y-2">
-                    <Label>Resident type</Label>
+                  <div className="space-y-2 sm:col-span-1">
+                    <Label htmlFor="streetName">
+                      Street
+                      <ReqMark />
+                    </Label>
+                    <Select
+                      value={formData.streetName || '__unset__'}
+                      onValueChange={(v) =>
+                        setFormData({ ...formData, streetName: v === '__unset__' ? '' : v })
+                      }
+                    >
+                      <SelectTrigger id="streetName" className="bg-secondary">
+                        <SelectValue placeholder="Select street" />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-[280px]">
+                        <SelectItem value="__unset__" className="text-muted-foreground">
+                          Select street
+                        </SelectItem>
+                        {RESIDENT_STREET_OPTIONS.map((s) => (
+                          <SelectItem key={s} value={s}>
+                            {s}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2 sm:col-span-1">
+                    <Label htmlFor="residentTypeField">
+                      Resident type
+                      <ReqMark />
+                    </Label>
                     <Select
                       value={formData.residentType}
                       onValueChange={(v) => setFormData({ ...formData, residentType: v as ResidentType })}
                     >
-                      <SelectTrigger className="bg-secondary">
+                      <SelectTrigger id="residentTypeField" className="bg-secondary">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -1087,9 +1106,31 @@ export default function Residents() {
                       </SelectContent>
                     </Select>
                   </div>
-                  <Button onClick={handleSaveResident} className="w-full">
-                    {editingResident ? 'Save Changes' : 'Add Resident'}
-                  </Button>
+                  <div className="space-y-2 sm:col-span-1">
+                    <Label htmlFor="residentStatusField">
+                      Registry status
+                      <ReqMark />
+                    </Label>
+                    <Select
+                      value={formData.residentStatus}
+                      onValueChange={(v) =>
+                        setFormData({ ...formData, residentStatus: v as ResidentStatus })
+                      }
+                    >
+                      <SelectTrigger id="residentStatusField" className="bg-secondary">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="verified">Verified</SelectItem>
+                        <SelectItem value="guest">Guest</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <Button type="button" onClick={() => void handleSaveResident()} className="w-full sm:w-auto">
+                      {editingResident ? 'Save changes' : 'Add resident'}
+                    </Button>
+                  </div>
                 </div>
               </DialogContent>
             </Dialog>

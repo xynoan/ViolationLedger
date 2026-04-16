@@ -335,19 +335,23 @@ export default function UserManagement() {
       <Header
         title="User Management"
         subtitle="Manage system users and permissions"
-        action={
-          <Button onClick={() => handleOpenDialog()} disabled={isLoading}>
-            <Plus className="h-4 w-4 mr-2" />
-            Add User
-          </Button>
-        }
       />
 
       <div className="p-4 sm:p-6">
         <Card>
-          <CardHeader>
-            <CardTitle>Users</CardTitle>
-            <CardDescription>All registered users in the system</CardDescription>
+          <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <CardTitle>Users</CardTitle>
+              <CardDescription>All registered users in the system</CardDescription>
+            </div>
+            <Button
+              onClick={() => handleOpenDialog()}
+              disabled={isLoading}
+              className="self-start w-auto"
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              Add User
+            </Button>
           </CardHeader>
           <CardContent>
             {users.length === 0 ? (
@@ -491,7 +495,98 @@ export default function UserManagement() {
                 </p>
               )}
             </div>
+            {/* <div className="space-y-2">
+              <Label htmlFor="password">
+                Password {selectedUser && '(leave blank to keep current)'}
+              </Label>
+              <div className="relative">
+                <Input
+                  id="password"
+                  type={showPassword ? 'text' : 'password'}
+                  value={formData.password}
+                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                  placeholder="Enter password"
+                  disabled={isSubmitting}
+                  className="pr-10"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((p) => !p)}
+                  className={cn(
+                    'absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors',
+                    'focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 rounded'
+                  )}
+                  tabIndex={0}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                >
+                  {showPassword ? (
+                    <EyeOff className="h-4 w-4" />
+                  ) : (
+                    <Eye className="h-4 w-4" />
+                  )}
+                </button>
+              </div>
+              {formData.password && (
+                <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+                  <div className="font-medium">Password must contain:</div>
+                  <div className="grid gap-1 sm:grid-cols-2">
+                    <span className="flex items-center gap-1">
+                      {formData.password.length >= 8 ? (
+                        <CheckCircle2 className="h-3 w-3 text-emerald-500" />
+                      ) : (
+                        <XCircle className="h-3 w-3 text-destructive" />
+                      )}
+                      <span>At least 8 characters</span>
+                    </span>
+                    <span className="flex items-center gap-1">
+                      {/[A-Z]/.test(formData.password) ? (
+                        <CheckCircle2 className="h-3 w-3 text-emerald-500" />
+                      ) : (
+                        <XCircle className="h-3 w-3 text-destructive" />
+                      )}
+                      <span>One uppercase letter (A-Z)</span>
+                    </span>
+                    <span className="flex items-center gap-1">
+                      {/[a-z]/.test(formData.password) ? (
+                        <CheckCircle2 className="h-3 w-3 text-emerald-500" />
+                      ) : (
+                        <XCircle className="h-3 w-3 text-destructive" />
+                      )}
+                      <span>One lowercase letter (a-z)</span>
+                    </span>
+                    <span className="flex items-center gap-1">
+                      {/[0-9]/.test(formData.password) ? (
+                        <CheckCircle2 className="h-3 w-3 text-emerald-500" />
+                      ) : (
+                        <XCircle className="h-3 w-3 text-destructive" />
+                      )}
+                      <span>One number (0-9)</span>
+                    </span>
+                    <span className="flex items-center gap-1 sm:col-span-2">
+                      {/[!@#$%^&*(),.?":{}|<>_\-]/.test(formData.password) ? (
+                        <CheckCircle2 className="h-3 w-3 text-emerald-500" />
+                      ) : (
+                        <XCircle className="h-3 w-3 text-destructive" />
+                      )}
+                      <span>One special character (!@#$%^&amp;* etc.)</span>
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div> */}
             <div className="space-y-2">
+              <Label htmlFor="name">
+                Name <span className="text-destructive">*</span>
+              </Label>
+              <Input
+                id="name"
+                value={formData.name}
+                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                placeholder="User's full name"
+                disabled={isSubmitting}
+              />
+            </div>
+             <div className="space-y-2">
               <Label htmlFor="password">
                 Password {selectedUser && '(leave blank to keep current)'}
               </Label>
@@ -571,18 +666,6 @@ export default function UserManagement() {
               )}
             </div>
             <div className="space-y-2">
-              <Label htmlFor="name">
-                Name <span className="text-destructive">*</span>
-              </Label>
-              <Input
-                id="name"
-                value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                placeholder="User's full name"
-                disabled={isSubmitting}
-              />
-            </div>
-            <div className="space-y-2">
               <Label htmlFor="confirmPassword">Confirm Password</Label>
               <Input
                 id="confirmPassword"
@@ -591,6 +674,7 @@ export default function UserManagement() {
                 onChange={(e) => setFormData({ ...formData, confirmPassword: e.target.value })}
                 placeholder="Re-enter password"
                 disabled={isSubmitting}
+                required
               />
             </div>
             <div className="space-y-2">
@@ -599,7 +683,19 @@ export default function UserManagement() {
                 id="contactNumber"
                 type="tel"
                 value={formData.contactNumber}
-                onChange={(e) => setFormData({ ...formData, contactNumber: e.target.value })}
+                onChange={(e) => {
+                        let value = e.target.value;
+
+                        // Allow only digits and "+"
+                        value = value.replace(/[^0-9+]/g, "");
+
+                        // Ensure only one "+" at the start
+                        if (value.includes("+")) {
+                          value = "+" + value.replace(/\+/g, "");
+                        }
+
+                        setFormData({ ...formData, contactNumber: e.target.value });
+                }}
                 placeholder="09XXXXXXXXX or +639XXXXXXXXX"
                 disabled={isSubmitting}
               />

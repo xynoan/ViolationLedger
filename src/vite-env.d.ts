@@ -1,8 +1,6 @@
 /// <reference types="vite/client" />
+/// <reference types="google.maps" />
 
 interface ImportMetaEnv {
-  readonly VITE_GO2RTC_URL?: string;
-  readonly VITE_GO2RTC_WS_URL?: string;
-  readonly VITE_GO2RTC_PREVIEW_SRC?: string;
-  readonly VITE_DISABLE_WS?: string;
+  readonly VITE_GOOGLE_MAPS_API_KEY?: string;
 }

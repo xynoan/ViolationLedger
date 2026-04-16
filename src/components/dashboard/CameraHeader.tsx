@@ -33,14 +33,25 @@ const CameraHeaderComponent = function CameraHeader({
         </div>
       </div>
       <div className="flex items-center gap-2 flex-shrink-0">
-        <Badge variant={isOnline ? 'success' : 'destructive'}>
-          <span
-            className={cn(
-              'status-indicator mr-1.5',
-              isOnline ? 'status-active' : 'status-violation'
-            )}
-          />
-          {isOnline ? 'Online' : 'Offline'}
+        <Badge variant={isOnline ? 'success' : 'destructive'} className={cn(isOnline && 'gap-2 pl-2')}>
+          {isOnline ? (
+            <>
+              <span className="relative flex h-2 w-2 shrink-0" aria-hidden>
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400/70" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-600 dark:bg-emerald-400" />
+              </span>
+              <span className="animate-pulse font-semibold tracking-tight text-emerald-950 dark:text-emerald-50">Live</span>
+              <span className="text-emerald-800/35 dark:text-emerald-100/35" aria-hidden>
+                |
+              </span>
+              <span>Online</span>
+            </>
+          ) : (
+            <>
+              <span className={cn('status-indicator mr-1.5', 'status-violation')} />
+              Offline
+            </>
+          )}
         </Badge>
         {onEditStream && (
           <Button

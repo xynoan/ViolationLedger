@@ -1,6 +1,7 @@
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { ThemeProvider } from "@/components/theme-provider";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "@/hooks/useAuth";
@@ -10,7 +11,6 @@ import Login from "./pages/Login";
 import ActivateAccount from "./pages/ActivateAccount";
 import ResetPassword from "./pages/ResetPassword";
 import Vehicles from "./pages/Vehicles";
-import AddVehicleQuick from "./pages/AddVehicleQuick";
 import Visitors from "./pages/Visitors";
 import Residents from "./pages/Residents";
 import Cameras from "./pages/Cameras";
@@ -34,58 +34,59 @@ const queryClient = new QueryClient({
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
-      <Toaster />
-      <Sonner />
-      <AuthProvider>
-        <BrowserRouter
-          future={{
-            v7_startTransition: true,
-            v7_relativeSplatPath: true,
-          }}
-        >
-          <Routes>
-            <Route path="/login" element={<Login />} />
-            <Route path="/activate" element={<ActivateAccount />} />
-            <Route
-              path="/reset-password"
-              element={
-                <ProtectedRoute>
-                  <ResetPassword />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/*"
-              element={
-                <ProtectedRoute>
-                  <MainLayout>
-                    <Routes>
-                      <Route path="/" element={<Index />} />
-                      <Route path="/vehicles" element={<Vehicles />} />
-                      <Route path="/vehicles/add" element={<AddVehicleQuick />} />
-                      <Route path="/visitors" element={<Visitors />} />
-                      <Route path="/hosts" element={<Navigate to="/residents" replace />} />
-                      <Route path="/residents" element={<Residents />} />
-                      <Route path="/cameras" element={<Cameras />} />
-                      <Route path="/warnings" element={<Warnings />} />
-                      <Route path="/tickets" element={<Tickets />} />
-                      <Route path="/violations" element={<ViolationsHistory />} />
-                      <Route path="/upload" element={<UploadImage />} />
-                      <Route path="/settings" element={<Settings />} />
-                      <Route path="/analytics" element={<Navigate to="/" replace />} />
-                      <Route path="/users" element={<UserManagement />} />
-                      <Route path="/audit-logs" element={<AuditLogs />} />
-                      <Route path="*" element={<NotFound />} />
-                    </Routes>
-                  </MainLayout>
-                </ProtectedRoute>
-              }
-            />
-          </Routes>
-        </BrowserRouter>
-      </AuthProvider>
-    </TooltipProvider>
+    <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
+      <TooltipProvider>
+        <Toaster />
+        <Sonner />
+        <AuthProvider>
+          <BrowserRouter
+            future={{
+              v7_startTransition: true,
+              v7_relativeSplatPath: true,
+            }}
+          >
+            <Routes>
+              <Route path="/login" element={<Login />} />
+              <Route path="/activate" element={<ActivateAccount />} />
+              <Route
+                path="/reset-password"
+                element={
+                  <ProtectedRoute>
+                    <ResetPassword />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/*"
+                element={
+                  <ProtectedRoute>
+                    <MainLayout>
+                      <Routes>
+                        <Route path="/" element={<Index />} />
+                        <Route path="/vehicles" element={<Vehicles />} />
+                        <Route path="/visitors" element={<Visitors />} />
+                        <Route path="/hosts" element={<Navigate to="/residents" replace />} />
+                        <Route path="/residents" element={<Residents />} />
+                        <Route path="/cameras" element={<Cameras />} />
+                        <Route path="/warnings" element={<Warnings />} />
+                        <Route path="/tickets" element={<Tickets />} />
+                        <Route path="/violations" element={<ViolationsHistory />} />
+                        <Route path="/upload" element={<UploadImage />} />
+                        <Route path="/settings" element={<Settings />} />
+                        <Route path="/analytics" element={<Navigate to="/" replace />} />
+                        <Route path="/users" element={<UserManagement />} />
+                        <Route path="/audit-logs" element={<AuditLogs />} />
+                        <Route path="*" element={<NotFound />} />
+                      </Routes>
+                    </MainLayout>
+                  </ProtectedRoute>
+                }
+              />
+            </Routes>
+          </BrowserRouter>
+        </AuthProvider>
+      </TooltipProvider>
+    </ThemeProvider>
   </QueryClientProvider>
 );
 

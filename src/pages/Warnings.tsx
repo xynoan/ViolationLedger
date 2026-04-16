@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { AlertTriangle, CheckCircle, FlaskConical } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
@@ -7,18 +8,19 @@ import { Violation } from '@/types/parking';
 import { violationsAPI } from '@/lib/api';
 import { toast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
-import { useAuth } from '@/hooks/useAuth';
 
 export default function Warnings() {
   usePageTracking();
-  const { user } = useAuth();
+  const [searchParams] = useSearchParams();
+  const filterLocationId = useMemo(() => searchParams.get('locationId')?.trim() || '', [searchParams]);
+
   const [violations, setViolations] = useState<Violation[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [testSeedLoading, setTestSeedLoading] = useState(false);
   const [testSeedUnregLoading, setTestSeedUnregLoading] = useState(false);
-  const [assigningViolationId, setAssigningViolationId] = useState<string | null>(null);
   const activeWarnings = violations
     .filter(v => v.status === 'warning')
+    .filter((v) => !filterLocationId || v.cameraLocationId === filterLocationId)
     .sort((a, b) => {
       const aUrgent = a.unregisteredUrgent ? 1 : 0;
       const bUrgent = b.unregisteredUrgent ? 1 : 0;
@@ -47,8 +49,6 @@ export default function Warnings() {
         timeIssued: v.timeIssued ? new Date(v.timeIssued) : undefined,
         warningExpiresAt: v.warningExpiresAt ? new Date(v.warningExpiresAt) : undefined,
         smsSentAt: v.smsSentAt ? new Date(v.smsSentAt) : undefined,
-        ownerSmsScheduledAt: v.ownerSmsScheduledAt ? new Date(v.ownerSmsScheduledAt) : undefined,
-        assignedAt: v.assignedAt ? new Date(v.assignedAt) : undefined,
       }));
       setViolations(processedViolations);
     } catch (error) {
@@ -60,26 +60,6 @@ export default function Warnings() {
       });
     } finally {
       setIsLoading(false);
-    }
-  };
-
-  const handleAssignToMe = async (violationId: string) => {
-    setAssigningViolationId(violationId);
-    try {
-      await violationsAPI.assignToMe(violationId);
-      toast({
-        title: 'Assigned',
-        description: 'This warning is now assigned to you.',
-      });
-      await loadViolations();
-    } catch (error: any) {
-      toast({
-        title: 'Assign failed',
-        description: error?.message || 'Failed to assign warning',
-        variant: 'destructive',
-      });
-    } finally {
-      setAssigningViolationId(null);
     }
   };
 
@@ -202,6 +182,11 @@ export default function Warnings() {
       />
 
       <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
+        {filterLocationId ? (
+          <p className="text-xs text-muted-foreground rounded-md border border-border bg-muted/30 px-3 py-2">
+            Showing warnings for location <span className="font-medium text-foreground">{filterLocationId}</span> only.
+          </p>
+        ) : null}
         {activeWarnings.length > 0 ? (
           <>
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -244,9 +229,6 @@ export default function Warnings() {
                   onCancel={handleCancelWarning}
                   onIssueTicket={handleIssueTicket}
                   onSendSms={handleSendSms}
-                  onAssignToMe={handleAssignToMe}
-                  assigning={assigningViolationId === violation.id}
-                  currentUserId={user?.id || null}
                 />
               ))}
             </div>

@@ -38,7 +38,7 @@ function clampWarningExpiresAtForResponse(violation) {
   return w;
 }
 
-export async function createViolationFromDetection(plateNumber, cameraLocationId, detectionId = null) {
+export async function createViolationFromDetection(plateNumber, cameraLocationId, detectionId = null, class_name = 'vehicle') {
   try {
     if (!plateNumber || plateNumber.toUpperCase() === 'NONE' || plateNumber.toUpperCase() === 'BLUR') {
       return null;
