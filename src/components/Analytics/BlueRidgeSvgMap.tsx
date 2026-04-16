@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, ArrowDownRight, ArrowUpRight, CalendarDays, Camera, CheckCircle, ChevronLeft, ChevronRight, Clock3, ExternalLink, Globe, MapPin, Pause, Play, RotateCcw, ShieldCheck, X } from 'lucide-react';
+import { Activity, ArrowDownRight, ArrowUpRight, CalendarDays, Camera, CheckCircle, ChevronLeft, ChevronRight, Clock3, ExternalLink, Globe, MapPin, RotateCcw, ShieldCheck, X } from 'lucide-react';
 import { geoContains } from 'd3-geo';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
@@ -140,7 +140,6 @@ export function BlueRidgeSvgMap({ violations = [], cameras = [], className }: Bl
   const [period, setPeriod] = useState<TemporalPeriod>('day');
   const [currentDate, setCurrentDate] = useState<Date>(() => new Date());
   const [selectedStreetId, setSelectedStreetId] = useState<string | null>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
@@ -171,10 +170,6 @@ export function BlueRidgeSvgMap({ violations = [], cameras = [], className }: Bl
     else prev.setMonth(prev.getMonth() - 1);
     return periodRange(period, prev);
   }, [period, currentDate]);
-  const isAtPresent = useMemo(() => {
-    const now = new Date();
-    return periodRange(period, now).label === activeRange.label;
-  }, [period, activeRange.label]);
 
   const { projection, path, boundaryPolygon } = useMemo(
     () => createBlueRidgeMercatorEngine(BOUNDARY_FC, VIEW_W, VIEW_H, STREETS_FC),
@@ -528,19 +523,6 @@ export function BlueRidgeSvgMap({ violations = [], cameras = [], className }: Bl
     el.addEventListener('wheel', onWheel, { passive: false, capture: true });
     return () => el.removeEventListener('wheel', onWheel, true);
   }, [zoom, clampPan]);
-  useEffect(() => {
-    if (!isPlaying) return;
-    const timer = window.setInterval(() => {
-      setCurrentDate((prev) => {
-        const next = new Date(prev);
-        if (period === 'day') next.setDate(next.getDate() + 1);
-        else if (period === 'week') next.setDate(next.getDate() + 7);
-        else next.setMonth(next.getMonth() + 1);
-        return next;
-      });
-    }, 2000);
-    return () => window.clearInterval(timer);
-  }, [isPlaying, period]);
   const setZoomClamped = (next: number) => {
     const z = Math.min(2.6, Math.max(1, Number(next.toFixed(2))));
     setZoom(z);
@@ -551,7 +533,6 @@ export function BlueRidgeSvgMap({ violations = [], cameras = [], className }: Bl
     }
   };
   const shiftTemporal = (dir: -1 | 1) => {
-    setIsPlaying(false);
     setCurrentDate((prev) => {
       const next = new Date(prev);
       if (period === 'day') next.setDate(next.getDate() + dir);
@@ -561,7 +542,6 @@ export function BlueRidgeSvgMap({ violations = [], cameras = [], className }: Bl
     });
   };
   const resetTemporal = () => {
-    setIsPlaying(false);
     setCurrentDate(new Date());
   };
   const beginLiveViewDrag = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -637,29 +617,14 @@ export function BlueRidgeSvgMap({ violations = [], cameras = [], className }: Bl
       )}
     >
       <div className="mb-4 flex items-center justify-between gap-3">
-        <p className="text-sm font-semibold uppercase tracking-wide text-slate-300">Temporal Filter</p>
+        <p className="text-sm font-semibold uppercase tracking-wide text-slate-300">Enforcement Timeline</p>
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setIsPlaying((v) => !v)}
-            className={cn(
-              'inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium',
-              isPlaying
-                ? 'border-emerald-500/60 bg-emerald-500/15 text-emerald-300'
-                : 'border-slate-700 bg-[#0f172a] text-slate-300 hover:bg-slate-800',
-            )}
-            aria-label={isPlaying ? 'Pause temporal playback' : 'Play temporal playback'}
-          >
-            {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-            {isPlaying ? 'Pause' : 'Play'}
-          </button>
           <div className="inline-flex rounded-lg border border-slate-700 bg-[#0f172a] p-1">
             {(['day', 'week', 'month'] as const).map((p) => (
               <button
                 key={p}
                 type="button"
                 onClick={() => {
-                  setIsPlaying(false);
                   setPeriod(p);
                 }}
                 className={cn(
@@ -718,16 +683,14 @@ export function BlueRidgeSvgMap({ violations = [], cameras = [], className }: Bl
               aria-hidden="true"
             />
           </div>
-          {!isAtPresent ? (
-            <button
-              type="button"
-              onClick={resetTemporal}
-              className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-[#0f172a] px-2 py-1 text-xs text-slate-300 transition hover:bg-slate-800"
-            >
-              <RotateCcw className="h-3.5 w-3.5" />
-              Today
-            </button>
-          ) : null}
+          <button
+            type="button"
+            onClick={resetTemporal}
+            className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-[#0f172a] px-2 py-1 text-xs text-slate-300 transition hover:bg-slate-800"
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+            Today
+          </button>
         </div>
       </div>
 
