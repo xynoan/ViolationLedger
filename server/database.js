@@ -823,6 +823,33 @@ async function initDatabase() {
       console.log('Note: imageBase64 column migration:', errorMsg);
     }
   }
+
+  try {
+    db.run('ALTER TABLE detections ADD COLUMN reviewStatus TEXT');
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: detections.reviewStatus column migration:', errorMsg);
+    }
+  }
+
+  try {
+    db.run('ALTER TABLE detections ADD COLUMN reviewNote TEXT');
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: detections.reviewNote column migration:', errorMsg);
+    }
+  }
+
+  try {
+    db.run('ALTER TABLE detections ADD COLUMN flaggedAt TEXT');
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: detections.flaggedAt column migration:', errorMsg);
+    }
+  }
   
   // Create audit_logs table for tracking user activities
   db.run(`

@@ -140,6 +140,7 @@ function mockStreetMeta(metric: StreetMetric): { avgDuration: string; peakHour: 
 
 export function BlueRidgeSvgMap({ violations = [], cameras = [], focusStreetName = null, className }: BlueRidgeSvgMapProps) {
   const navigate = useNavigate();
+  const rootRef = useRef<HTMLDivElement | null>(null);
   const [period, setPeriod] = useState<TemporalPeriod>('day');
   const [currentDate, setCurrentDate] = useState<Date>(() => new Date());
   const [selectedStreetId, setSelectedStreetId] = useState<string | null>(null);
@@ -502,14 +503,15 @@ export function BlueRidgeSvgMap({ violations = [], cameras = [], focusStreetName
   const analysisPeriodLabel = activeRange.label;
   const canZoomOut = zoom > 1;
   const canZoomIn = zoom < 2.6;
-  const clampPan = useCallback((next: { x: number; y: number }) => {
-    const maxX = ((zoom - 1) * VIEW_W) / 2;
-    const maxY = ((zoom - 1) * VIEW_H) / 2;
+  const clampPanForZoom = useCallback((z: number, next: { x: number; y: number }) => {
+    const maxX = ((z - 1) * VIEW_W) / 2;
+    const maxY = ((z - 1) * VIEW_H) / 2;
     return {
       x: Math.max(-maxX, Math.min(maxX, next.x)),
       y: Math.max(-maxY, Math.min(maxY, next.y)),
     };
-  }, [zoom]);
+  }, []);
+  const clampPan = useCallback((next: { x: number; y: number }) => clampPanForZoom(zoom, next), [zoom, clampPanForZoom]);
 
   useEffect(() => {
     const target = String(focusStreetName || '').trim();
@@ -531,12 +533,12 @@ export function BlueRidgeSvgMap({ violations = [], cameras = [], focusStreetName
     const nextZoom = 1.8;
     setZoom(nextZoom);
     setPan(
-      clampPan({
+      clampPanForZoom(nextZoom, {
         x: VIEW_W / 2 - anchor.x,
         y: VIEW_H / 2 - anchor.y,
       }),
     );
-  }, [focusStreetName, streetAnchorByGeoName, clampPan]);
+  }, [focusStreetName, streetAnchorByGeoName, clampPanForZoom]);
   useEffect(() => {
     const el = viewportRef.current;
     if (!el) return;
@@ -560,9 +562,29 @@ export function BlueRidgeSvgMap({ violations = [], cameras = [], focusStreetName
     if (z === 1) {
       setPan({ x: 0, y: 0 });
     } else {
-      setPan((p) => clampPan(p));
+      setPan((p) => clampPanForZoom(z, p));
     }
   };
+  useEffect(() => {
+    const onPointerDown = (e: PointerEvent) => {
+      const root = rootRef.current;
+      if (!root || !selectedStreetId) return;
+      if (!root.contains(e.target as Node)) setSelectedStreetId(null);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      setSelectedStreetId(null);
+      setHoveredStreetId(null);
+      setHoveredStreet(null);
+      setLiveViewCamera(null);
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [selectedStreetId]);
   const shiftTemporal = (dir: -1 | 1) => {
     setCurrentDate((prev) => {
       const next = new Date(prev);
@@ -642,6 +664,7 @@ export function BlueRidgeSvgMap({ violations = [], cameras = [], focusStreetName
 
   return (
     <div
+      ref={rootRef}
       className={cn(
         'relative w-full rounded-xl bg-[#0b1220] p-4 text-slate-100',
         className,
@@ -827,6 +850,7 @@ export function BlueRidgeSvgMap({ violations = [], cameras = [], focusStreetName
                     <motion.path
                       key={street.key}
                       d={street.d}
+                      data-map-interactive={street.decorative ? undefined : 'true'}
                       fill="none"
                       animate={{
                         stroke: isSelected ? '#ffffff' : color,
@@ -1185,7 +1209,7 @@ export function BlueRidgeSvgMap({ violations = [], cameras = [], focusStreetName
                 <li
                   key={m.streetId}
                   className={cn(
-                    'rounded-md border text-sm',
+                    'group relative rounded-md border text-sm',
                     selectedStreetId === m.streetId
                       ? 'border-slate-400 bg-slate-700/40'
                       : 'border-slate-700 bg-slate-900/30',
@@ -1230,6 +1254,11 @@ export function BlueRidgeSvgMap({ violations = [], cameras = [], focusStreetName
                       })()}
                     </span>
                   </button>
+                  <div className="pointer-events-none absolute left-2 top-full z-30 mt-1 hidden w-[200px] rounded-md border border-slate-600/80 bg-slate-950/90 px-2.5 py-2 text-[11px] text-slate-100 shadow-xl backdrop-blur-sm group-hover:block">
+                    <p>{m.warnings} warning{m.warnings === 1 ? '' : 's'}</p>
+                    <p>{m.tickets} ticket{m.tickets === 1 ? '' : 's'}</p>
+                    <p className="mt-1 text-slate-300">Total: {m.warnings + m.tickets}</p>
+                  </div>
                 </li>
               ))}
             </ul>

@@ -260,6 +260,18 @@ export const detectionsAPI = {
   getByCamera: (cameraId: string) => fetchAPI(`/detections/camera/${cameraId}`, { cache: true }),
   getLatest: (cameraId: string) => fetchAPI(`/detections/camera/${cameraId}/latest`, { cache: true, timeout: 5000 }),
   getAll: () => fetchAPI('/detections/all', { cache: true }),
+  bulkDelete: (ids: string[]) =>
+    fetchAPI('/detections/bulk-delete', {
+      method: 'POST',
+      body: JSON.stringify({ ids }),
+      cache: false,
+    }),
+  flagForReview: (ids: string[], note?: string) =>
+    fetchAPI('/detections/flag', {
+      method: 'POST',
+      body: JSON.stringify({ ids, note }),
+      cache: false,
+    }),
   getLatestByPlates: (plateNumbers: string[]) =>
     fetchAPI(`/detections/latest/by-plates?plates=${encodeURIComponent(plateNumbers.join(','))}`, { cache: true }),
   getRecentPlates: (limit = 10) => fetchAPI(`/detections/plates/recent?limit=${limit}`, { cache: true }),

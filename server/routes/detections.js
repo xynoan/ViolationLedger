@@ -112,6 +112,42 @@ router.get('/all', (req, res) => {
   }
 });
 
+router.post('/bulk-delete', (req, res) => {
+  try {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map((x) => String(x).trim()).filter(Boolean) : [];
+    if (!ids.length) return res.status(400).json({ error: 'No detection ids provided' });
+    if (ids.length > 500) return res.status(400).json({ error: 'Too many ids in one request' });
+    const ph = ids.map(() => '?').join(',');
+    const result = db.prepare(`DELETE FROM detections WHERE id IN (${ph})`).run(...ids);
+    return res.json({ deleted: Number(result?.changes || 0) });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+router.post('/flag', (req, res) => {
+  try {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map((x) => String(x).trim()).filter(Boolean) : [];
+    const note = req.body?.note ? String(req.body.note).trim().slice(0, 500) : null;
+    if (!ids.length) return res.status(400).json({ error: 'No detection ids provided' });
+    if (ids.length > 500) return res.status(400).json({ error: 'Too many ids in one request' });
+    const flaggedAt = new Date().toISOString();
+    const ph = ids.map(() => '?').join(',');
+    const result = db
+      .prepare(
+        `UPDATE detections
+         SET reviewStatus = 'flagged',
+             reviewNote = ?,
+             flaggedAt = ?
+         WHERE id IN (${ph})`,
+      )
+      .run(note, flaggedAt, ...ids);
+    return res.json({ flagged: Number(result?.changes || 0), flaggedAt });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
 // Get latest detection timestamp for a list of plates.
 // Query: /api/detections/latest/by-plates?plates=ABC123,XYZ789
 router.get('/latest/by-plates', (req, res) => {
