@@ -6,7 +6,8 @@ import { componentTagger } from "lovable-tagger";
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
-  const go2rtcProxyTarget = env.GO2RTC_PROXY_TARGET || "http://127.0.0.1:1984";
+  const go2rtcProxyTarget =
+    env.VITE_GO2RTC_URL?.trim() || env.GO2RTC_PROXY_TARGET || "http://127.0.0.1:1984";
 
   return {
     server: {

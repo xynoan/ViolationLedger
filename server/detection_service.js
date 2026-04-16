@@ -12,6 +12,8 @@ import { dirname, join } from 'path';
 import db from './database.js';
 import { getDetectionEnabled } from './detection_state.js';
 import { createViolationFromDetection } from './routes/violations.js';
+import { getPythonExecutable } from './python_executable.js';
+import { sendSmsMessage } from './utils/smsService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -19,16 +21,25 @@ const __dirname = dirname(__filename);
 const DETECTION_WORKER_PATH = join(__dirname, 'detection_worker.py');
 const GO2RTC_RTSP_BASE = process.env.GO2RTC_RTSP_BASE || 'rtsp://127.0.0.1:8554';
 const SYNC_INTERVAL_MS = 30000; // Re-sync workers every 30s
-const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+const pythonCmd = getPythonExecutable();
 
 /** cameraId -> ChildProcess */
 const workers = new Map();
+
+/** cameraId -> RTSP URL this worker was started with (restart if config changes) */
+const workerRtspUrls = new Map();
+
+/** cameraId -> epoch ms; delay restarting after a failed worker exit */
+const workerBackoffUntil = new Map();
 
 /** cameraId -> Set<WebSocket> */
 const subscribers = new Map();
 
 /** cameraId -> latest worker status text */
 const workerStatuses = new Map();
+/** cameraId -> epoch ms last vehicle-only Barangay alert */
+const lastNoPlateAlertAt = new Map();
+const NO_PLATE_ALERT_COOLDOWN_MS = 5 * 60 * 1000;
 
 /** HTTP server for WebSocket upgrade */
 let wss = null;
@@ -165,6 +176,77 @@ function saveVehicleDetectionsFromWorker(cameraId, msg) {
   }
 }
 
+async function sendNoPlateBarangayAlert(cameraId, msg) {
+  const vehicles = Array.isArray(msg?.vehicles) ? msg.vehicles : [];
+  const plates = Array.isArray(msg?.plates) ? msg.plates : [];
+  const hasReadablePlate = plates.some(
+    (p) => p?.plateNumber && p.plateNumber !== 'NONE' && p.plateNumber !== 'BLUR'
+  );
+  if (!vehicles.length || hasReadablePlate) return;
+
+  const lastSentAt = lastNoPlateAlertAt.get(cameraId) || 0;
+  if (Date.now() - lastSentAt < NO_PLATE_ALERT_COOLDOWN_MS) return;
+  lastNoPlateAlertAt.set(cameraId, Date.now());
+
+  const camera = db.prepare('SELECT id, locationId, name FROM cameras WHERE id = ?').get(cameraId);
+  const locationLabel = camera?.locationId || 'Unknown location';
+  const cameraLabel = camera?.name || cameraId;
+  const nowIso = new Date().toISOString();
+
+  try {
+    const notificationId = `NOTIF-NOPLATE-${cameraId}-${Date.now()}`;
+    db.prepare(`
+      INSERT INTO notifications (
+        id, type, title, message, cameraId, locationId,
+        incidentId, detectionId, imageUrl, imageBase64,
+        plateNumber, timeDetected, reason, timestamp, read
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      notificationId,
+      'plate_not_visible',
+      'Vehicle detected with no readable plate',
+      `Vehicle detected at ${locationLabel} (${cameraLabel}) but no readable plate was captured. Barangay follow-up is required.`,
+      camera?.id || cameraId,
+      locationLabel,
+      null,
+      null,
+      msg?.imageUrl || null,
+      null,
+      'NONE',
+      nowIso,
+      'vehicle_detected_no_plate',
+      nowIso,
+      0
+    );
+  } catch (error) {
+    console.error('[Detection] Failed to create no-plate notification:', error?.message || error);
+  }
+
+  try {
+    const enforcers = db.prepare(`
+      SELECT id, name, contactNumber
+      FROM users
+      WHERE role = 'barangay_user'
+        AND status = 'active'
+        AND contactNumber IS NOT NULL
+        AND TRIM(contactNumber) != ''
+    `).all();
+    if (!enforcers.length) return;
+
+    const message = `Vehicle detected at ${locationLabel}, but plate number is not readable. Please check camera ${cameraLabel}.`;
+    for (const user of enforcers) {
+      const result = await sendSmsMessage(user.contactNumber, message);
+      if (!result.success) {
+        console.log(
+          `[Detection] No-plate SMS failed for user ${user.id} (${user.contactNumber}): ${result.error}`
+        );
+      }
+    }
+  } catch (error) {
+    console.error('[Detection] Failed sending no-plate Barangay SMS:', error?.message || error);
+  }
+}
+
 function broadcastStatus(cameraId, status, detail = null) {
   const text = detail || status;
   workerStatuses.set(cameraId, text);
@@ -186,10 +268,16 @@ function broadcastStatus(cameraId, status, detail = null) {
   }
 }
 
-function getOnlineCamerasWithDeviceId() {
+function getOnlineCamerasForDetection() {
   try {
-    const rows = db.prepare('SELECT id, deviceId FROM cameras WHERE status = ? AND deviceId IS NOT NULL AND deviceId != ?').all('online', '');
-    return rows.filter((r) => r.deviceId && String(r.deviceId).trim());
+    const rows = db.prepare(
+      'SELECT id, deviceId, detectionRtspUrl FROM cameras WHERE status = ?',
+    ).all('online');
+    return rows.filter((r) => {
+      const d = r.deviceId && String(r.deviceId).trim();
+      const u = r.detectionRtspUrl && String(r.detectionRtspUrl).trim();
+      return Boolean(d || u);
+    });
   } catch (e) {
     console.error('[Detection] DB error:', e);
     return [];
@@ -202,10 +290,27 @@ function buildRtspUrl(deviceId) {
   return `${base}/${stream}`;
 }
 
-function startWorker(cameraId, deviceId) {
+/** Full RTSP URL for the Python worker: per-camera override, else go2rtc base + stream name. */
+function resolveDetectionRtspUrl(cam) {
+  const override = cam.detectionRtspUrl && String(cam.detectionRtspUrl).trim();
+  if (override) {
+    if (/^rtsp:\/\//i.test(override)) return override;
+    console.warn(
+      `[Detection] Camera ${cam.id}: detectionRtspUrl must start with rtsp:// — falling back to go2rtc path`,
+    );
+  }
+  const deviceId = cam.deviceId && String(cam.deviceId).trim();
+  if (!deviceId) return null;
+  return buildRtspUrl(deviceId);
+}
+
+function startWorker(cameraId, rtspUrl) {
+  const backoffUntil = workerBackoffUntil.get(cameraId);
+  if (backoffUntil && Date.now() < backoffUntil) {
+    return;
+  }
   if (workers.has(cameraId)) return;
 
-  const rtspUrl = buildRtspUrl(deviceId);
   console.log(`[Detection] Starting worker for ${cameraId} -> ${rtspUrl}`);
   broadcastStatus(cameraId, 'loading_model', 'Loading model...');
 
@@ -235,6 +340,9 @@ function startWorker(cameraId, deviceId) {
         handleUnreadableVehicleDetections(cameraId, msg).catch((e) => {
           console.error('[Detection] handleUnreadableVehicleDetections error:', e);
         });
+        sendNoPlateBarangayAlert(cameraId, msg).catch((e) => {
+          console.error('[Detection] sendNoPlateBarangayAlert error:', e);
+        });
         saveVehicleDetectionsFromWorker(cameraId, msg);
         broadcast(cameraId, msg);
       } catch (e) {
@@ -245,12 +353,16 @@ function startWorker(cameraId, deviceId) {
 
   proc.stderr.on('data', (data) => {
     const str = data.toString().trim();
-    if (str) console.log(`[Worker ${cameraId}]`, str);
+    // Torch can emit frequent NNPACK CPU capability warnings on small VPS CPUs.
+    // They are noisy but non-fatal, so skip logging them.
+    if (str && !str.includes('NNPACK.cpp:56')) console.log(`[Worker ${cameraId}]`, str);
     if (str.includes('Loading model')) {
       broadcastStatus(cameraId, 'loading_model', 'Loading model...');
     } else if (str.includes('Model loaded') && str.includes('starting detection loop')) {
+      workerBackoffUntil.delete(cameraId);
       broadcastStatus(cameraId, 'starting_detection_loop', 'Starting detection loop...');
     } else if (str.includes('Model loaded')) {
+      workerBackoffUntil.delete(cameraId);
       broadcastStatus(cameraId, 'model_loaded', 'Model loaded');
     }
   });
@@ -258,8 +370,10 @@ function startWorker(cameraId, deviceId) {
   proc.on('close', (code, signal) => {
     workers.delete(cameraId);
     workerStatuses.delete(cameraId);
+    workerRtspUrls.delete(cameraId);
     if (code !== 0 && code !== null) {
       console.warn(`[Detection] Worker ${cameraId} exited: code=${code} signal=${signal}`);
+      workerBackoffUntil.set(cameraId, Date.now() + 20000);
     }
   });
 
@@ -267,9 +381,12 @@ function startWorker(cameraId, deviceId) {
     console.error(`[Detection] Worker ${cameraId} error:`, err);
     workers.delete(cameraId);
     workerStatuses.delete(cameraId);
+    workerRtspUrls.delete(cameraId);
+    workerBackoffUntil.set(cameraId, Date.now() + 20000);
   });
 
   workers.set(cameraId, proc);
+  workerRtspUrls.set(cameraId, rtspUrl);
 }
 
 function stopWorker(cameraId) {
@@ -278,6 +395,7 @@ function stopWorker(cameraId) {
     proc.kill('SIGTERM');
     workers.delete(cameraId);
     workerStatuses.delete(cameraId);
+    workerRtspUrls.delete(cameraId);
     console.log(`[Detection] Stopped worker for ${cameraId}`);
   }
 }
@@ -290,7 +408,7 @@ function syncWorkers() {
     return;
   }
 
-  const cameras = getOnlineCamerasWithDeviceId();
+  const cameras = getOnlineCamerasForDetection();
   const wanted = new Set(cameras.map((c) => c.id));
 
   for (const [cameraId] of workers) {
@@ -300,8 +418,16 @@ function syncWorkers() {
   }
 
   for (const cam of cameras) {
+    const rtspUrl = resolveDetectionRtspUrl(cam);
+    if (!rtspUrl) continue;
+
+    const runningUrl = workerRtspUrls.get(cam.id);
+    if (workers.has(cam.id) && runningUrl && runningUrl !== rtspUrl) {
+      stopWorker(cam.id);
+    }
+
     if (!workers.has(cam.id)) {
-      startWorker(cam.id, cam.deviceId);
+      startWorker(cam.id, rtspUrl);
     }
   }
 }

@@ -5,7 +5,7 @@ import db from '../database.js';
 import { pathToFileURL } from 'url';
 import { RESIDENT_STREET_OPTIONS, composeResidentAddress } from '../residentStreets.js';
 import { composeResidentDisplayName } from '../residentName.js';
-import { GRACE_PERIOD_MINUTES } from '../routes/violations.js';
+import { getGracePeriodMinutes } from '../runtime_config.js';
 
 const RESET_MODE = process.argv.includes('--reset');
 
@@ -551,17 +551,18 @@ function run() {
 
   const violations = [];
   let vioSeq = 0;
+  const gracePeriodMinutes = getGracePeriodMinutes();
 
   const pushViolation = (row) => {
     vioSeq += 1;
     violations.push({ ...row, id: id('VIO', vioSeq) });
   };
 
-  const graceMs = GRACE_PERIOD_MINUTES * 60 * 1000;
+  const graceMs = gracePeriodMinutes * 60 * 1000;
   for (const plate of platesWithActiveWarning) {
     const loc = cameras[randInt(rng, 0, numCameras - 1)].locationId;
     // warningExpiresAt is exactly timeDetected + grace (same as createViolationFromDetection). Age within
-    // [0, grace−1min] so the UI always shows between ~1 and GRACE_PERIOD_MINUTES minutes remaining.
+    // [0, grace−1min] so the UI always shows between ~1 and configured grace minutes remaining.
     const ageMs = rng() * Math.max(60 * 1000, graceMs - 60 * 1000);
     const detectedMs = Date.now() - ageMs;
     const detected = isoMs(detectedMs);
@@ -600,7 +601,7 @@ function run() {
       const detected = isoMs(detectedMs);
       const isWarning = st === 'warning';
       // Past warnings: expiry is still exactly grace after detection (always in the past here because hoursBack is large).
-      const expires = isWarning ? isoMs(detectedMs + GRACE_PERIOD_MINUTES * 60 * 1000) : null;
+      const expires = isWarning ? isoMs(detectedMs + gracePeriodMinutes * 60 * 1000) : null;
       pushViolation({
         ticketId: st === 'issued' ? `TCK-${100000 + vioSeq}` : null,
         plateNumber: plate,

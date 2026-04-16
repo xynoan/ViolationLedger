@@ -35,6 +35,7 @@ export default function Cameras() {
     name: '',
     locationId: '',
     deviceId: '',
+    detectionRtspUrl: '',
     isFixed: true,
     illegalParkingZone: true,
   });
@@ -46,10 +47,10 @@ export default function Cameras() {
     loadCameras();
   }, []);
 
-  const loadCameras = async () => {
+  const loadCameras = async (bypassCache = false) => {
     try {
       setIsLoading(true);
-      const data = await camerasAPI.getAll();
+      const data = await camerasAPI.getAll(bypassCache ? { cache: false } : undefined);
       console.log('Loaded cameras from API:', data);
       // Ensure deviceId is properly set (convert null/empty to undefined for frontend)
       const camerasWithDeviceId = data.map((camera: any) => {
@@ -85,7 +86,7 @@ export default function Cameras() {
         title: "Camera Deleted",
         description: "Camera has been removed successfully",
       });
-      await loadCameras();
+      await loadCameras(true);
     } catch (error: any) {
       console.error('Delete camera error:', error);
       toast({
@@ -139,10 +140,24 @@ export default function Cameras() {
       }
     }
 
+    const detectionRtsp =
+      newCamera.detectionRtspUrl && newCamera.detectionRtspUrl.trim()
+        ? newCamera.detectionRtspUrl.trim()
+        : null;
+
+    if (detectionRtsp && !/^rtsp:\/\//i.test(detectionRtsp)) {
+      toast({
+        title: 'Invalid detection URL',
+        description: 'Detection RTSP URL must start with rtsp://',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     try {
-      // For go2rtc/WebRTC streams we don't validate in the browser here.
-      // Assume online when a stream name is configured; backend or operator can adjust status later.
-      const cameraStatus: 'online' | 'offline' = deviceIdValue ? 'online' : 'offline';
+      // Online when go2rtc stream name and/or a direct detection RTSP URL is set.
+      const cameraStatus: 'online' | 'offline' =
+        deviceIdValue || detectionRtsp ? 'online' : 'offline';
 
       // Generate unique camera ID by checking existing IDs
       let cameraId = `CAM-${String(cameras.length + 1).padStart(3, '0')}`;
@@ -151,13 +166,14 @@ export default function Cameras() {
         counter++;
         cameraId = `CAM-${String(counter).padStart(3, '0')}`;
       }
-      
+
       const cameraData = {
         id: cameraId,
         name: newCamera.name.trim(),
         locationId: newCamera.locationId.trim(),
         status: cameraStatus,
         deviceId: deviceIdValue,
+        detectionRtspUrl: detectionRtsp || null,
         isFixed: newCamera.isFixed,
         illegalParkingZone: newCamera.illegalParkingZone,
       };
@@ -166,8 +182,15 @@ export default function Cameras() {
       const createdCamera = await camerasAPI.create(cameraData);
       console.log('Received created camera:', createdCamera);
       // Reload cameras to get the latest data
-      await loadCameras();
-      setNewCamera({ name: '', locationId: '', deviceId: '', isFixed: true, illegalParkingZone: true });
+      await loadCameras(true);
+      setNewCamera({
+        name: '',
+        locationId: '',
+        deviceId: '',
+        detectionRtspUrl: '',
+        isFixed: true,
+        illegalParkingZone: true,
+      });
       setIsDialogOpen(false);
       toast({
         title: "Camera Added",
@@ -296,6 +319,22 @@ export default function Cameras() {
                     `cam1` when you connect via <code>/go2rtc/api/ws?src=cam1</code>.
                   </p>
                 </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="detectionRtsp">Detection RTSP URL (optional)</Label>
+                  <Input
+                    id="detectionRtsp"
+                    placeholder="e.g., rtsp://user:pass@host:554/stream — overrides go2rtc for YOLO"
+                    value={newCamera.detectionRtspUrl}
+                    onChange={(e) =>
+                      setNewCamera((prev) => ({ ...prev, detectionRtspUrl: e.target.value }))
+                    }
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Leave empty to use <code className="text-xs">{'{GO2RTC_RTSP_BASE}'}</code> + stream name.
+                    Use a full <code className="text-xs">rtsp://</code> URL when go2rtc is not on this host or the
+                    stream path differs.
+                  </p>
+                </div>
                 {/* Camera Configuration Options */}
                 <div className="grid gap-4 pt-2 border-t border-border">
                   <div className="flex items-center space-x-2">
@@ -340,7 +379,7 @@ export default function Cameras() {
               <CameraFeed 
                 key={camera.id} 
                 camera={camera} 
-                onRefresh={loadCameras}
+                onRefresh={() => loadCameras(true)}
                 onDelete={handleDeleteCamera}
                 canDelete={isAdmin}
               />

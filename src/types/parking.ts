@@ -2,7 +2,15 @@ export interface Vehicle {
   id: string;
   plateNumber: string;
   ownerName: string;
+  ownerFirstName?: string;
+  ownerMiddleName?: string;
+  ownerLastName?: string;
+  ownerSuffix?: string;
   contactNumber: string;
+  houseNumber?: string;
+  streetName?: string;
+  barangay?: string;
+  city?: string;
   registeredAt: Date;
   dataSource?: string;
   residentId?: string;
@@ -32,6 +40,8 @@ export interface Resident {
   address?: string;
   houseNumber?: string;
   streetName?: string;
+  barangay?: string;
+  city?: string;
   createdAt: Date;
   residentStatus?: ResidentStatus;
   /** Homeowner or Tenant; default homeowner when unset (legacy rows). */
@@ -45,6 +55,8 @@ export interface Camera {
   status: 'online' | 'offline';
   lastCapture: Date;
   deviceId?: string;
+  /** When set, server-side YOLO uses this RTSP URL instead of GO2RTC_RTSP_BASE + deviceId. */
+  detectionRtspUrl?: string | null;
   isFixed?: boolean;
   illegalParkingZone?: boolean;
 }
@@ -81,6 +93,10 @@ export interface Violation {
   unregisteredUrgent?: boolean;
   /** When an SMS was successfully logged for this violation (from sms_logs). */
   smsSentAt?: Date;
+  ownerSmsScheduledAt?: Date;
+  assignedToUserId?: string | null;
+  assignedToName?: string | null;
+  assignedAt?: Date | null;
 }
 
 export type ViolationStatus = Violation['status'];

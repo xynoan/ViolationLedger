@@ -1,5 +1,5 @@
 import db from '../database.js';
-import { GRACE_PERIOD_MINUTES } from '../routes/violations.js';
+import { getGracePeriodMinutes } from '../runtime_config.js';
 
 // iProgSMS configuration
 const IPROGSMS_API_TOKEN = process.env.IPROGSMS_API_TOKEN || '';
@@ -111,7 +111,7 @@ export async function sendViolationSms(plateNumber, locationId, violationId) {
     const message =
       `Hi ${vehicle.ownerName}, ` +
       `your vehicle ${vehicle.plateNumber} was detected illegally parked at ${locationId} on ${currentTime}. ` +
-      `Please move it within ${GRACE_PERIOD_MINUTES} minutes to avoid ticket. - ViolationLedger`;
+      `Please move it within ${getGracePeriodMinutes()} minutes to avoid ticket. - ViolationLedger`;
 
     const smsResult = await sendSmsMessage(vehicle.contactNumber, message);
 

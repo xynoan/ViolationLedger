@@ -220,7 +220,6 @@ router.put('/:id', (req, res) => {
       streetName !== undefined
         ? (typeof streetName === 'string' ? streetName.trim() : '')
         : (resident.streetName || '').trim();
-
     if (!nextH) {
       return res.status(400).json({ error: 'House / lot number is required' });
     }

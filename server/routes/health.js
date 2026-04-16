@@ -8,6 +8,13 @@ import { dirname, join } from 'path';
 import fs from 'fs-extra';
 import { spawn } from 'child_process';
 import { getSmsServiceStatus } from '../utils/smsService.js';
+import { getPythonExecutable } from '../python_executable.js';
+import {
+  getGracePeriodMinutes,
+  getRuntimeConfig,
+  setGracePeriodMinutes,
+  setOwnerSmsDelayMinutes,
+} from '../runtime_config.js';
 
 function readEnvFile() {
   const envPath = join(__dirname, '..', '.env');
@@ -98,9 +105,8 @@ async function checkAIService() {
       };
     }
     
-    // Check if Python is available
-    const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
-    
+    const pythonCmd = getPythonExecutable();
+
     return new Promise((resolve) => {
       const testProcess = spawn(pythonCmd, ['--version'], { timeout: 5000 });
       let pythonAvailable = false;
@@ -160,6 +166,8 @@ async function checkAIService() {
 }
 
 function checkMonitoringServices() {
+  const ownerSmsDelay = monitoringService.getOwnerSmsDelayConfig();
+  const gracePeriodMinutes = getGracePeriodMinutes();
   return {
     monitoring: {
       status: monitoringService.isRunning ? 'healthy' : 'unhealthy',
@@ -178,6 +186,8 @@ function checkMonitoringServices() {
         ? 'Cleanup service is running (deletes empty detections older than 24 hours)' 
         : 'Cleanup service is not running'
     },
+    ownerSmsDelay,
+    gracePeriodMinutes,
   };
 }
 
@@ -211,6 +221,105 @@ router.post('/cleanup', async (req, res) => {
     res.status(500).json({ 
       success: false,
       error: error.message || 'Cleanup failed' 
+    });
+  }
+});
+
+router.get('/owner-sms-delay', (req, res) => {
+  try {
+    const config = monitoringService.getOwnerSmsDelayConfig();
+    res.json(config);
+  } catch (error) {
+    console.error('Get owner SMS delay config error:', error);
+    res.status(500).json({
+      error: error.message || 'Failed to load owner SMS delay config',
+    });
+  }
+});
+
+router.post('/owner-sms-delay', (req, res) => {
+  try {
+    const { disabledForDemo, delayMinutes } = req.body || {};
+    if (disabledForDemo !== undefined && typeof disabledForDemo !== 'boolean') {
+      return res.status(400).json({
+        error: 'disabledForDemo must be a boolean',
+      });
+    }
+    if (delayMinutes !== undefined) {
+      const parsedDelayMinutes = Number.parseInt(String(delayMinutes), 10);
+      if (!Number.isFinite(parsedDelayMinutes) || parsedDelayMinutes <= 0) {
+        return res.status(400).json({
+          error: 'delayMinutes must be a positive integer',
+        });
+      }
+      setOwnerSmsDelayMinutes(parsedDelayMinutes);
+    }
+    if (disabledForDemo !== undefined) {
+      monitoringService.setDisableOwnerSmsDelayForDemo(disabledForDemo);
+    }
+    const updated = monitoringService.getOwnerSmsDelayConfig();
+    res.json({
+      success: true,
+      ...updated,
+    });
+  } catch (error) {
+    console.error('Update owner SMS delay config error:', error);
+    res.status(500).json({
+      error: error.message || 'Failed to update owner SMS delay config',
+    });
+  }
+});
+
+router.get('/runtime-config', (req, res) => {
+  try {
+    const config = getRuntimeConfig();
+    res.json({
+      ...config,
+      ownerSmsDelayConfig: monitoringService.getOwnerSmsDelayConfig(),
+      gracePeriodMinutes: getGracePeriodMinutes(),
+    });
+  } catch (error) {
+    console.error('Get runtime config error:', error);
+    res.status(500).json({
+      error: error.message || 'Failed to load runtime config',
+    });
+  }
+});
+
+router.post('/runtime-config', (req, res) => {
+  try {
+    const { ownerSmsDelayMinutes, ownerSmsDelayDisabledForDemo, gracePeriodMinutes } = req.body || {};
+    if (ownerSmsDelayMinutes !== undefined) {
+      const parsedOwnerDelay = Number.parseInt(String(ownerSmsDelayMinutes), 10);
+      if (!Number.isFinite(parsedOwnerDelay) || parsedOwnerDelay <= 0) {
+        return res.status(400).json({ error: 'ownerSmsDelayMinutes must be a positive integer' });
+      }
+      setOwnerSmsDelayMinutes(parsedOwnerDelay);
+    }
+    if (ownerSmsDelayDisabledForDemo !== undefined) {
+      if (typeof ownerSmsDelayDisabledForDemo !== 'boolean') {
+        return res.status(400).json({ error: 'ownerSmsDelayDisabledForDemo must be a boolean' });
+      }
+      monitoringService.setDisableOwnerSmsDelayForDemo(ownerSmsDelayDisabledForDemo);
+    }
+    if (gracePeriodMinutes !== undefined) {
+      const parsedGracePeriod = Number.parseInt(String(gracePeriodMinutes), 10);
+      if (!Number.isFinite(parsedGracePeriod) || parsedGracePeriod <= 0) {
+        return res.status(400).json({ error: 'gracePeriodMinutes must be a positive integer' });
+      }
+      setGracePeriodMinutes(parsedGracePeriod);
+    }
+    const config = getRuntimeConfig();
+    res.json({
+      success: true,
+      ...config,
+      ownerSmsDelayConfig: monitoringService.getOwnerSmsDelayConfig(),
+      gracePeriodMinutes: getGracePeriodMinutes(),
+    });
+  } catch (error) {
+    console.error('Update runtime config error:', error);
+    res.status(500).json({
+      error: error.message || 'Failed to update runtime config',
     });
   }
 });

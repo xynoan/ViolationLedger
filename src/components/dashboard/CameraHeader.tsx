@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { Camera as CameraIcon, Trash2 } from 'lucide-react';
+import { Camera as CameraIcon, Settings2, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Camera } from '@/types/parking';
@@ -9,12 +9,14 @@ interface CameraHeaderProps {
   camera: Camera;
   isOnline: boolean;
   onDelete?: () => void;
+  onEditStream?: () => void;
 }
 
 const CameraHeaderComponent = function CameraHeader({
   camera,
   isOnline,
   onDelete,
+  onEditStream,
 }: CameraHeaderProps) {
   return (
     <div className="flex items-center justify-between p-4 border-b border-border">
@@ -51,6 +53,17 @@ const CameraHeaderComponent = function CameraHeader({
             </>
           )}
         </Badge>
+        {onEditStream && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onEditStream}
+            className="text-muted-foreground hover:text-foreground"
+            title="Detection RTSP URL"
+          >
+            <Settings2 className="h-4 w-4" />
+          </Button>
+        )}
         {onDelete && (
           <Button
             variant="ghost"

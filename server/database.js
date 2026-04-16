@@ -103,8 +103,13 @@ async function initDatabase() {
       name TEXT NOT NULL,
       contactNumber TEXT NOT NULL,
       address TEXT,
+      houseNumber TEXT,
+      streetName TEXT,
+      barangay TEXT,
+      city TEXT,
       createdAt TEXT NOT NULL,
-      residentStatus TEXT NOT NULL DEFAULT 'verified'
+      residentStatus TEXT NOT NULL DEFAULT 'verified',
+      residentType TEXT DEFAULT 'homeowner'
     )
   `);
 
@@ -136,6 +141,22 @@ async function initDatabase() {
     const errorMsg = error?.message || String(error);
     if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
       console.log('Note: residents.streetName migration:', errorMsg);
+    }
+  }
+  try {
+    db.run(`ALTER TABLE residents ADD COLUMN barangay TEXT`);
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: residents.barangay migration:', errorMsg);
+    }
+  }
+  try {
+    db.run(`ALTER TABLE residents ADD COLUMN city TEXT`);
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: residents.city migration:', errorMsg);
     }
   }
 
@@ -208,7 +229,15 @@ async function initDatabase() {
       id TEXT PRIMARY KEY,
       plateNumber TEXT NOT NULL UNIQUE,
       ownerName TEXT NOT NULL,
+      ownerFirstName TEXT,
+      ownerMiddleName TEXT,
+      ownerLastName TEXT,
+      ownerSuffix TEXT,
       contactNumber TEXT NOT NULL,
+      houseNumber TEXT,
+      streetName TEXT,
+      barangay TEXT,
+      city TEXT,
       registeredAt TEXT NOT NULL,
       dataSource TEXT NOT NULL DEFAULT 'barangay',
       residentId TEXT,
@@ -281,6 +310,70 @@ async function initDatabase() {
       console.log('Note: visitorCategory column migration:', errorMsg);
     }
   }
+  try {
+    db.run('ALTER TABLE vehicles ADD COLUMN ownerFirstName TEXT');
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: ownerFirstName column migration:', errorMsg);
+    }
+  }
+  try {
+    db.run('ALTER TABLE vehicles ADD COLUMN ownerMiddleName TEXT');
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: ownerMiddleName column migration:', errorMsg);
+    }
+  }
+  try {
+    db.run('ALTER TABLE vehicles ADD COLUMN ownerLastName TEXT');
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: ownerLastName column migration:', errorMsg);
+    }
+  }
+  try {
+    db.run('ALTER TABLE vehicles ADD COLUMN ownerSuffix TEXT');
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: ownerSuffix column migration:', errorMsg);
+    }
+  }
+  try {
+    db.run('ALTER TABLE vehicles ADD COLUMN houseNumber TEXT');
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: vehicles.houseNumber column migration:', errorMsg);
+    }
+  }
+  try {
+    db.run('ALTER TABLE vehicles ADD COLUMN streetName TEXT');
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: vehicles.streetName column migration:', errorMsg);
+    }
+  }
+  try {
+    db.run('ALTER TABLE vehicles ADD COLUMN barangay TEXT');
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: vehicles.barangay column migration:', errorMsg);
+    }
+  }
+  try {
+    db.run('ALTER TABLE vehicles ADD COLUMN city TEXT');
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: vehicles.city column migration:', errorMsg);
+    }
+  }
 
   try {
     db.run(`
@@ -333,6 +426,15 @@ async function initDatabase() {
       console.log('Note: illegalParkingZone column migration:', errorMsg);
     }
   }
+
+  try {
+    db.run('ALTER TABLE cameras ADD COLUMN detectionRtspUrl TEXT');
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: detectionRtspUrl column migration:', errorMsg);
+    }
+  }
   
   // Update existing cameras to have fixed and illegal parking zone enabled by default
   try {
@@ -352,7 +454,11 @@ async function initDatabase() {
       timeIssued TEXT,
       status TEXT NOT NULL CHECK(status IN ('warning', 'pending', 'issued', 'cancelled', 'cleared', 'resolved')),
       warningExpiresAt TEXT,
-      class_name TEXT
+      class_name TEXT,
+      ownerSmsScheduledAt TEXT,
+      assignedToUserId TEXT,
+      assignedToName TEXT,
+      assignedAt TEXT
     )
   `);
   
@@ -362,6 +468,38 @@ async function initDatabase() {
     // Violations table supports resolved status
   } catch (error) {
     // Ignore errors
+  }
+  try {
+    db.run('ALTER TABLE violations ADD COLUMN ownerSmsScheduledAt TEXT');
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: violations.ownerSmsScheduledAt migration:', errorMsg);
+    }
+  }
+  try {
+    db.run('ALTER TABLE violations ADD COLUMN assignedToUserId TEXT');
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: violations.assignedToUserId migration:', errorMsg);
+    }
+  }
+  try {
+    db.run('ALTER TABLE violations ADD COLUMN assignedToName TEXT');
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: violations.assignedToName migration:', errorMsg);
+    }
+  }
+  try {
+    db.run('ALTER TABLE violations ADD COLUMN assignedAt TEXT');
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: violations.assignedAt migration:', errorMsg);
+    }
   }
   
   db.run(`

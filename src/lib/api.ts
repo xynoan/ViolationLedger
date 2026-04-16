@@ -130,7 +130,8 @@ async function fetchAPI(
 
 // Cameras API
 export const camerasAPI = {
-  getAll: () => fetchAPI('/cameras', { cache: true }),
+  getAll: (opts?: { cache?: boolean }) =>
+    fetchAPI('/cameras', { cache: opts?.cache !== false }),
   getById: (id: string) => fetchAPI(`/cameras/${id}`, { cache: true }),
   create: (data: any) => fetchAPI('/cameras', {
     method: 'POST',
@@ -236,6 +237,11 @@ export const violationsAPI = {
       method: 'POST',
       timeout: 35000,
     }),
+  assignToMe: (id: string) =>
+    fetchAPI(`/violations/${encodeURIComponent(id)}/assign`, {
+      method: 'PUT',
+      cache: false,
+    }),
   /**
    * Dev / ALLOW_TEST_VIOLATION_SEED: inserts a random warning with random elapsed time since detection.
    */
@@ -326,6 +332,24 @@ export const detectionAPI = {
 // Health API
 export const healthAPI = {
   getStatus: () => fetchAPI('/health/status', { cache: false, timeout: 15000 }),
+  getOwnerSmsDelayConfig: () => fetchAPI('/health/owner-sms-delay', { cache: false }),
+  setOwnerSmsDelay: (payload: { disabledForDemo?: boolean; delayMinutes?: number }) =>
+    fetchAPI('/health/owner-sms-delay', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      cache: false,
+    }),
+  getRuntimeConfig: () => fetchAPI('/health/runtime-config', { cache: false }),
+  updateRuntimeConfig: (payload: {
+    ownerSmsDelayMinutes?: number;
+    ownerSmsDelayDisabledForDemo?: boolean;
+    gracePeriodMinutes?: number;
+  }) =>
+    fetchAPI('/health/runtime-config', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      cache: false,
+    }),
 };
 
 // Analytics API
@@ -352,6 +376,9 @@ export interface AnalyticsResponse {
       avgInfractionDurationMinutes: number | null;
       avgInfractionToActionMinutes: number | null;
       avgInfractionToActionLabel: string;
+      byVehicleType: Array<{ vehicleType: string; count: number }>;
+      topVehicleType: { vehicleType: string; count: number } | null;
+      aiNarrative: string | null;
       repeatOffenders: {
         uniqueVehicles: number;
         recurringVehicles: number;

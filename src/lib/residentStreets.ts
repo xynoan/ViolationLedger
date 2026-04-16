@@ -23,10 +23,18 @@ export const RESIDENT_STREET_SET = new Set<string>(RESIDENT_STREET_OPTIONS);
 export function formatResidentAddressLine(r: {
   houseNumber?: string;
   streetName?: string;
+  barangay?: string;
+  city?: string;
   address?: string;
 }): string {
   const h = (r.houseNumber || '').trim();
   const s = (r.streetName || '').trim();
-  if (h || s) return [h, s].filter(Boolean).join(' ');
+  const b = (r.barangay || '').trim();
+  const c = (r.city || '').trim();
+  if (h || s || b || c) {
+    const primary = [h, s].filter(Boolean).join(' ').trim();
+    const secondary = [b, c].filter(Boolean).join(', ').trim();
+    return [primary, secondary].filter(Boolean).join(', ');
+  }
   return (r.address || '').trim();
 }

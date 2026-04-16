@@ -42,6 +42,31 @@ function computeTrend(currentTotal, previousTotal) {
   return { currentTotal, previousTotal, delta, deltaPct };
 }
 
+function buildDescriptiveNarrative(payload) {
+  const trend = payload?.trends?.violations7d;
+  const topLocation = payload?.topLocation?.cameraLocationId || 'the monitored area';
+  const topVehicleType = payload?.topVehicleType?.vehicleType || 'unknown';
+  const topVehicleTypeCount = Number(payload?.topVehicleType?.count || 0);
+  const warnings = Number(payload?.totals?.warnings || 0);
+  const recurringPct = Number(payload?.repeatOffenders?.recurringPct || 0);
+  const delta = Number(trend?.delta || 0);
+  const deltaPct = Number(trend?.deltaPct || 0);
+
+  const trendLine = delta > 0
+    ? `- Violation volume is increasing (+${delta} / +${deltaPct}% over the last 7-day comparison window).`
+    : delta < 0
+      ? `- Violation volume is decreasing (${delta} / ${deltaPct}% over the last 7-day comparison window).`
+      : '- Violation volume is flat versus the previous 7-day comparison window.';
+
+  const riskLine = `- Highest concentration remains around ${topLocation}, with ${topVehicleType} leading violation type (${topVehicleTypeCount}).`;
+
+  const actionLine = warnings > 0
+    ? `- Immediate action: prioritize active warning follow-ups (${warnings} open) and enforce repeat-offender checks (${recurringPct.toFixed(2)}% recurring).`
+    : `- Recommended action: focus patrols in ${topLocation} and monitor repeat-offender share (${recurringPct.toFixed(2)}%) to prevent warning buildup.`;
+
+  return [trendLine, riskLine, actionLine].join('\n');
+}
+
 router.get('/', async (req, res) => {
   try {
     const { startDate, endDate, locationId } = req.query;
@@ -113,6 +138,17 @@ router.get('/', async (req, res) => {
       FROM violations 
       ${violationWhere}
       GROUP BY cameraLocationId
+      ORDER BY count DESC
+    `).all(...violationParams);
+
+    const violationsByVehicleType = db.prepare(`
+      SELECT
+        COALESCE(NULLIF(TRIM(v.vehicleType), ''), 'unknown') as vehicleType,
+        COUNT(*) as count
+      FROM violations viol
+      LEFT JOIN vehicles v ON UPPER(TRIM(v.plateNumber)) = UPPER(TRIM(viol.plateNumber))
+      ${violationWhere.replace('WHERE', 'WHERE 1=1 AND')}
+      GROUP BY COALESCE(NULLIF(TRIM(v.vehicleType), ''), 'unknown')
       ORDER BY count DESC
     `).all(...violationParams);
     
@@ -187,6 +223,7 @@ router.get('/', async (req, res) => {
     const recurringPct = uniqueVehicles > 0
       ? Number(((recurringVehicles / uniqueVehicles) * 100).toFixed(2))
       : 0;
+    const topVehicleType = violationsByVehicleType[0] || null;
 
     const now = new Date();
     const currentEndExclusive = endDate
@@ -442,6 +479,30 @@ router.get('/', async (req, res) => {
       LIMIT 8
     `).all(...violationParams);
 
+    const aiNarrative = buildDescriptiveNarrative({
+      period: {
+        startDate: startDate || null,
+        endDate: endDate || null,
+        locationId: locationId || null,
+      },
+      totals: {
+        violations: Number(totalViolations.count || 0),
+        warnings: Number(totalWarnings.count || 0),
+        detections: Number(totalDetections.count || 0),
+      },
+      trends: {
+        violations7d: violationsTrend,
+        warnings7d: warningsTrend,
+      },
+      topLocation: violationsByLocation[0] || null,
+      topVehicleType,
+      repeatOffenders: {
+        uniqueVehicles,
+        recurringVehicles,
+        recurringPct,
+      },
+    });
+
     res.json({
       users: {
         total: totalUsers.count,
@@ -488,7 +549,10 @@ router.get('/', async (req, res) => {
             delta,
             deltaPct,
             basis: 'previous_month_same_span'
-          }
+          },
+          byVehicleType: violationsByVehicleType,
+          topVehicleType,
+          aiNarrative
         },
         topResidents: topResidents.map((row) => ({ name: row.name, count: row.count })),
         topVisitors: topVisitors.map((row) => ({ plateNumber: row.plateNumber, count: row.count }))
