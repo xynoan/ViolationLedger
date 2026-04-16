@@ -80,6 +80,58 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       .map((plate) => String(plate || '').replace(/\s+/g, '').toUpperCase())
       .filter(Boolean)
   );
+  const plateDetectionsOnly = detections.filter((d) => d.class_name === 'plate');
+
+  const normalizePlate = (plate: unknown) => {
+    if (typeof plate !== 'string') return '';
+    return plate.replace(/\s+/g, '').toUpperCase();
+  };
+
+  const getAssociatedPlate = (detection: Detection) => {
+    const directPlate =
+      typeof detection.plateNumber === 'string' && detection.plateNumber.trim().length > 0
+        ? detection.plateNumber
+        : null;
+
+    if (directPlate) return directPlate;
+
+    if (detection.class_name === 'plate') {
+      return directPlate;
+    }
+
+    if (!plateDetectionsOnly.length || !detection.bbox || detection.bbox.length !== 4) {
+      return null;
+    }
+
+    const [x1, y1, x2, y2] = detection.bbox;
+    const vehicleCenterX = (x1 + x2) / 2;
+    const vehicleCenterY = (y1 + y2) / 2;
+
+    let bestPlate: string | null = null;
+    let bestDistance = Number.POSITIVE_INFINITY;
+
+    for (const plateDetection of plateDetectionsOnly) {
+      if (!plateDetection.bbox || plateDetection.bbox.length !== 4) continue;
+      const plateNumber = typeof plateDetection.plateNumber === 'string'
+        ? plateDetection.plateNumber.trim()
+        : '';
+      if (!plateNumber) continue;
+
+      const [px1, py1, px2, py2] = plateDetection.bbox;
+      const withinVehicle =
+        px1 >= x1 && py1 >= y1 && px2 <= x2 && py2 <= y2;
+      const plateCenterX = (px1 + px2) / 2;
+      const plateCenterY = (py1 + py2) / 2;
+      const distance = Math.hypot(vehicleCenterX - plateCenterX, vehicleCenterY - plateCenterY);
+
+      if (withinVehicle || distance < bestDistance) {
+        bestDistance = distance;
+        bestPlate = plateNumber;
+      }
+    }
+
+    return bestPlate;
+  };
 
   // Expose capture function via ref
   useImperativeHandle(ref, () => ({
@@ -264,37 +316,28 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
                     ? 'border-yellow-500 bg-yellow-500/20'
                     : detection.class_name === 'truck'
                       ? 'border-red-500 bg-red-500/20'
-                      : detection.class_name === 'bus'
+              : detection.class_name === 'bus'
                         ? 'border-green-500 bg-green-500/20'
                         : 'border-orange-500 bg-orange-500/20';
-          const plateLabel = (detection as { plateNumber?: unknown }).plateNumber;
+          const associatedPlate = getAssociatedPlate(detection);
+          const normalizedPlate = normalizePlate(associatedPlate);
+          const hasReadablePlate =
+            normalizedPlate.length > 0 &&
+            normalizedPlate !== 'NONE' &&
+            normalizedPlate !== 'BLUR';
           const isVehicleClass =
             detection.class_name === 'car' ||
             detection.class_name === 'motorcycle' ||
             detection.class_name === 'truck' ||
             detection.class_name === 'bus' ||
             detection.class_name === 'vehicle';
-          const normalizedPlate =
-            typeof plateLabel === 'string'
-              ? plateLabel.replace(/\s+/g, '').toUpperCase()
-              : '';
-          const hasReadablePlate =
-            typeof plateLabel === 'string' &&
-            plateLabel.trim().length > 0 &&
-            normalizedPlate !== 'NONE' &&
-            normalizedPlate !== 'BLUR';
-          const baseLabel = typeof plateLabel === 'string' && plateLabel.trim().length > 0
-            ? plateLabel
-            : `${detection.class_name} ${(detection.confidence * 100).toFixed(0)}%`;
-          const plateStatus =
-            registeredPlateSet.size > 0 && hasReadablePlate
+          const label = detection.class_name;
+          const residencyStatus =
+            hasReadablePlate
               ? registeredPlateSet.has(normalizedPlate)
-                ? 'Registered'
+                ? 'Resident'
                 : 'Unregistered'
               : null;
-          const label: string = isVehicleClass
-              ? `${baseLabel} Detected`
-              : baseLabel;
 
           return (
             <div
@@ -307,27 +350,34 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
                 height: `${height}px`,
               }}
             >
-              {plateStatus && (
+              {isVehicleClass && hasReadablePlate && residencyStatus !== null && (
                 <div
                   className={cn(
-                    'absolute -top-7 left-0 z-50 rounded-md border px-2 py-0.5 font-semibold shadow-lg backdrop-blur-sm',
-                    plateStatus === 'Registered'
-                      ? 'border-emerald-300 bg-emerald-600 text-white'
-                      : 'border-rose-300 bg-rose-600 text-white',
+                    'absolute top-1 left-1 z-50 rounded-md border bg-black/85 px-2 py-1 text-white shadow-lg backdrop-blur-sm',
+                    residencyStatus === 'Resident'
+                      ? 'border-emerald-300'
+                      : 'border-rose-300',
                     fullscreen ? 'text-xs' : 'text-[10px]'
                   )}
                 >
-                  {plateStatus}
+                  <div className="font-mono leading-none">
+                    {associatedPlate}
+                  </div>
+                  <div className="leading-none opacity-90">
+                    {residencyStatus}
+                  </div>
                 </div>
               )}
-              <div
-                className={cn(
-                  'absolute -top-6 left-0 bg-black/80 text-white px-2 py-0.5 rounded whitespace-nowrap',
-                  fullscreen ? 'text-xs' : 'text-[10px]'
-                )}
-              >
-                {label}
-              </div>
+              {isVehicleClass && (
+                <div
+                  className={cn(
+                    'absolute -top-6 left-0 bg-black/80 text-white px-2 py-0.5 rounded whitespace-nowrap',
+                    fullscreen ? 'text-xs' : 'text-[10px]'
+                  )}
+                >
+                  {label}
+                </div>
+              )}
             </div>
           );
         })}

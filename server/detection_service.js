@@ -73,16 +73,51 @@ async function handlePlateDetections(cameraId, msg) {
       }
 
       // createViolationFromDetection will:
-      // - ensure vehicle is registered
+      // - create or reuse a warning
+      // - create unreadable-plate warnings for NONE/BLUR when applicable
+      // - ensure readable registered plates can receive owner SMS
       // - create or update a 'warning' violation
-      // - send SMS to the vehicle owner
-      await createViolationFromDetection(normalized, locationId, null);
+      // - send SMS to the vehicle owner when possible
+      await createViolationFromDetection(normalized, locationId, null, 'vehicle');
     } catch (e) {
       console.error(
         '[Detection] Failed to create violation from RTSP plate detection',
         { cameraId, plate: normalized, error: e?.message || e }
       );
     }
+  }
+}
+
+async function handleUnreadableVehicleDetections(cameraId, msg) {
+  const vehicles = Array.isArray(msg?.vehicles) ? msg.vehicles : [];
+  if (!vehicles.length) return;
+
+  const plates = Array.isArray(msg?.plates) ? msg.plates : [];
+  const hasReadablePlate = plates.some((p) => {
+    const normalized = normalizePlateForMatch(p?.plateNumber);
+    return normalized && normalized !== 'NONE' && normalized !== 'BLUR';
+  });
+
+  if (hasReadablePlate) return;
+
+  try {
+    const camera = db
+      .prepare('SELECT id, locationId FROM cameras WHERE id = ?')
+      .get(cameraId);
+    const locationId = camera?.locationId;
+    if (!locationId) {
+      console.warn(
+        `[Detection] Skipping unreadable-plate warning on camera ${cameraId} - no locationId`
+      );
+      return;
+    }
+
+    await createViolationFromDetection('NONE', locationId, null, 'vehicle');
+  } catch (e) {
+    console.error(
+      '[Detection] Failed to create unreadable-plate warning from RTSP detection',
+      { cameraId, error: e?.message || e }
+    );
   }
 }
 
@@ -196,6 +231,9 @@ function startWorker(cameraId, deviceId) {
         // Fire-and-forget side effects; do not block broadcast.
         handlePlateDetections(cameraId, msg).catch((e) => {
           console.error('[Detection][SMS] handlePlateDetections error:', e);
+        });
+        handleUnreadableVehicleDetections(cameraId, msg).catch((e) => {
+          console.error('[Detection] handleUnreadableVehicleDetections error:', e);
         });
         saveVehicleDetectionsFromWorker(cameraId, msg);
         broadcast(cameraId, msg);

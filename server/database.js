@@ -351,7 +351,8 @@ async function initDatabase() {
       timeDetected TEXT NOT NULL,
       timeIssued TEXT,
       status TEXT NOT NULL CHECK(status IN ('warning', 'pending', 'issued', 'cancelled', 'cleared', 'resolved')),
-      warningExpiresAt TEXT
+      warningExpiresAt TEXT,
+      class_name TEXT
     )
   `);
   
