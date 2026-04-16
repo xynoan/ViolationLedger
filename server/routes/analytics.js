@@ -96,8 +96,9 @@ router.get('/', async (req, res) => {
       violationParams.push(locationId);
     }
 
-    // 1. USER ANALYTICS
+    // 1. USER / RESIDENT ANALYTICS
     const totalUsers = db.prepare('SELECT COUNT(*) as count FROM users').get();
+    const totalResidents = db.prepare('SELECT COUNT(*) as count FROM residents').get();
     const usersByRole = db.prepare(`
       SELECT role, COUNT(*) as count 
       FROM users 
@@ -510,6 +511,9 @@ router.get('/', async (req, res) => {
           acc[item.role] = item.count;
           return acc;
         }, {})
+      },
+      residents: {
+        total: totalResidents.count,
       },
       vehicles: {
         total: totalVehicles.count,

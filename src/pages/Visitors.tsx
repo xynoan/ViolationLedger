@@ -92,7 +92,7 @@ function purposeOptionsForCategory(cat: VisitorTab): readonly string[] {
   }
 }
 
-export default function Visitors() {
+export default function NonResidents() {
   usePageTracking();
   const { user } = useAuth();
   const isEncoder = user?.role === 'encoder';
@@ -128,7 +128,7 @@ export default function Visitors() {
       console.error('Error loading vehicles:', error);
       toast({
         title: 'Error',
-        description: 'Failed to load visitor vehicles. Make sure the backend server is running.',
+        description: 'Failed to load non-resident vehicles. Make sure the backend server is running.',
         variant: 'destructive',
       });
     } finally {
@@ -196,7 +196,7 @@ export default function Visitors() {
     if (isBarangayUser) {
       toast({
         title: 'Permission Denied',
-        description: 'Barangay users are not allowed to modify visitor vehicles.',
+        description: 'Barangay users are not allowed to modify non-resident vehicles.',
         variant: 'destructive',
       });
       return;
@@ -204,7 +204,7 @@ export default function Visitors() {
     if (vehicle && isEncoder) {
       toast({
         title: 'Permission Denied',
-        description: 'Encoders can only add new visitor vehicles, not edit existing ones.',
+        description: 'Encoders can only add new non-resident vehicles, not edit existing ones.',
         variant: 'destructive',
       });
       return;
@@ -237,7 +237,7 @@ export default function Visitors() {
     if (isBarangayUser) {
       toast({
         title: 'Permission Denied',
-        description: 'Barangay users are not allowed to modify visitor vehicles.',
+        description: 'Barangay users are not allowed to modify non-resident vehicles.',
         variant: 'destructive',
       });
       return;
@@ -293,7 +293,7 @@ export default function Visitors() {
     try {
       if (editingVehicle) {
         await vehiclesAPI.update(editingVehicle.id, payload);
-        toast({ title: 'Visitor Updated', description: 'Vehicle details updated successfully' });
+        toast({ title: 'Non-Resident Updated', description: 'Vehicle details updated successfully' });
       } else {
         const vehicleId = `VEH-${Date.now()}`;
         await vehiclesAPI.create({
@@ -301,7 +301,7 @@ export default function Visitors() {
           ...payload,
           dataSource: 'barangay',
         });
-        toast({ title: 'Visitor Registered', description: 'Visitor vehicle registered successfully' });
+        toast({ title: 'Non-Resident Registered', description: 'Vehicle registered successfully' });
       }
       handleCloseDialog();
       loadVehicles();
@@ -318,7 +318,7 @@ export default function Visitors() {
     if (isEncoder || isBarangayUser) {
       toast({
         title: 'Permission Denied',
-        description: 'You do not have permission to delete visitor vehicles.',
+        description: 'You do not have permission to delete non-resident vehicles.',
         variant: 'destructive',
       });
       return;
@@ -335,7 +335,7 @@ export default function Visitors() {
     setIsDeletingVehicle(true);
     try {
       await vehiclesAPI.delete(vehicleToDelete.id);
-      toast({ title: 'Vehicle Removed', description: 'Visitor vehicle removed from registry' });
+      toast({ title: 'Vehicle Removed', description: 'Non-resident vehicle removed from registry' });
       setVehicleToDelete(null);
       loadVehicles();
     } catch (error: unknown) {
@@ -361,7 +361,7 @@ export default function Visitors() {
   if (isInitialLoading) {
     return (
       <div className="min-h-screen">
-        <Header title="Visitors" subtitle="Guest, delivery, and short-term rental vehicles" />
+        <Header title="Non-Residents" subtitle="Guest, delivery, and short-term rental vehicles" />
         <div className="p-4 sm:p-6 flex items-center justify-center min-h-[50vh]">
           <div className="h-8 w-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
         </div>
@@ -371,7 +371,7 @@ export default function Visitors() {
 
   return (
     <div className="min-h-screen">
-      <Header title="Visitors" subtitle="Guest, delivery, and short-term rental vehicles" />
+      <Header title="Non-Residents" subtitle="Guest, delivery, and short-term rental vehicles" />
 
       <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
         <Tabs
@@ -417,15 +417,17 @@ export default function Visitors() {
               <DialogTrigger asChild>
                 <Button className="w-full sm:w-auto bg-green-600 text-white hover:bg-green-700">
                   <Plus className="h-4 w-4 mr-2" />
-                  Register Visitor
+                  Register Non-Resident
                 </Button>
               </DialogTrigger>
               <DialogContent className="bg-card border-border mx-4 sm:mx-auto max-w-[calc(100vw-2rem)] sm:max-w-4xl">
                 <DialogHeader>
-                  <DialogTitle>{editingVehicle ? 'Edit Visitor Vehicle' : 'Register Visitor'}</DialogTitle>
+                  <DialogTitle>
+                    {editingVehicle ? 'Edit Non-Resident Vehicle' : 'Register Non-Resident'}
+                  </DialogTitle>
                   <DialogDescription>
                     {editingVehicle
-                      ? 'Update visitor vehicle details.'
+                      ? 'Update non-resident vehicle details.'
                       : `Register a vehicle for ${activeTab === 'guest' ? 'an active guest' : activeTab === 'delivery' ? 'a delivery' : 'a short-term rental'}.`}
                   </DialogDescription>
                 </DialogHeader>
@@ -591,7 +593,7 @@ export default function Visitors() {
                       className="flex-1 bg-green-600 text-white hover:bg-green-700"
                       onClick={() => void handleSaveVehicle()}
                     >
-                      {editingVehicle ? 'Save Changes' : 'Register Visitor'}
+                      {editingVehicle ? 'Save Changes' : 'Register Non-Resident'}
                     </Button>
                   </DialogFooter>
                 </div>
@@ -688,7 +690,7 @@ export default function Visitors() {
                                   size="icon"
                                   onClick={() => requestDeleteVehicle(vehicle)}
                                   className={deleteButtonClassName}
-                                  aria-label="Delete visitor vehicle"
+                                  aria-label="Delete non-resident vehicle"
                                 >
                                   <Trash2 className="h-4 w-4" />
                                 </Button>
@@ -711,7 +713,7 @@ export default function Visitors() {
             >
               <AlertDialogContent>
                 <AlertDialogHeader>
-                  <AlertDialogTitle>Remove visitor vehicle</AlertDialogTitle>
+                  <AlertDialogTitle>Remove non-resident vehicle</AlertDialogTitle>
                   <AlertDialogDescription>
                     Are you sure you want to delete this record?
                     {vehicleToDelete && (
@@ -721,7 +723,7 @@ export default function Visitors() {
                         <span className="font-mono font-medium text-foreground">
                           {vehicleToDelete.plateNumber}
                         </span>{' '}
-                        from the visitor registry.
+                        from the non-resident registry.
                       </>
                     )}
                   </AlertDialogDescription>
@@ -749,7 +751,7 @@ export default function Visitors() {
         ) : !registryHasRows ? (
           <div className="glass-card rounded-xl p-8 sm:p-12 text-center">
             <UserPlus className="h-12 w-12 sm:h-16 sm:w-16 text-muted-foreground mx-auto mb-4" />
-            <h3 className="text-lg font-semibold text-foreground mb-2">No visitor vehicles yet</h3>
+            <h3 className="text-lg font-semibold text-foreground mb-2">No non-resident vehicles yet</h3>
             <p className="text-muted-foreground mb-6 text-sm max-w-md mx-auto">
               Register guests, deliveries, and short-term rentals here. Resident-linked vehicles stay on the Vehicles
               page.
@@ -757,7 +759,7 @@ export default function Visitors() {
             {!isBarangayUser && (
               <Button className="bg-green-600 text-white hover:bg-green-700" onClick={() => handleOpenDialog()}>
                 <Plus className="h-4 w-4 mr-2" />
-                Register Visitor
+                Register Non-Resident
               </Button>
             )}
           </div>
@@ -766,12 +768,12 @@ export default function Visitors() {
             <Info className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
             <h3 className="text-lg font-semibold text-foreground mb-2">No records in this tab</h3>
             <p className="text-muted-foreground mb-6 text-sm max-w-md mx-auto">
-              Switch tabs or register a visitor for this category.
+              Switch tabs or register a non-resident for this category.
             </p>
             {!isBarangayUser && (
               <Button className="bg-green-600 text-white hover:bg-green-700" onClick={() => handleOpenDialog()}>
                 <Plus className="h-4 w-4 mr-2" />
-                Register Visitor
+                Register Non-Resident
               </Button>
             )}
           </div>

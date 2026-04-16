@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Activity, ArrowDownRight, ArrowUpRight, CalendarDays, Camera, CheckCircle, ChevronLeft, ChevronRight, Clock3, ExternalLink, Globe, MapPin, RotateCcw, ShieldCheck, X } from 'lucide-react';
 import { geoContains } from 'd3-geo';
+import type { GeoPermissibleObjects } from 'd3-geo';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
@@ -28,6 +29,8 @@ function isLineGeometry(g: Geometry | null): g is LineString | MultiLineString {
 export type BlueRidgeSvgMapProps = {
   violations?: Violation[];
   cameras?: CameraRecord[];
+  /** When set, focuses and centers the map on the best-matching street segment. */
+  focusStreetName?: string | null;
   className?: string;
 };
 
@@ -135,7 +138,7 @@ function mockStreetMeta(metric: StreetMetric): { avgDuration: string; peakHour: 
   return { avgDuration: `${avg} mins`, peakHour: `${hour12}:00 ${suffix}` };
 }
 
-export function BlueRidgeSvgMap({ violations = [], cameras = [], className }: BlueRidgeSvgMapProps) {
+export function BlueRidgeSvgMap({ violations = [], cameras = [], focusStreetName = null, className }: BlueRidgeSvgMapProps) {
   const navigate = useNavigate();
   const [period, setPeriod] = useState<TemporalPeriod>('day');
   const [currentDate, setCurrentDate] = useState<Date>(() => new Date());
@@ -212,7 +215,7 @@ export function BlueRidgeSvgMap({ violations = [], cameras = [], className }: Bl
       const segments = f.geometry.type === 'LineString' ? [f.geometry.coordinates] : f.geometry.coordinates;
       for (const segment of segments) {
         for (const [lng, lat] of segment) {
-          if (!geoContains(boundaryPolygon as any, [lng, lat])) continue;
+          if (!geoContains(boundaryPolygon as GeoPermissibleObjects, [lng, lat])) continue;
           const p = projection([lng, lat]);
           if (!p) continue;
           const prev = sum.get(rawName) ?? { x: 0, y: 0, n: 0 };
@@ -226,6 +229,7 @@ export function BlueRidgeSvgMap({ violations = [], cameras = [], className }: Bl
     }
     return out;
   }, [projection, boundaryPolygon]);
+
   const cameraNodes = useMemo<CameraNode[]>(() => {
     const out: CameraNode[] = [];
     const occupied = new Set<string>();
@@ -506,6 +510,33 @@ export function BlueRidgeSvgMap({ violations = [], cameras = [], className }: Bl
       y: Math.max(-maxY, Math.min(maxY, next.y)),
     };
   }, [zoom]);
+
+  useEffect(() => {
+    const target = String(focusStreetName || '').trim();
+    if (!target) return;
+    const resident = mapGeoNameToResidentStreet(target);
+    const streetId = (resident ?? target).toLowerCase().replace(/\s+/g, '-');
+    setSelectedStreetId(streetId);
+
+    // Best-effort centering: use a geo anchor if available, otherwise keep selection only.
+    const anchor =
+      streetAnchorByGeoName.get(target) ??
+      (resident
+        ? geoNamesForResidentStreet(resident)
+            .map((n) => streetAnchorByGeoName.get(n))
+            .find(Boolean) ?? null
+        : null);
+    if (!anchor) return;
+
+    const nextZoom = 1.8;
+    setZoom(nextZoom);
+    setPan(
+      clampPan({
+        x: VIEW_W / 2 - anchor.x,
+        y: VIEW_H / 2 - anchor.y,
+      }),
+    );
+  }, [focusStreetName, streetAnchorByGeoName, clampPan]);
   useEffect(() => {
     const el = viewportRef.current;
     if (!el) return;
@@ -650,8 +681,9 @@ export function BlueRidgeSvgMap({ violations = [], cameras = [], className }: Bl
               onClick={() => {
                 const input = datePickerRef.current;
                 if (!input) return;
-                if (typeof (input as any).showPicker === 'function') {
-                  (input as any).showPicker();
+                const pickerInput = input as HTMLInputElement & { showPicker?: () => void };
+                if (typeof pickerInput.showPicker === 'function') {
+                  pickerInput.showPicker();
                 } else {
                   input.focus();
                   input.click();

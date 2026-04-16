@@ -47,8 +47,9 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from '@/hooks/use-toast';
-import { vehiclesAPI, residentsAPI, violationsAPI } from '@/lib/api';
+import { vehiclesAPI, residentsAPI, violationsAPI, detectionsAPI } from '@/lib/api';
 import { useAuth } from '@/hooks/useAuth';
 import { useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
@@ -83,6 +84,13 @@ function formatVehicleTypeLabel(value?: string): string {
 }
 
 const normPlate = (p: string) => String(p || '').replace(/\s+/g, '').toUpperCase();
+
+function formatLastSeenCompact(ts: string | null | undefined): string {
+  if (!ts) return '—';
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleString([], { year: '2-digit', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
 
 type OwnerSuggestSurface = 'inline' | 'dialog' | null;
 
@@ -145,6 +153,209 @@ function residentTypeBadgeClass(type: ResidentType): string {
     : 'border-blue-600/55 bg-blue-600 text-white shadow-none hover:bg-blue-600/95 dark:bg-blue-700';
 }
 
+function isResidentLinkedVehicle(vehicle: Vehicle): boolean {
+  return !!vehicle.residentId && String(vehicle.residentId).trim().length > 0;
+}
+
+function VehicleCategoryBadge({ vehicle }: { vehicle: Vehicle }) {
+  if (isResidentLinkedVehicle(vehicle)) {
+    return <Badge className="border-transparent bg-blue-900 text-blue-200 shadow-none">Resident</Badge>;
+  }
+
+  const cat = String(vehicle.visitorCategory ?? '').toLowerCase().trim();
+  if (cat === 'delivery') {
+    return <Badge className="border-transparent bg-orange-900 text-orange-200 shadow-none">Delivery</Badge>;
+  }
+
+  return <Badge className="border-transparent bg-purple-900 text-purple-200 shadow-none">Non-Resident</Badge>;
+}
+
+type MasterVehicleTableProps = {
+  vehicles: Vehicle[];
+  isAdmin: boolean;
+  isEncoder: boolean;
+  deleteButtonClassName: string;
+  getResidentNameForVehicle: (vehicle: Vehicle) => string | null;
+  onViewVehicle: (vehicle: Vehicle) => void;
+  onEditVehicle: (vehicle: Vehicle) => void;
+  onDeleteVehicle: (vehicle: Vehicle) => void;
+  lastSeenByPlate: Record<string, string | null>;
+  infractionCountByPlate: Record<string, number>;
+  isMetaLoading: boolean;
+};
+
+function MasterVehicleTable({
+  vehicles,
+  isAdmin,
+  isEncoder,
+  deleteButtonClassName,
+  getResidentNameForVehicle,
+  onViewVehicle,
+  onEditVehicle,
+  onDeleteVehicle,
+  lastSeenByPlate,
+  infractionCountByPlate,
+  isMetaLoading,
+}: MasterVehicleTableProps) {
+  const canDelete = isAdmin && !isEncoder;
+
+  const renderOwner = (vehicle: Vehicle) => getResidentNameForVehicle(vehicle) ?? vehicle.ownerName;
+  const renderLastSeen = (vehicle: Vehicle) => {
+    if (isMetaLoading) return '—';
+    const key = normPlate(vehicle.plateNumber);
+    const ts = lastSeenByPlate[key];
+    if (!ts) return '—';
+    const d = new Date(ts);
+    return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString();
+  };
+  const renderInfractions = (vehicle: Vehicle) => {
+    if (isMetaLoading) return '—';
+    const key = normPlate(vehicle.plateNumber);
+    return String(infractionCountByPlate[key] ?? 0);
+  };
+
+  return (
+    <>
+      <div className="block sm:hidden space-y-3">
+        {vehicles.map((vehicle) => {
+          const canEdit = canDelete && isResidentLinkedVehicle(vehicle);
+          return (
+            <div key={vehicle.id} className="glass-card rounded-xl p-4 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-mono font-medium text-lg">{vehicle.plateNumber}</span>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 shrink-0"
+                  onClick={() => onViewVehicle(vehicle)}
+                  aria-label="View vehicle"
+                >
+                  <Info className="h-4 w-4" />
+                </Button>
+              </div>
+
+              <div className="text-sm text-muted-foreground">{formatVehicleTypeLabel(vehicle.vehicleType)}</div>
+
+              <div className="flex items-start justify-between gap-3">
+                <div className="text-sm text-foreground font-medium">{renderOwner(vehicle)}</div>
+                <VehicleCategoryBadge vehicle={vehicle} />
+              </div>
+
+              {!isResidentLinkedVehicle(vehicle) ? (
+                <div className="text-xs text-muted-foreground">Contact: {vehicle.contactNumber || '—'}</div>
+              ) : null}
+
+              <div className="text-xs text-muted-foreground">Last seen: {renderLastSeen(vehicle)}</div>
+              <div className="text-xs text-muted-foreground">Infractions: {renderInfractions(vehicle)}</div>
+
+              <div className="text-xs text-muted-foreground">
+                Date registered: {new Date(vehicle.registeredAt).toLocaleDateString()}
+              </div>
+
+              {canDelete && (canEdit || canDelete) ? (
+                <div className="flex items-center gap-1 pt-1">
+                  {canEdit ? (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => onEditVehicle(vehicle)}
+                      aria-label="Edit vehicle"
+                    >
+                      <Edit className="h-4 w-4" />
+                    </Button>
+                  ) : null}
+
+                  {canDelete ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      onClick={() => onDeleteVehicle(vehicle)}
+                      className={deleteButtonClassName}
+                      aria-label="Delete vehicle"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="glass-card rounded-xl overflow-hidden hidden sm:block">
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow className="border-border hover:bg-transparent">
+                <TableHead className="text-muted-foreground">Plate Number</TableHead>
+                <TableHead className="text-muted-foreground">Vehicle Type</TableHead>
+                <TableHead className="text-muted-foreground">Owner</TableHead>
+                <TableHead className="text-muted-foreground">Category</TableHead>
+                <TableHead className="text-muted-foreground">Last Seen</TableHead>
+                <TableHead className="text-muted-foreground">Infractions</TableHead>
+                <TableHead className="text-muted-foreground">Date Registered</TableHead>
+                <TableHead className="text-muted-foreground text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {vehicles.map((vehicle) => {
+                const canEdit = canDelete && isResidentLinkedVehicle(vehicle);
+                return (
+                  <TableRow key={vehicle.id} className="border-border">
+                    <TableCell className="font-mono font-medium">{vehicle.plateNumber}</TableCell>
+                    <TableCell>{formatVehicleTypeLabel(vehicle.vehicleType)}</TableCell>
+                    <TableCell className="font-medium">{renderOwner(vehicle)}</TableCell>
+                    <TableCell>
+                      <VehicleCategoryBadge vehicle={vehicle} />
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{renderLastSeen(vehicle)}</TableCell>
+                    <TableCell className="text-muted-foreground">{renderInfractions(vehicle)}</TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {new Date(vehicle.registeredAt).toLocaleDateString()}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => onViewVehicle(vehicle)}
+                          aria-label="View vehicle"
+                        >
+                          <Info className="h-4 w-4" />
+                        </Button>
+                        {canEdit ? (
+                          <Button variant="ghost" size="icon" onClick={() => onEditVehicle(vehicle)}>
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                        ) : null}
+                        {canDelete ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            onClick={() => onDeleteVehicle(vehicle)}
+                            className={deleteButtonClassName}
+                            aria-label="Delete vehicle"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        ) : null}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </div>
+      </div>
+    </>
+  );
+}
+
 export default function Vehicles() {
   usePageTracking();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -154,11 +365,19 @@ export default function Vehicles() {
    const isBarangayUser = user?.role === 'barangay_user';
    const isAdmin = user?.role === 'admin';
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
+  const [allVehicles, setAllVehicles] = useState<Vehicle[]>([]);
   const [residents, setResidents] = useState<Resident[]>([]);
   const [violations, setViolations] = useState<Violation[]>([]);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [vehicleTab, setVehicleTab] = useState<'all' | 'residents' | 'non-residents'>('all');
+  const [lastSeenByPlate, setLastSeenByPlate] = useState<Record<string, string | null>>({});
+  const [infractionCountByPlate, setInfractionCountByPlate] = useState<Record<string, number>>({});
+  const [isMetaLoading, setIsMetaLoading] = useState(false);
+  const [recentlyDetectedPlates, setRecentlyDetectedPlates] = useState<
+    Array<{ plateNumber: string; lastSeen: string | null }>
+  >([]);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
   const [editingVehicle, setEditingVehicle] = useState<Vehicle | null>(null);
@@ -175,6 +394,7 @@ export default function Vehicles() {
   const ownerComboInlineRef = useRef<HTMLDivElement>(null);
   const ownerComboDialogRef = useRef<HTMLDivElement>(null);
   const plateInputRef = useRef<HTMLInputElement>(null);
+  const ownerNameInputRef = useRef<HTMLInputElement>(null);
   const registrationSectionRef = useRef<HTMLElement>(null);
 
   // Load vehicles from API
@@ -196,6 +416,7 @@ export default function Vehicles() {
       }
       const data = await vehiclesAPI.getAll(term || undefined);
       setVehicles(data);
+      if (initial || !term) setAllVehicles(data);
     } catch (error) {
       console.error('Error loading vehicles:', error);
       toast({
@@ -228,6 +449,97 @@ export default function Vehicles() {
   useEffect(() => {
     loadResidents();
   }, [loadResidents]);
+
+  // Load plate-linked metadata (Last Seen + Infractions) + recent unknown-plate suggestions.
+  useEffect(() => {
+    let cancelled = false;
+
+    const run = async () => {
+      if (!allVehicles.length) return;
+
+      const plateNumbersRaw = Array.from(
+        new Set(allVehicles.map((v) => String(v.plateNumber || '').trim()).filter(Boolean)),
+      );
+      if (!plateNumbersRaw.length) return;
+
+      const registeredPlateKeys = new Set(plateNumbersRaw.map(normPlate));
+
+      setIsMetaLoading(true);
+      try {
+        // Last Seen (detection)
+        const lastSeenTemp: Record<string, string | null> = {};
+        for (let i = 0; i < plateNumbersRaw.length; i += 60) {
+          const chunk = plateNumbersRaw.slice(i, i + 60);
+          const rows = await detectionsAPI.getLatestByPlates(chunk);
+          rows.forEach((r: { plateNumber: string; lastSeen: string | null }) => {
+            lastSeenTemp[normPlate(r.plateNumber)] = r.lastSeen;
+          });
+        }
+        if (!cancelled) setLastSeenByPlate(lastSeenTemp);
+
+        // Infractions count (violations)
+        const infTemp: Record<string, number> = {};
+        for (let i = 0; i < plateNumbersRaw.length; i += 60) {
+          const chunk = plateNumbersRaw.slice(i, i + 60);
+          const rows = await violationsAPI.getInfractionCountByPlates(chunk);
+          rows.forEach((r: { plateNumber: string; infractionCount: number }) => {
+            infTemp[normPlate(r.plateNumber)] = r.infractionCount;
+          });
+        }
+        if (!cancelled) setInfractionCountByPlate(infTemp);
+      } catch (error) {
+        if (!cancelled) {
+          // Keep UI usable even if meta endpoints fail.
+          setRecentlyDetectedPlates([]);
+          setLastSeenByPlate({});
+          setInfractionCountByPlate({});
+        }
+        console.error('Failed to load plate metadata:', error);
+      } finally {
+        if (!cancelled) setIsMetaLoading(false);
+      }
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [allVehicles, isBarangayUser]);
+
+  // Poll unknown-plate suggestions (rapid-entry UX).
+  useEffect(() => {
+    if (isBarangayUser) return;
+    if (!allVehicles.length) return;
+
+    let cancelled = false;
+    const registeredPlateKeys = new Set(allVehicles.map((v) => normPlate(v.plateNumber)));
+
+    const tick = async () => {
+      try {
+        const recent = await detectionsAPI.getRecentPlates(12);
+        const unknown = recent
+          .map((r: { plateNumber: string; lastSeen: string | null }) => ({
+            plateNumber: r.plateNumber,
+            lastSeen: r.lastSeen,
+          }))
+          .filter((r) => !registeredPlateKeys.has(normPlate(r.plateNumber)));
+
+        if (!cancelled) setRecentlyDetectedPlates(unknown);
+      } catch {
+        // Non-fatal: keep the current suggestions.
+      }
+    };
+
+    void tick();
+    const id = window.setInterval(() => {
+      void tick();
+    }, 25000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [allVehicles, isBarangayUser]);
 
   useEffect(() => {
     let cancelled = false;
@@ -299,18 +611,59 @@ export default function Vehicles() {
     return filteredLinkedVehicles.filter((v) => v.residentId === residentFilterId);
   }, [filteredLinkedVehicles, residentFilterId]);
 
+  const nonResidentVehicles = useMemo(
+    () =>
+      vehicles.filter(
+        (v) => !v.residentId || (typeof v.residentId === 'string' && v.residentId.trim() === ''),
+      ),
+    [vehicles],
+  );
+
+  const filteredNonResidentVehicles = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    if (!q) return nonResidentVehicles;
+    return nonResidentVehicles.filter(
+      (v) => v.plateNumber.toLowerCase().includes(q) || v.ownerName.toLowerCase().includes(q),
+    );
+  }, [nonResidentVehicles, searchTerm]);
+
+  type VehicleCategoryTab = 'all' | 'residents' | 'non-residents';
+  const effectiveVehicleTab: VehicleCategoryTab = residentFilterId ? 'residents' : vehicleTab;
+
+  const vehiclesForTab = useMemo((): Vehicle[] => {
+    if (effectiveVehicleTab === 'residents') return displayedLinkedVehicles;
+    if (effectiveVehicleTab === 'non-residents') return filteredNonResidentVehicles;
+    return [...displayedLinkedVehicles, ...filteredNonResidentVehicles];
+  }, [effectiveVehicleTab, displayedLinkedVehicles, filteredNonResidentVehicles]);
+
   const ownerQuery = formData.ownerName.trim().toLowerCase();
-  const suggestedResidents = useMemo(() => {
+  type OwnerKind = 'resident' | 'visitor';
+  const suggestedOwners = useMemo(() => {
+    const kindFromResident = (r: Resident): OwnerKind => (r.residentStatus === 'guest' ? 'visitor' : 'resident');
+
     if (!residents.length) return [];
     const q = ownerQuery;
-    const filtered = residents.filter((r) => {
+    const matchesQuery = (r: Resident) => {
       if (!q) return true;
       const name = r.name.toLowerCase();
-      const phone = r.contactNumber.replace(/\D/g, '');
+      const phone = String(r.contactNumber || '').replace(/\D/g, '');
       const qDigits = q.replace(/\D/g, '');
       return name.includes(q) || (qDigits.length > 0 && phone.includes(qDigits));
-    });
-    return filtered.slice(0, 12);
+    };
+
+    const residentMatches = residents
+      .filter((r) => kindFromResident(r) === 'resident')
+      .filter(matchesQuery)
+      .map((resident) => ({ kind: 'resident' as const, resident }));
+
+    const visitorMatches = residents
+      .filter((r) => kindFromResident(r) === 'visitor')
+      .filter(matchesQuery)
+      .map((resident) => ({ kind: 'visitor' as const, resident }));
+
+    return [...residentMatches, ...visitorMatches]
+      .sort((a, b) => a.resident.name.localeCompare(b.resident.name))
+      .slice(0, 12);
   }, [residents, ownerQuery]);
 
   useEffect(() => {
@@ -511,6 +864,15 @@ export default function Vehicles() {
     setOwnerSuggestSurface(null);
   }, []);
 
+  const applyDetectedPlate = useCallback((plate: string) => {
+    const nextPlate = plate.trim().toUpperCase();
+    setFormData((prev) => ({ ...prev, plateNumber: nextPlate, ownerName: '', residentId: '' }));
+    setOwnerSuggestSurface(null);
+    requestAnimationFrame(() => {
+      ownerNameInputRef.current?.focus();
+    });
+  }, []);
+
   const getResidentNameForVehicle = (vehicle: Vehicle) => {
     if (!vehicle.residentId) return null;
     const resident = residents.find((r) => r.id === vehicle.residentId);
@@ -531,6 +893,13 @@ export default function Vehicles() {
     );
     return getStandingPresentation(unpaid);
   }, [residentForInfoDialog, vehicles, violations]);
+
+  const nonResidentForInfoDialog = useMemo(() => {
+    if (!selectedVehicle) return null;
+    const rid = selectedVehicle.residentId;
+    if (rid && String(rid).trim() !== '') return null;
+    return selectedVehicle;
+  }, [selectedVehicle]);
 
   const requestDeleteVehicle = (vehicle: Vehicle) => {
     if (isEncoder || isBarangayUser) {
@@ -646,18 +1015,69 @@ export default function Vehicles() {
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               <div className="space-y-2">
                 <Label htmlFor="reg-plateNumber">Plate number *</Label>
-                <Input
-                  ref={plateInputRef}
-                  id="reg-plateNumber"
-                  placeholder="ABC 1234"
-                  value={formData.plateNumber}
-                  onChange={(e) =>
-                    setFormData({ ...formData, plateNumber: e.target.value.toUpperCase() })
-                  }
-                  className="bg-secondary uppercase"
-                  autoCapitalize="characters"
-                  spellCheck={false}
-                />
+
+                <div className="flex gap-2 items-start">
+                  <div className="flex-1">
+                    <Input
+                      ref={plateInputRef}
+                      id="reg-plateNumber"
+                      placeholder="ABC 1234"
+                      value={formData.plateNumber}
+                      onChange={(e) =>
+                        setFormData({ ...formData, plateNumber: e.target.value.toUpperCase() })
+                      }
+                      className="bg-secondary uppercase"
+                      autoCapitalize="characters"
+                      spellCheck={false}
+                    />
+                  </div>
+
+                  {!isBarangayUser && formData.plateNumber.trim() === '' && recentlyDetectedPlates.length > 0 ? (
+                    <div className="hidden sm:block w-[220px]">
+                      <p className="text-xs text-muted-foreground font-semibold">Recently Detected</p>
+                      <ul className="mt-2 space-y-1">
+                        {recentlyDetectedPlates.slice(0, 5).map((d) => (
+                          <li key={d.plateNumber}>
+                            <button
+                              type="button"
+                              className="w-full text-left px-2 py-1.5 rounded-md bg-popover border border-border hover:bg-accent hover:text-accent-foreground"
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={() => applyDetectedPlate(d.plateNumber)}
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="font-mono font-medium text-sm">{d.plateNumber}</span>
+                                {d.lastSeen ? <span className="text-[11px] text-muted-foreground">{formatLastSeenCompact(d.lastSeen)}</span> : null}
+                              </div>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                </div>
+
+                {!isBarangayUser && formData.plateNumber.trim() === '' && recentlyDetectedPlates.length > 0 ? (
+                  <div className="sm:hidden">
+                    <p className="text-xs text-muted-foreground font-semibold">Recently Detected</p>
+                    <ul className="mt-2 space-y-1">
+                      {recentlyDetectedPlates.slice(0, 5).map((d) => (
+                        <li key={d.plateNumber}>
+                          <button
+                            type="button"
+                            className="w-full text-left px-2 py-1.5 rounded-md bg-popover border border-border hover:bg-accent hover:text-accent-foreground"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => applyDetectedPlate(d.plateNumber)}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-mono font-medium text-sm">{d.plateNumber}</span>
+                              {d.lastSeen ? <span className="text-[11px] text-muted-foreground">{formatLastSeenCompact(d.lastSeen)}</span> : null}
+                            </div>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
               </div>
               <div className="space-y-2">
                 <Label htmlFor="reg-vehicleType">Vehicle type *</Label>
@@ -682,6 +1102,7 @@ export default function Vehicles() {
                 <div ref={ownerComboInlineRef} className="relative">
                   <div className="relative">
                     <Input
+                      ref={ownerNameInputRef}
                       id="reg-ownerName"
                       placeholder="Search or type owner name…"
                       value={formData.ownerName}
@@ -727,7 +1148,7 @@ export default function Vehicles() {
                     ) : null}
                     <ChevronDown className="absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground pointer-events-none" />
                   </div>
-                  {ownerSuggestSurface === 'inline' && suggestedResidents.length > 0 ? (
+                  {ownerSuggestSurface === 'inline' && suggestedOwners.length > 0 ? (
                     <ul
                       id="resident-owner-suggestions-inline"
                       role="listbox"
@@ -735,21 +1156,35 @@ export default function Vehicles() {
                         'absolute z-[100] mt-1 max-h-48 w-full overflow-auto rounded-md border border-border bg-popover py-1 shadow-md',
                       )}
                     >
-                      {suggestedResidents.map((r) => (
-                        <li key={r.id} role="option" aria-selected={formData.residentId === r.id}>
+                      {suggestedOwners.map(({ kind, resident }) => (
+                        <li
+                          key={`${kind}-${resident.id}`}
+                          role="option"
+                          aria-selected={formData.residentId === resident.id}
+                        >
                           <button
                             type="button"
                             className={cn(
                               'flex w-full flex-col gap-0.5 px-3 py-2 text-left text-sm hover:bg-accent hover:text-accent-foreground',
-                              formData.residentId === r.id && 'bg-accent/60',
+                              formData.residentId === resident.id && 'bg-accent/60',
                             )}
                             onMouseDown={(e) => {
                               e.preventDefault();
-                              selectOwnerResident(r);
+                              selectOwnerResident(resident);
                             }}
                           >
-                            <span className="font-medium text-foreground">{r.name}</span>
-                            <span className="text-xs text-muted-foreground">{r.contactNumber}</span>
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-medium text-foreground">{resident.name}</span>
+                              <Badge
+                                className={cn(
+                                  'border-transparent text-white hover:bg-blue-900/80',
+                                  kind === 'resident' ? 'bg-blue-900' : 'bg-purple-900 hover:bg-purple-900/80',
+                                )}
+                              >
+                                {kind === 'resident' ? 'Resident' : 'Visitor'}
+                              </Badge>
+                            </div>
+                            <span className="text-xs text-muted-foreground">{resident.contactNumber}</span>
                           </button>
                         </li>
                       ))}
@@ -762,7 +1197,7 @@ export default function Vehicles() {
                   </p>
                 ) : (
                   <p className="text-xs text-muted-foreground">
-                    Type to search residents by name or number, or enter a standalone owner name.
+                    Type to search residents and visitors by name or number, or enter a standalone owner name.
                   </p>
                 )}
               </div>
@@ -783,6 +1218,21 @@ export default function Vehicles() {
         )}
 
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 sm:gap-4">
+          <Tabs
+            value={effectiveVehicleTab}
+            onValueChange={(v) => {
+              if (residentFilterId) return;
+              setVehicleTab(v as 'all' | 'residents' | 'non-residents');
+            }}
+            className="w-full sm:w-auto"
+          >
+            <TabsList className="w-full sm:w-auto flex">
+              <TabsTrigger value="all">All Vehicles</TabsTrigger>
+              <TabsTrigger value="residents">Residents</TabsTrigger>
+              <TabsTrigger value="non-residents">Non-Residents</TabsTrigger>
+            </TabsList>
+          </Tabs>
+
           <div className="relative flex-1 sm:max-w-md">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -883,7 +1333,7 @@ export default function Vehicles() {
                       ) : null}
                       <ChevronDown className="absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground pointer-events-none" />
                     </div>
-                    {ownerSuggestSurface === 'dialog' && suggestedResidents.length > 0 ? (
+                    {ownerSuggestSurface === 'dialog' && suggestedOwners.length > 0 ? (
                       <ul
                         id="resident-owner-suggestions-dialog"
                         role="listbox"
@@ -891,21 +1341,35 @@ export default function Vehicles() {
                           'absolute z-[100] mt-1 max-h-48 w-full overflow-auto rounded-md border border-border bg-popover py-1 shadow-md',
                         )}
                       >
-                        {suggestedResidents.map((r) => (
-                          <li key={r.id} role="option" aria-selected={formData.residentId === r.id}>
+                        {suggestedOwners.map(({ kind, resident }) => (
+                          <li
+                            key={`${kind}-${resident.id}`}
+                            role="option"
+                            aria-selected={formData.residentId === resident.id}
+                          >
                             <button
                               type="button"
                               className={cn(
                                 'flex w-full flex-col gap-0.5 px-3 py-2 text-left text-sm hover:bg-accent hover:text-accent-foreground',
-                                formData.residentId === r.id && 'bg-accent/60',
+                                formData.residentId === resident.id && 'bg-accent/60',
                               )}
                               onMouseDown={(e) => {
                                 e.preventDefault();
-                                selectOwnerResident(r);
+                                selectOwnerResident(resident);
                               }}
                             >
-                              <span className="font-medium text-foreground">{r.name}</span>
-                              <span className="text-xs text-muted-foreground">{r.contactNumber}</span>
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="font-medium text-foreground">{resident.name}</span>
+                                <Badge
+                                  className={cn(
+                                    'border-transparent text-white hover:bg-blue-900/80',
+                                    kind === 'resident' ? 'bg-blue-900' : 'bg-purple-900 hover:bg-purple-900/80',
+                                  )}
+                                >
+                                  {kind === 'resident' ? 'Resident' : 'Visitor'}
+                                </Badge>
+                              </div>
+                              <span className="text-xs text-muted-foreground">{resident.contactNumber}</span>
                             </button>
                           </li>
                         ))}
@@ -918,7 +1382,7 @@ export default function Vehicles() {
                     </p>
                   ) : (
                     <p className="text-xs text-muted-foreground">
-                      Type to search residents by name or number, or enter a standalone owner name.
+                      Type to search residents and visitors by name or number, or enter a standalone owner name.
                     </p>
                   )}
                 </div>
@@ -947,113 +1411,24 @@ export default function Vehicles() {
           <p className="text-xs text-muted-foreground">Refreshing results...</p>
         )}
 
-        {displayedLinkedVehicles.length > 0 ? (
+        {vehiclesForTab.length > 0 ? (
           <>
-            {/* Mobile Cards */}
-            <div className="block sm:hidden space-y-3">
-              {displayedLinkedVehicles.map((vehicle) => (
-                <div key={vehicle.id} className="glass-card rounded-xl p-4 space-y-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-mono font-medium text-lg">{vehicle.plateNumber}</span>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 shrink-0"
-                      onClick={() => handleViewVehicle(vehicle)}
-                      aria-label="View resident summary"
-                    >
-                      <Info className="h-4 w-4" />
-                    </Button>
-                  </div>
-                  <div className="text-sm text-muted-foreground">
-                    {formatVehicleTypeLabel(vehicle.vehicleType)}
-                  </div>
-                  <div className="text-sm text-foreground font-medium">
-                    {getResidentNameForVehicle(vehicle) ?? vehicle.ownerName}
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    Date registered: {new Date(vehicle.registeredAt).toLocaleDateString()}
-                  </div>
-                  {!isEncoder && isAdmin && (
-                    <div className="flex items-center gap-1 pt-1">
-                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleOpenEditDialog(vehicle)}>
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        onClick={() => requestDeleteVehicle(vehicle)}
-                        className={deleteButtonClassName}
-                        aria-label="Delete vehicle"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
+            <MasterVehicleTable
+              vehicles={vehiclesForTab}
+              isAdmin={isAdmin}
+              isEncoder={isEncoder}
+              deleteButtonClassName={deleteButtonClassName}
+              getResidentNameForVehicle={getResidentNameForVehicle}
+              onViewVehicle={handleViewVehicle}
+              onEditVehicle={handleOpenEditDialog}
+              onDeleteVehicle={requestDeleteVehicle}
+              lastSeenByPlate={lastSeenByPlate}
+              infractionCountByPlate={infractionCountByPlate}
+              isMetaLoading={isMetaLoading}
+            />
 
-            {/* Desktop Table */}
-            <div className="glass-card rounded-xl overflow-hidden hidden sm:block">
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow className="border-border hover:bg-transparent">
-                      <TableHead className="text-muted-foreground">Plate Number</TableHead>
-                      <TableHead className="text-muted-foreground">Vehicle Type</TableHead>
-                      <TableHead className="text-muted-foreground">Owner (Resident)</TableHead>
-                      <TableHead className="text-muted-foreground">Date Registered</TableHead>
-                      <TableHead className="text-muted-foreground text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {displayedLinkedVehicles.map((vehicle) => (
-                      <TableRow key={vehicle.id} className="border-border">
-                        <TableCell className="font-mono font-medium">{vehicle.plateNumber}</TableCell>
-                        <TableCell>{formatVehicleTypeLabel(vehicle.vehicleType)}</TableCell>
-                        <TableCell className="font-medium">
-                          {getResidentNameForVehicle(vehicle) ?? vehicle.ownerName}
-                        </TableCell>
-                        <TableCell className="text-muted-foreground">
-                          {new Date(vehicle.registeredAt).toLocaleDateString()}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex items-center justify-end gap-2">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => handleViewVehicle(vehicle)}
-                              aria-label="View resident summary"
-                            >
-                              <Info className="h-4 w-4" />
-                            </Button>
-                            {isAdmin && (
-                              <>
-                                <Button variant="ghost" size="icon" onClick={() => handleOpenEditDialog(vehicle)}>
-                                  <Edit className="h-4 w-4" />
-                                </Button>
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="icon"
-                                  onClick={() => requestDeleteVehicle(vehicle)}
-                                  className={deleteButtonClassName}
-                                  aria-label="Delete vehicle"
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </Button>
-                              </>
-                            )}
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            </div>
+            {/* Desktop Tables */}
+            {/* Old resident/non-resident table blocks removed in favor of MasterVehicleTable */}
             <Dialog
               open={isViewDialogOpen}
               onOpenChange={(open) => {
@@ -1066,16 +1441,20 @@ export default function Vehicles() {
               <DialogContent className="bg-card border-border mx-4 sm:mx-auto max-w-[calc(100vw-2rem)] sm:max-w-md">
                 <DialogHeader>
                   <DialogTitle>
-                    {residentForInfoDialog ? residentForInfoDialog.name : 'Resident summary'}
+                    {residentForInfoDialog
+                      ? residentForInfoDialog.name
+                      : nonResidentForInfoDialog
+                        ? 'Non-Resident Vehicle'
+                        : 'Vehicle summary'}
                   </DialogTitle>
                   <DialogDescription>
                     {selectedVehicle ? (
                       <>
-                        Linked resident for vehicle{' '}
+                        {residentForInfoDialog ? 'Linked resident for vehicle' : 'Non-resident vehicle'}{' '}
                         <span className="font-mono font-medium text-foreground">{selectedVehicle.plateNumber}</span>
                       </>
                     ) : (
-                      'Resident details'
+                      'Vehicle details'
                     )}
                   </DialogDescription>
                 </DialogHeader>
@@ -1124,6 +1503,37 @@ export default function Vehicles() {
                     <p className="text-xs text-muted-foreground">
                       Standing is based on issued and pending violations for plates linked to this resident.
                     </p>
+                  </div>
+                ) : selectedVehicle && nonResidentForInfoDialog ? (
+                  <div className="space-y-4 py-2 text-sm">
+                    <div className="flex flex-wrap gap-2">
+                      <Badge className="border-transparent bg-purple-900 text-white shadow-none">
+                        Non-Resident
+                      </Badge>
+                      <Badge className="border-transparent bg-purple-900/80 text-white shadow-none">
+                        {((nonResidentForInfoDialog.visitorCategory ?? 'guest') === 'delivery'
+                          ? 'Delivery'
+                          : (nonResidentForInfoDialog.visitorCategory ?? 'guest') === 'rental'
+                            ? 'Rental'
+                            : 'Guest') as string}
+                      </Badge>
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase text-muted-foreground">Owner</p>
+                      <p className="font-medium text-foreground leading-snug">
+                        {nonResidentForInfoDialog.ownerName || '—'}
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Contact: {nonResidentForInfoDialog.contactNumber || '—'}
+                      </p>
+                    </div>
+                    {nonResidentForInfoDialog.purposeOfVisit ? (
+                      <p className="text-xs text-muted-foreground">
+                        Purpose: {nonResidentForInfoDialog.purposeOfVisit}
+                      </p>
+                    ) : nonResidentForInfoDialog.rented ? (
+                      <p className="text-xs text-muted-foreground">Rented: {nonResidentForInfoDialog.rented}</p>
+                    ) : null}
                   </div>
                 ) : selectedVehicle ? (
                   <p className="text-sm text-muted-foreground py-2">
@@ -1188,19 +1598,34 @@ export default function Vehicles() {
               </Button>
             </div>
           </div>
-        ) : vehiclesLinkedToRegisteredResidents.length > 0 && searchTerm.trim() ? (
+        ) : vehicles.length > 0 && searchTerm.trim() ? (
           <SearchNoMatchesEmpty
             searchTerm={searchTerm}
             onClear={() => setSearchTerm('')}
-            hint="Check your spelling or try searching for a different plate number or resident owner name."
+            hint="Check your spelling or try searching for a different plate number or owner name."
           />
-        ) : vehicles.length > 0 && vehiclesLinkedToRegisteredResidents.length === 0 ? (
+        ) : vehicles.length > 0 && effectiveVehicleTab === 'residents' && vehiclesLinkedToRegisteredResidents.length === 0 ? (
           <div className="glass-card rounded-xl p-8 sm:p-12 text-center">
             <Car className="h-12 w-12 sm:h-16 sm:w-16 text-muted-foreground mx-auto mb-4" />
             <h3 className="text-lg font-semibold text-foreground mb-2">No resident-linked vehicles</h3>
             <p className="text-muted-foreground mb-6 text-sm max-w-md mx-auto">
               This list only shows vehicles tied to a registered resident. Add or edit a vehicle and choose a resident
               under Owner Name to link it.
+            </p>
+            {!isBarangayUser && (
+              <Button type="button" onClick={focusRegistrationSection}>
+                <Plus className="h-4 w-4 mr-2" />
+                Register vehicle
+              </Button>
+            )}
+          </div>
+        ) : vehicles.length > 0 && effectiveVehicleTab === 'non-residents' && nonResidentVehicles.length === 0 ? (
+          <div className="glass-card rounded-xl p-8 sm:p-12 text-center">
+            <Car className="h-12 w-12 sm:h-16 sm:w-16 text-muted-foreground mx-auto mb-4" />
+            <h3 className="text-lg font-semibold text-foreground mb-2">No non-resident vehicles yet</h3>
+            <p className="text-muted-foreground mb-6 text-sm max-w-md mx-auto">
+              This list shows vehicles that are not linked to a registered resident. Register a vehicle by entering an
+              owner name and leaving the linked resident unset.
             </p>
             {!isBarangayUser && (
               <Button type="button" onClick={focusRegistrationSection}>

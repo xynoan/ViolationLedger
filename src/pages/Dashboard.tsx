@@ -1,27 +1,29 @@
-import { useState, useEffect, useCallback, useMemo, Fragment } from 'react';
+import { useState, useEffect, useCallback, useMemo, Fragment, useRef } from 'react';
 import {
+  Activity,
   AlertTriangle,
+  AlertCircle,
   CheckCircle,
   Camera,
+  Car,
   Plus,
   RefreshCw,
-  Pause,
-  Play,
   BarChart3,
-  ClipboardList,
   Clock3,
   Repeat,
+  MessageCircle,
   ArrowUpRight,
   ArrowDownRight,
   Minus,
   ListFilter,
-  Activity,
+  ChevronRight,
+  LucideIcon,
+  Users,
 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
 import { CameraFeed } from '@/components/dashboard/CameraFeed';
-import { RangeSnapshotCard } from '@/components/dashboard/RangeSnapshotCard';
 import { BlueRidgeSvgMap } from '@/components/Analytics/BlueRidgeSvgMap';
 import { peakClockHourFromViolations } from '@/lib/violationHourHistogram';
 import { formatDeltaComparison } from '@/components/dashboard/InsightChartTooltip';
@@ -36,16 +38,17 @@ import {
 } from '@/components/ui/chart';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
-import { Vehicle, Camera as CameraType, Violation } from '@/types/parking';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, PieChart, Pie, Cell, ResponsiveContainer } from 'recharts';
+import { Vehicle, Camera as CameraType, Violation, Detection as DetectionRecord } from '@/types/parking';
 import {
   vehiclesAPI,
   camerasAPI,
   violationsAPI,
-  detectionAPI,
+  detectionsAPI,
   analyticsAPI,
   type AnalyticsResponse,
 } from '@/lib/api';
+import { useYoloDetection } from '@/hooks/useDetectionStream';
 import { toast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 
@@ -55,9 +58,9 @@ function statusSliceColor(statusName: string): string {
   if (key.includes('warning')) return 'hsl(var(--warning))';
   if (key.includes('issued')) return 'hsl(var(--destructive))';
   if (key.includes('pending')) return 'hsl(25 95% 53%)';
-  if (key.includes('resolved')) return 'hsl(var(--success))';
-  if (key.includes('cleared')) return 'hsl(199 89% 48%)';
-  if (key.includes('cancel')) return 'hsl(var(--muted-foreground))';
+  if (key.includes('resolved')) return 'hsl(var(--success) / 0.9)';
+  if (key.includes('cleared')) return 'hsl(199 35% 42%)';
+  if (key.includes('cancel')) return 'hsl(220 10% 45%)';
   return 'hsl(221 83% 53%)';
 }
 
@@ -118,6 +121,80 @@ function getTrendMeta(trend?: TrendData | null) {
     tone: 'text-muted-foreground',
     label: '0% vs previous 7-day period',
   };
+}
+
+type MetricCardProps = {
+  title: string;
+  value: number;
+  href: string;
+  linkLabel: string;
+  icon: LucideIcon;
+  accentClassName?: string;
+  live?: boolean;
+};
+
+type LiveLogKind = 'entry' | 'exit' | 'sms' | 'violation';
+type LiveLogItem = {
+  id: string;
+  ts: number;
+  kind: LiveLogKind;
+  message: string;
+  streetName: string | null;
+};
+
+function logKindTone(kind: LiveLogKind): string {
+  if (kind === 'entry' || kind === 'exit') return 'text-blue-200';
+  if (kind === 'sms') return 'text-amber-200';
+  return 'text-rose-200';
+}
+
+function logKindPrefix(kind: LiveLogKind): string {
+  if (kind === 'entry') return 'ENTRY';
+  if (kind === 'exit') return 'EXIT';
+  if (kind === 'sms') return 'SMS';
+  return 'VIOL';
+}
+
+function MetricCard({ title, value, href, linkLabel, icon: Icon, accentClassName, live = false }: MetricCardProps) {
+  return (
+    <Link
+      to={href}
+      className={cn(
+        'glass-card relative block rounded-2xl border border-border bg-card px-6 py-5 shadow-sm outline-none transition-colors hover:border-border hover:bg-accent/10 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+        live && 'overflow-hidden',
+      )}
+    >
+      {live ? (
+        <div className="absolute inset-0 animate-pulse bg-emerald-500/5 pointer-events-none" aria-hidden />
+      ) : null}
+      <div className="relative flex min-h-[128px] flex-col">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0 pt-1">
+            <p className="text-sm font-medium text-muted-foreground">{title}</p>
+          </div>
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-300">
+            <Icon className="h-5 w-5" aria-hidden />
+          </div>
+        </div>
+        <div className="mt-3 flex items-center gap-2">
+          <p className={cn('text-4xl font-bold font-mono leading-none tabular-nums text-foreground', accentClassName)}>
+            {value}
+          </p>
+          {live ? (
+            <Badge className="border-emerald-500/40 bg-emerald-500/10 text-emerald-700 shadow-none dark:text-emerald-300">
+              Live
+            </Badge>
+          ) : null}
+        </div>
+        <div className="mt-auto pt-4">
+          <span className="inline-flex items-center gap-1 text-sm font-semibold text-emerald-600 dark:text-emerald-400">
+            {linkLabel}
+            <ChevronRight className="h-4 w-4" aria-hidden />
+          </span>
+        </div>
+      </div>
+    </Link>
+  );
 }
 
 function escapeCsvValue(value: unknown): string {
@@ -358,19 +435,14 @@ export default function Dashboard() {
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [cameras, setCameras] = useState<CameraType[]>([]);
   const [violations, setViolations] = useState<Violation[]>([]);
+  const [detections, setDetections] = useState<DetectionRecord[]>([]);
   const [isDashboardLoading, setIsDashboardLoading] = useState(true);
-  const [detectionEnabled, setDetectionEnabled] = useState(true);
-  const [detectionToggleLoading, setDetectionToggleLoading] = useState(false);
 
   const [analytics, setAnalytics] = useState<AnalyticsResponse | null>(null);
   const [isAnalyticsLoading, setIsAnalyticsLoading] = useState(true);
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [locationFilter, setLocationFilter] = useState('all');
-
-  useEffect(() => {
-    detectionAPI.getEnabled().then((r) => setDetectionEnabled(r?.enabled ?? true)).catch(() => {});
-  }, []);
 
   const loadAnalytics = useCallback(async () => {
     try {
@@ -399,34 +471,14 @@ export default function Dashboard() {
     void loadAnalytics();
   }, [loadAnalytics]);
 
-  const handleToggleDetection = useCallback(async () => {
-    setDetectionToggleLoading(true);
-    try {
-      const next = !detectionEnabled;
-      await detectionAPI.setEnabled(next);
-      setDetectionEnabled(next);
-      toast({
-        title: next ? 'Detection resumed' : 'Detection paused',
-        description: next ? 'YOLO workers are running.' : 'YOLO workers stopped.',
-      });
-    } catch (e) {
-      toast({
-        title: 'Failed to toggle detection',
-        description: e instanceof Error ? e.message : 'Unknown error',
-        variant: 'destructive',
-      });
-    } finally {
-      setDetectionToggleLoading(false);
-    }
-  }, [detectionEnabled]);
-
   const loadData = useCallback(async () => {
     try {
       setIsDashboardLoading(true);
-      const [vehiclesData, camerasData, violationsData] = await Promise.all([
+      const [vehiclesData, camerasData, violationsData, detectionsData] = await Promise.all([
         vehiclesAPI.getAll().catch(() => []),
         camerasAPI.getAll().catch(() => []),
         violationsAPI.getAll().catch(() => []),
+        detectionsAPI.getAll().catch(() => []),
       ]);
 
       const camerasWithDeviceId = (camerasData as CameraType[]).map((camera) => {
@@ -451,6 +503,15 @@ export default function Dashboard() {
             timeIssued: v.timeIssued ? new Date(v.timeIssued) : undefined,
             warningExpiresAt: v.warningExpiresAt ? new Date(v.warningExpiresAt) : undefined,
             smsSentAt: v.smsSentAt ? new Date(v.smsSentAt) : undefined,
+          };
+        }),
+      );
+      setDetections(
+        (detectionsData || []).map((raw) => {
+          const d = raw as DetectionRecord;
+          return {
+            ...d,
+            timestamp: new Date(d.timestamp),
           };
         }),
       );
@@ -582,26 +643,26 @@ export default function Dashboard() {
     }));
   }, [analytics]);
 
+  const statusBarsSorted = useMemo(() => {
+    const order: Record<string, number> = {
+      warning: 0,
+      pending: 1,
+      issued: 2,
+      resolved: 3,
+      cleared: 4,
+      cancelled: 5,
+    };
+    return [...violationsByStatusData].sort((a, b) => {
+      const ak = a.name.toLowerCase();
+      const bk = b.name.toLowerCase();
+      const av = order[ak] ?? 99;
+      const bv = order[bk] ?? 99;
+      if (av !== bv) return av - bv;
+      return b.value - a.value;
+    });
+  }, [violationsByStatusData]);
+
   const descriptive = analytics?.violations.descriptive;
-
-  const snapshotLast7Bars = useMemo(() => {
-    const raw = analytics?.violations.overTime ?? [];
-    if (raw.length === 0) return [];
-    const sorted = [...raw].sort((a, b) => a.date.localeCompare(b.date));
-    const last = sorted.slice(-7);
-    const max = Math.max(1, ...last.map((x) => x.count));
-    return last.map((x) => ({
-      key: x.date,
-      label: new Date(x.date + 'T12:00:00').toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' }),
-      count: x.count,
-      hPct: Math.round((x.count / max) * 100),
-    }));
-  }, [analytics]);
-
-  const statusBarsSorted = useMemo(
-    () => [...violationsByStatusData].sort((a, b) => b.value - a.value),
-    [violationsByStatusData],
-  );
 
   const filteredViolationsForOps = useMemo(() => {
     return violations.filter((v) => {
@@ -618,6 +679,40 @@ export default function Dashboard() {
       return true;
     });
   }, [violations, startDate, endDate, locationFilter]);
+
+  const avgActionMinutesSelectedPeriod = useMemo(() => {
+    const samples = filteredViolationsForOps
+      .map((v) => {
+        const actionAt = v.timeIssued ?? v.warningExpiresAt;
+        if (!actionAt) return null;
+        const diff = (new Date(actionAt).getTime() - new Date(v.timeDetected).getTime()) / 60000;
+        return Number.isFinite(diff) && diff >= 0 ? diff : null;
+      })
+      .filter((n): n is number => n != null);
+    if (!samples.length) return null;
+    return samples.reduce((a, b) => a + b, 0) / samples.length;
+  }, [filteredViolationsForOps]);
+
+  const avgActionLabelSelectedPeriod = useMemo(() => {
+    if (avgActionMinutesSelectedPeriod == null) return '—';
+    if (avgActionMinutesSelectedPeriod > 60) {
+      return `${(avgActionMinutesSelectedPeriod / 60).toFixed(1)}h`;
+    }
+    return `${Math.round(avgActionMinutesSelectedPeriod)}m`;
+  }, [avgActionMinutesSelectedPeriod]);
+
+  const locationIdsWithRecentDetections = useMemo(() => {
+    const cameraById = new Map(cameras.map((c) => [c.id, c.locationId]));
+    const oneHourAgo = Date.now() - 60 * 60 * 1000;
+    const out = new Set<string>();
+    for (const d of detections) {
+      const ts = new Date(d.timestamp).getTime();
+      if (!Number.isFinite(ts) || ts < oneHourAgo) continue;
+      const loc = cameraById.get(d.cameraId);
+      if (loc) out.add(loc);
+    }
+    return out;
+  }, [detections, cameras]);
 
   const operationsDailySeries = useMemo(() => {
     const map = new Map<string, { resolved_warnings: number; issued_tickets: number }>();
@@ -660,12 +755,116 @@ export default function Dashboard() {
     [filteredViolationsForOps],
   );
   const systemReliabilityPct = 98.4;
+  const topHotspot = violationsByLocationData[0] ?? null;
+  const periodTrendMeta = getTrendMeta(descriptive?.periodComparison);
 
-  const filtersActiveForBriefing = Boolean(startDate || endDate || locationFilter !== 'all');
-  const dailyBriefingLines = useMemo(
-    () => buildDailyBriefingLines(violations, analytics, violationsByLocationData, filtersActiveForBriefing),
-    [violations, analytics, violationsByLocationData, filtersActiveForBriefing],
+  const onlineCameras = cameras.filter((c) => c.status === 'online');
+  const firstOnlineCamera = onlineCameras[0];
+  const {
+    detections: liveDetections,
+    plateCount: livePlateCount,
+    isConnected: isDetectionConnected,
+  } = useYoloDetection(firstOnlineCamera?.id, !!firstOnlineCamera);
+  const liveTrackedPlates = useMemo(() => {
+    const s = new Set<string>();
+    for (const d of liveDetections) {
+      if (d.class_name !== 'plate') continue;
+      const p = String(d.plateNumber ?? '').trim();
+      if (!p || p === 'NONE' || p === 'BLUR') continue;
+      s.add(p.toUpperCase());
+    }
+    return s;
+  }, [liveDetections]);
+  const activeWarningCount = useMemo(() => violations.filter((v) => v.status === 'warning').length, [violations]);
+  const criticalCount = useMemo(
+    () => violations.filter((v) => v.status === 'pending' || v.status === 'issued').length,
+    [violations],
   );
+  const complianceCount = opsResolved;
+
+  const [activityLog, setActivityLog] = useState<LiveLogItem[]>([]);
+  const [focusStreetName, setFocusStreetName] = useState<string | null>(null);
+  const lastSeenPlateSetRef = useRef<Set<string>>(new Set());
+  const smsSentRef = useRef<Map<string, number>>(new Map());
+  const violationStatusRef = useRef<Map<string, Violation['status']>>(new Map());
+
+  const pushLog = useCallback((item: Omit<LiveLogItem, 'id'>) => {
+    setActivityLog((prev) => {
+      const next: LiveLogItem[] = [
+        {
+          ...item,
+          id: `${item.ts}-${Math.random().toString(36).slice(2, 8)}`,
+        },
+        ...prev,
+      ];
+      return next.slice(0, 120);
+    });
+  }, []);
+
+  // Derive ENTRY/EXIT events from the live detection stream.
+  useEffect(() => {
+    const streetName = firstOnlineCamera?.locationId ? String(firstOnlineCamera.locationId) : null;
+    const prev = lastSeenPlateSetRef.current;
+    const next = new Set(liveTrackedPlates);
+
+    // Entered
+    for (const p of next) {
+      if (!prev.has(p)) {
+        pushLog({
+          ts: Date.now(),
+          kind: 'entry',
+          streetName,
+          message: `${p} detected at ${streetName ?? 'camera'}`,
+        });
+      }
+    }
+
+    // Exited
+    for (const p of prev) {
+      if (!next.has(p)) {
+        pushLog({
+          ts: Date.now(),
+          kind: 'exit',
+          streetName,
+          message: `${p} left view at ${streetName ?? 'camera'}`,
+        });
+      }
+    }
+
+    lastSeenPlateSetRef.current = next;
+  }, [liveTrackedPlates, firstOnlineCamera?.locationId, pushLog]);
+
+  // Log SMS sent and violation status changes (best-effort, based on refreshed data).
+  useEffect(() => {
+    for (const v of violations) {
+      if (v.smsSentAt) {
+        const ms = new Date(v.smsSentAt).getTime();
+        const prev = smsSentRef.current.get(v.id);
+        if (!prev || prev !== ms) {
+          smsSentRef.current.set(v.id, ms);
+          pushLog({
+            ts: Date.now(),
+            kind: 'sms',
+            streetName: v.cameraLocationId || null,
+            message: `SMS sent for ${v.plateNumber} (${v.cameraLocationId})`,
+          });
+        }
+      }
+
+      const prevStatus = violationStatusRef.current.get(v.id);
+      if (!prevStatus) {
+        violationStatusRef.current.set(v.id, v.status);
+      } else if (prevStatus !== v.status) {
+        violationStatusRef.current.set(v.id, v.status);
+        pushLog({
+          ts: Date.now(),
+          kind: 'violation',
+          streetName: v.cameraLocationId || null,
+          message: `${v.plateNumber} → ${v.status.toUpperCase()} (${v.cameraLocationId})`,
+        });
+      }
+    }
+  }, [violations, pushLog]);
 
   const handleExportReport = () => {
     if (!analytics) {
@@ -742,32 +941,6 @@ export default function Dashboard() {
         .sort((a, b) => warningTriageScore(b) - warningTriageScore(a)),
     [violations],
   );
-
-  const unpaidViolationsCount = useMemo(
-    () => violations.filter((v) => v.status === 'issued' || v.status === 'pending').length,
-    [violations],
-  );
-
-  const occupiedSpotsCount = useMemo(
-    () =>
-      new Set(
-        activeWarnings.map((w) =>
-          w.plateNumber && w.plateNumber !== 'NONE' && w.plateNumber !== 'BLUR' ? w.plateNumber : w.id,
-        ),
-      ).size,
-    [activeWarnings],
-  );
-
-  const onlineCameras = cameras.filter((c) => c.status === 'online');
-  const firstOnlineCamera = onlineCameras[0];
-
-  const systemHealthPct = useMemo(() => {
-    const total = Math.max(cameras.length, 1);
-    const online = onlineCameras.length;
-    const camScore = (online / total) * 70;
-    const detScore = detectionEnabled ? 30 : 0;
-    return Math.min(100, Math.round(camScore + detScore));
-  }, [cameras.length, onlineCameras.length, detectionEnabled]);
   const registeredPlates = vehicles.map((vehicle) => vehicle.plateNumber);
   const registeredPlateSet = useMemo(
     () => new Set(registeredPlates.map((p) => p.trim().toUpperCase()).filter(Boolean)),
@@ -786,7 +959,6 @@ export default function Dashboard() {
     locationFilter !== 'all'
       ? `/warnings?locationId=${encodeURIComponent(locationFilter)}`
       : '/warnings';
-  const violationsUnpaidHref = `/violations${violationsInsightSearch(startDate, endDate, locationFilter)}`;
   const collectionReportHref = `/violations${violationsInsightSearch(startDate, endDate, locationFilter, { status: 'issued' })}`;
 
   const insightRangeCaption = useMemo(() => {
@@ -813,83 +985,39 @@ export default function Dashboard() {
 
       <div className="p-4 sm:p-6 lg:p-8 space-y-4">
         {hasData ? (
-          <div className="glass-card flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border bg-card p-3 shadow-sm">
-            <div className="flex min-w-0 flex-wrap items-center gap-2">
-              {!detectionEnabled ? (
-                <Badge variant="outline" className="border-amber-600/50 text-amber-800 dark:text-amber-200">
-                  Detection paused
-                </Badge>
-              ) : null}
-              <Button variant="outline" size="sm" onClick={handleToggleDetection} disabled={detectionToggleLoading}>
-                {detectionEnabled ? (
-                  <>
-                    <Pause className="h-4 w-4 mr-1.5" aria-hidden />
-                    Pause
-                  </>
-                ) : (
-                  <>
-                    <Play className="h-4 w-4 mr-1.5" aria-hidden />
-                    Resume
-                  </>
-                )}
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => void loadData()}>
-                <RefreshCw className="h-4 w-4 mr-1.5" aria-hidden />
-                Sync
-              </Button>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button variant="outline" size="sm" className="h-8 gap-1.5">
-                    <ListFilter className="h-4 w-4 shrink-0" aria-hidden />
-                    Filter
-                    {startDate || endDate || locationFilter !== 'all' ? (
-                      <span className="h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden />
-                    ) : null}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-[min(100vw-2rem,380px)]" align="end">
-                  <div className="space-y-3">
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-1.5">
-                        <Label className="text-xs">Start</Label>
-                        <Input type="date" className="h-9" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label className="text-xs">End</Label>
-                        <Input type="date" className="h-9" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
-                      </div>
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs">Location</Label>
-                      <Select value={locationFilter} onValueChange={setLocationFilter}>
-                        <SelectTrigger className="h-9">
-                          <SelectValue placeholder="All" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="all">All</SelectItem>
-                          {uniqueLocations.map((location) => (
-                            <SelectItem key={location} value={location}>
-                              {location}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <Button type="button" variant="outline" size="sm" className="w-full" onClick={clearInsightFilters}>
-                      Clear
-                    </Button>
-                  </div>
-                </PopoverContent>
-              </Popover>
-              <Button variant="outline" size="sm" className="h-8" onClick={handleExportReport} disabled={!analytics}>
-                Export
-              </Button>
-              <Button variant="outline" size="sm" className="h-8" onClick={() => void loadAnalytics()} disabled={isAnalyticsLoading}>
-                <RefreshCw className={`h-4 w-4 ${isAnalyticsLoading ? 'animate-spin' : ''}`} aria-hidden />
-              </Button>
-            </div>
+          <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+            <MetricCard
+              title="Registered Residents"
+              value={analytics?.residents.total ?? 0}
+              href="/residents"
+              linkLabel="Go to Residents"
+              icon={Users}
+              accentClassName="text-blue-700 dark:text-blue-300"
+            />
+            <MetricCard
+              title="Registered Vehicles"
+              value={analytics?.vehicles.total ?? 0}
+              href="/vehicles"
+              linkLabel="Go to Vehicles"
+              icon={Car}
+            />
+            <MetricCard
+              title="Detected Vehicles"
+              value={analytics?.detections.total ?? 0}
+              href="/tickets"
+              linkLabel="Go to Capture Results"
+              icon={Camera}
+              accentClassName="text-emerald-700 dark:text-emerald-300"
+              live
+            />
+            <MetricCard
+              title="Issued Violations"
+              value={analytics?.violations.byStatus?.issued ?? 0}
+              href={collectionReportHref}
+              linkLabel="Go to Violations"
+              icon={CheckCircle}
+              accentClassName="text-red-600 dark:text-red-400"
+            />
           </div>
         ) : null}
 
@@ -917,13 +1045,6 @@ export default function Dashboard() {
           ) : (
             <Fragment>
               <div className="flex min-w-0 flex-col gap-4 lg:col-span-8">
-                <div className="rounded-xl border border-amber-200/80 bg-amber-50/90 px-4 py-2.5 shadow-sm dark:border-amber-900/50 dark:bg-amber-950/30">
-                  <div className="flex items-start gap-2">
-                    <ClipboardList className="mt-0.5 h-4 w-4 shrink-0 text-amber-700 dark:text-amber-400" aria-hidden />
-                    <p className="text-sm leading-snug text-amber-950 dark:text-amber-50">{dailyBriefingLines[0]}</p>
-                  </div>
-                </div>
-
                 <div className="glass-card flex min-h-[360px] flex-col rounded-xl border border-border bg-card p-4 shadow-sm">
                   <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2 border-b border-border/60 pb-3">
                     <h2 className="text-sm font-semibold tracking-tight text-foreground">Active warnings</h2>
@@ -1003,53 +1124,155 @@ export default function Dashboard() {
                     <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" aria-hidden />
                   </div>
                 ) : analytics ? (
-                  <RangeSnapshotCard
-                    insightRangeCaption={insightRangeCaption}
-                    sevenDayComparison={analytics.violations.descriptive?.sevenDayComparison}
-                    snapshotLast7Bars={snapshotLast7Bars}
-                    statusBarsSorted={statusBarsSorted}
-                    violationsByLocationData={violationsByLocationData}
-                    violations={violations}
-                  />
+                  <div className="glass-card rounded-xl border border-border bg-card p-5 shadow-sm">
+                    <div className="flex items-center justify-between gap-3 border-b border-border/60 pb-4">
+                      <div>
+                        <h3 className="text-sm font-semibold tracking-tight text-foreground">Pipeline Status</h3>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Live enforcement pipeline view{insightRangeCaption !== 'All dates in view' ? ` · ${insightRangeCaption}` : ''}.
+                        </p>
+                      </div>
+                      <Badge variant="outline" className="text-[11px]">
+                        Live
+                      </Badge>
+                    </div>
+
+                    <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                      <div className="rounded-xl border border-border bg-muted/20 p-3">
+                        <div className="flex items-center justify-between">
+                          <p className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted-foreground">
+                            <Activity className="h-3.5 w-3.5 text-cyan-500" aria-hidden />
+                            Active Tracking
+                          </p>
+                          <span
+                            className={cn(
+                              'h-2 w-2 rounded-full',
+                              isDetectionConnected ? 'bg-emerald-500 animate-pulse' : 'bg-muted-foreground/40',
+                            )}
+                            aria-hidden
+                          />
+                        </div>
+                        <p className="mt-2 font-mono text-3xl font-bold tabular-nums text-foreground">
+                          {liveTrackedPlates.size || livePlateCount || 0}
+                        </p>
+                      </div>
+
+                      <div className="rounded-xl border border-border bg-muted/20 p-3">
+                        <p className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted-foreground">
+                          <MessageCircle className="h-3.5 w-3.5 text-amber-500" aria-hidden />
+                          Grace Period
+                        </p>
+                        <p className="mt-2 font-mono text-3xl font-bold tabular-nums text-foreground">{activeWarningCount}</p>
+                      </div>
+
+                      <div className="rounded-xl border border-border bg-muted/20 p-3">
+                        <p className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted-foreground">
+                          <AlertCircle className="h-3.5 w-3.5 text-rose-500" aria-hidden />
+                          Critical
+                        </p>
+                        <p className="mt-2 font-mono text-3xl font-bold tabular-nums text-foreground">{criticalCount}</p>
+                      </div>
+
+                      <div className="rounded-xl border border-border bg-muted/20 p-3">
+                        <p className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted-foreground">
+                          <CheckCircle className="h-3.5 w-3.5 text-emerald-500" aria-hidden />
+                          Compliance
+                        </p>
+                        <p className="mt-2 font-mono text-3xl font-bold tabular-nums text-foreground">{complianceCount}</p>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-12">
+                      <div className="rounded-xl border border-border bg-[#0b1220] p-4 lg:col-span-7">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-300">
+                            Live Activity Log
+                          </p>
+                          <Badge variant="outline" className="font-mono text-[10px] text-slate-300">
+                            {activityLog.length} events
+                          </Badge>
+                        </div>
+                        <div className="mt-3 h-[240px] overflow-auto rounded-lg border border-slate-800 bg-[#020617]">
+                          <ul className="divide-y divide-slate-800">
+                            {activityLog.length === 0 ? (
+                              <li className="px-3 py-3 text-xs text-slate-400 font-mono">
+                                Waiting for detection events…
+                              </li>
+                            ) : (
+                              activityLog.map((e) => (
+                                <li key={e.id}>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (e.streetName) setFocusStreetName(e.streetName);
+                                    }}
+                                    className="w-full px-3 py-2 text-left font-mono text-[12px] leading-snug text-slate-200 hover:bg-slate-900/40"
+                                  >
+                                    <span className="text-slate-400">
+                                      {new Date(e.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                                    </span>{' '}
+                                    <span className={cn('font-semibold', logKindTone(e.kind))}>
+                                      [{logKindPrefix(e.kind)}]
+                                    </span>{' '}
+                                    <span>{e.message}</span>
+                                  </button>
+                                </li>
+                              ))
+                            )}
+                          </ul>
+                        </div>
+                      </div>
+
+                      <div className="rounded-xl border border-border bg-card/60 p-4 lg:col-span-5">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                          Enforcement Load
+                        </p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Neighborhood Pressure Index (half-doughnut).
+                        </p>
+                        {(() => {
+                          const max = 20;
+                          const pct = Math.max(0, Math.min(100, Math.round((enforcementLoad / max) * 100)));
+                          const data = [
+                            { name: 'Load', value: pct },
+                            { name: 'Remaining', value: Math.max(0, 100 - pct) },
+                          ];
+                          const loadColor = pct >= 75 ? '#ef4444' : pct >= 45 ? '#f59e0b' : '#10b981';
+                          return (
+                            <div className="mt-4 h-[210px]">
+                              <ResponsiveContainer width="100%" height="100%">
+                                <PieChart>
+                                  <Pie
+                                    data={data}
+                                    dataKey="value"
+                                    startAngle={180}
+                                    endAngle={0}
+                                    innerRadius="68%"
+                                    outerRadius="92%"
+                                    paddingAngle={1}
+                                    stroke="transparent"
+                                  >
+                                    <Cell fill={loadColor} />
+                                    <Cell fill="rgba(148,163,184,0.18)" />
+                                  </Pie>
+                                </PieChart>
+                              </ResponsiveContainer>
+                              <div className="-mt-10 text-center">
+                                <p className="font-mono text-3xl font-bold tabular-nums text-foreground">{pct}%</p>
+                                <p className="text-xs text-muted-foreground">
+                                  Based on open warnings + pending in this filter
+                                </p>
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                  </div>
                 ) : null}
               </div>
 
               <aside className="flex min-w-0 flex-col gap-4 lg:col-span-4" aria-label="Context">
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="glass-card rounded-xl border border-border bg-card p-4 text-center shadow-sm">
-                    <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Active warnings</p>
-                    <p className="mt-1 text-2xl font-semibold tabular-nums text-amber-700 dark:text-amber-400">
-                      {activeWarnings.length}
-                    </p>
-                  </div>
-                  <div className="glass-card rounded-xl border border-border bg-card p-4 text-center shadow-sm">
-                    <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Unpaid violations</p>
-                    <Link
-                      to={violationsUnpaidHref}
-                      className="mt-1 block rounded-md text-2xl font-semibold tabular-nums text-red-600 outline-none ring-offset-background transition-colors hover:text-red-700 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 dark:text-red-400 dark:hover:text-red-300"
-                    >
-                      {unpaidViolationsCount}
-                    </Link>
-                    <Link
-                      to={collectionReportHref}
-                      className="mt-2 inline-block text-[10px] font-medium text-primary underline-offset-2 hover:underline"
-                    >
-                      View collection report
-                    </Link>
-                  </div>
-                  <div className="glass-card rounded-xl border border-border bg-card p-4 text-center shadow-sm">
-                    <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Occupied spots</p>
-                    <p className="mt-1 text-2xl font-semibold tabular-nums text-foreground">{occupiedSpotsCount}</p>
-                  </div>
-                  <div className="glass-card rounded-xl border border-border bg-card p-4 text-center shadow-sm">
-                    <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">System health</p>
-                    <p className="mt-1 flex items-center justify-center gap-1.5 text-2xl font-semibold tabular-nums text-foreground">
-                      <Activity className="h-5 w-5 text-muted-foreground" aria-hidden />
-                      {systemHealthPct}%
-                    </p>
-                  </div>
-                </div>
-
                 <div className="glass-card rounded-xl border border-border bg-card p-4 shadow-sm">
                   <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Top offenders</h3>
                   <p className="mb-2 text-[11px] text-muted-foreground">Plates by violation count (filtered range).</p>
@@ -1202,6 +1425,7 @@ export default function Dashboard() {
                     <BlueRidgeSvgMap
                       violations={violations}
                       cameras={cameras}
+                      focusStreetName={focusStreetName}
                       className=""
                     />
                   </div>
@@ -1347,9 +1571,7 @@ export default function Dashboard() {
                           Avg. to action
                         </p>
                         <p className="text-lg font-semibold tabular-nums text-foreground">
-                          {descriptive?.avgInfractionToActionMinutes != null
-                            ? `${Math.round(descriptive.avgInfractionToActionMinutes)}m`
-                            : '—'}
+                          {avgActionLabelSelectedPeriod}
                         </p>
                       </div>
                       <div className="space-y-1">
@@ -1380,14 +1602,27 @@ export default function Dashboard() {
                           {statusBarsSorted.map((s) => (
                             <div key={s.name}>
                               <div className="flex justify-between gap-2 text-xs">
-                                <span className="truncate font-medium text-foreground">{s.name}</span>
+                                <span
+                                  className={cn(
+                                    'truncate font-medium text-foreground',
+                                    (s.name.toLowerCase() === 'cancelled' || s.name.toLowerCase() === 'cleared') &&
+                                      'text-muted-foreground',
+                                  )}
+                                >
+                                  {s.name}
+                                </span>
                                 <span className="shrink-0 tabular-nums text-muted-foreground">
                                   {s.value.toLocaleString()} ({s.pct}%)
                                 </span>
                               </div>
                               <div className="mt-1.5 h-2.5 overflow-hidden rounded-full bg-muted">
                                 <div
-                                  className="h-full rounded-full transition-[width]"
+                                  className={cn(
+                                    'h-full rounded-full transition-[width]',
+                                    s.name.toLowerCase() === 'warning' && 'animate-pulse',
+                                    (s.name.toLowerCase() === 'cancelled' || s.name.toLowerCase() === 'cleared') &&
+                                      'opacity-60',
+                                  )}
                                   style={{ width: `${s.pct}%`, backgroundColor: statusSliceColor(s.name) }}
                                 />
                               </div>
@@ -1416,10 +1651,22 @@ export default function Dashboard() {
                             const next = loc.nextRankCount;
                             const gap =
                               next != null ? formatDeltaComparison(loc.count - next, 'next ranked zone') : 'Lowest in this list.';
+                            const isActive = locationIdsWithRecentDetections.has(loc.cameraLocationId);
                             return (
                               <div key={loc.cameraLocationId}>
                                 <div className="flex justify-between gap-2 text-xs">
-                                  <span className="truncate font-medium text-foreground">{loc.cameraLocationId}</span>
+                                  <span className="truncate font-medium text-foreground inline-flex items-center gap-2">
+                                    <span
+                                      className={cn(
+                                        'h-2.5 w-2.5 rounded-full',
+                                        isActive
+                                          ? 'bg-amber-400 animate-pulse shadow-[0_0_8px_rgba(251,191,36,0.65)]'
+                                          : 'bg-muted-foreground/40',
+                                      )}
+                                      aria-hidden
+                                    />
+                                    {loc.cameraLocationId}
+                                  </span>
                                   <span className="shrink-0 tabular-nums text-muted-foreground">
                                     {loc.count.toLocaleString()}
                                   </span>

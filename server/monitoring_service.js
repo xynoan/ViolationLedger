@@ -277,7 +277,9 @@ class MonitoringService {
           warning.plateNumber !== 'NONE' &&
           warning.plateNumber !== 'BLUR';
 
-        if (hasReadablePlate) {
+        // Owner SMS should only fire while the warning is truly active AND the vehicle is still present.
+        // Otherwise (out-of-view / already left), skip sending to prevent spam.
+        if (hasReadablePlate && !isExpired && isStillPresent) {
           const alreadySent = db.prepare(`
             SELECT 1 FROM sms_logs
             WHERE violationId = ?

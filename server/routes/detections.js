@@ -20,6 +20,16 @@ function getStatements() {
   };
 }
 
+function parsePlatesParam(input) {
+  if (!input) return [];
+  const plates = String(input)
+    .split(',')
+    .map((p) => p.trim())
+    .filter(Boolean);
+  // avoid pathological inputs
+  return plates.slice(0, 250);
+}
+
 router.get('/camera/:cameraId', (req, res) => {
   try {
     const statements = getStatements();
@@ -97,6 +107,65 @@ router.get('/all', (req, res) => {
     const statements = getStatements();
     const detections = statements.getAll.all();
     res.json(detections);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get latest detection timestamp for a list of plates.
+// Query: /api/detections/latest/by-plates?plates=ABC123,XYZ789
+router.get('/latest/by-plates', (req, res) => {
+  try {
+    const plates = parsePlatesParam(req.query.plates);
+    if (!plates.length) return res.json([]);
+
+    const plateKeys = plates.map((p) => String(p).replace(/\s+/g, '').toUpperCase());
+    const ph = plateKeys.map(() => '?').join(',');
+    const rows = db
+      .prepare(`
+        SELECT REPLACE(UPPER(plateNumber), ' ', '') AS plateNumber, MAX(timestamp) AS lastSeen
+        FROM detections
+        WHERE class_name = 'plate'
+          AND plateNumber NOT IN ('NONE', 'BLUR')
+          AND REPLACE(UPPER(plateNumber), ' ', '') IN (${ph})
+        GROUP BY REPLACE(UPPER(plateNumber), ' ', '')
+      `)
+      .all(...plateKeys);
+
+    res.json(
+      rows.map((r) => ({
+        plateNumber: r.plateNumber,
+        lastSeen: r.lastSeen,
+      })),
+    );
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Recent unique plates (by last seen), for rapid-entry suggestions.
+// Query: /api/detections/plates/recent?limit=10
+router.get('/plates/recent', (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 10, 50);
+    const rows = db
+      .prepare(`
+        SELECT REPLACE(UPPER(plateNumber), ' ', '') AS plateNumber, MAX(timestamp) AS lastSeen
+        FROM detections
+        WHERE class_name = 'plate'
+          AND plateNumber NOT IN ('NONE', 'BLUR')
+        GROUP BY REPLACE(UPPER(plateNumber), ' ', '')
+        ORDER BY lastSeen DESC
+        LIMIT ?
+      `)
+      .all(limit);
+
+    res.json(
+      rows.map((r) => ({
+        plateNumber: r.plateNumber,
+        lastSeen: r.lastSeen,
+      })),
+    );
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

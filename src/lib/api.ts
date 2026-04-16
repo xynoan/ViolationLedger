@@ -219,6 +219,10 @@ export const violationsAPI = {
     const query = params.toString();
     return fetchAPI(`/violations/stats${query ? `?${query}` : ''}`);
   },
+  getInfractionCountByPlates: (plateNumbers: string[]) =>
+    fetchAPI(`/violations/count/by-plates?plates=${encodeURIComponent(plateNumbers.join(','))}`, {
+      cache: false,
+    }),
   getById: (id: string) => fetchAPI(`/violations/${id}`),
   create: (data: any) => fetchAPI('/violations', {
     method: 'POST',
@@ -256,6 +260,9 @@ export const detectionsAPI = {
   getByCamera: (cameraId: string) => fetchAPI(`/detections/camera/${cameraId}`, { cache: true }),
   getLatest: (cameraId: string) => fetchAPI(`/detections/camera/${cameraId}/latest`, { cache: true, timeout: 5000 }),
   getAll: () => fetchAPI('/detections/all', { cache: true }),
+  getLatestByPlates: (plateNumbers: string[]) =>
+    fetchAPI(`/detections/latest/by-plates?plates=${encodeURIComponent(plateNumbers.join(','))}`, { cache: true }),
+  getRecentPlates: (limit = 10) => fetchAPI(`/detections/plates/recent?limit=${limit}`, { cache: true }),
 };
 
 // Captures API
@@ -357,6 +364,9 @@ export interface AnalyticsResponse {
   users: {
     total: number;
     byRole: Record<string, number>;
+  };
+  residents: {
+    total: number;
   };
   vehicles: {
     total: number;

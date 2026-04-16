@@ -26,7 +26,7 @@ import { useAuth } from '@/hooks/useAuth';
 const navItems = [
   { path: '/', icon: LayoutDashboard, label: 'Dashboard', adminOnly: false },
   { path: '/vehicles', icon: Car, label: 'Vehicles', adminOnly: false },
-  { path: '/visitors', icon: UserPlus, label: 'Visitors', adminOnly: false },
+  { path: '/non-residents', icon: UserPlus, label: 'Non-Residents', adminOnly: false },
   { path: '/residents', icon: Home, label: 'Residents', adminOnly: false },
   { path: '/cameras', icon: Camera, label: 'Cameras', adminOnly: false },
   // { path: '/upload', icon: Upload, label: 'Upload Image', adminOnly: false },
@@ -48,7 +48,7 @@ function NavContent({ collapsed, onNavigate }: { collapsed?: boolean; onNavigate
   // Encoders can only see Vehicles and Residents pages
   const filteredItems = navItems.filter(item => {
     if (isEncoder) {
-      return item.path === '/vehicles' || item.path === '/visitors' || item.path === '/residents';
+      return item.path === '/vehicles' || item.path === '/non-residents' || item.path === '/residents';
     }
     // Barangay users should not see Settings page
     if (isBarangayUser && item.path === '/settings') {

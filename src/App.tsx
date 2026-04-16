@@ -11,7 +11,7 @@ import Login from "./pages/Login";
 import ActivateAccount from "./pages/ActivateAccount";
 import ResetPassword from "./pages/ResetPassword";
 import Vehicles from "./pages/Vehicles";
-import Visitors from "./pages/Visitors";
+import NonResidents from "./pages/Visitors";
 import Residents from "./pages/Residents";
 import Cameras from "./pages/Cameras";
 import Warnings from "./pages/Warnings";
@@ -64,7 +64,8 @@ const App = () => (
                       <Routes>
                         <Route path="/" element={<Index />} />
                         <Route path="/vehicles" element={<Vehicles />} />
-                        <Route path="/visitors" element={<Visitors />} />
+                        <Route path="/non-residents" element={<NonResidents />} />
+                        <Route path="/visitors" element={<Navigate to="/non-residents" replace />} />
                         <Route path="/hosts" element={<Navigate to="/residents" replace />} />
                         <Route path="/residents" element={<Residents />} />
                         <Route path="/cameras" element={<Cameras />} />

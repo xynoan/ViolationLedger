@@ -460,6 +460,46 @@ router.get('/stats', (req, res) => {
   }
 });
 
+function parsePlatesParam(input) {
+  if (!input) return [];
+  const plates = String(input)
+    .split(',')
+    .map((p) => p.trim())
+    .filter(Boolean);
+  return plates.slice(0, 250);
+}
+
+// Count warnings/tickets by plate (active-ish infractions).
+// Query: /api/violations/count/by-plates?plates=ABC123,XYZ789
+router.get('/count/by-plates', (req, res) => {
+  try {
+    const plates = parsePlatesParam(req.query.plates);
+    if (!plates.length) return res.json([]);
+
+    const plateKeys = plates.map((p) => String(p).replace(/\s+/g, '').toUpperCase());
+    const ph = plateKeys.map(() => '?').join(',');
+    const rows = db
+      .prepare(`
+        SELECT REPLACE(UPPER(plateNumber), ' ', '') AS plateNumber, COUNT(*) AS infractionCount
+        FROM violations
+        WHERE plateNumber NOT IN ('NONE', 'BLUR')
+          AND REPLACE(UPPER(plateNumber), ' ', '') IN (${ph})
+          AND status IN ('warning', 'pending', 'issued')
+        GROUP BY REPLACE(UPPER(plateNumber), ' ', '')
+      `)
+      .all(...plateKeys);
+
+    res.json(
+      rows.map((r) => ({
+        plateNumber: r.plateNumber,
+        infractionCount: r.infractionCount,
+      })),
+    );
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 /**
  * Insert a random active warning with timeDetected in the past (random elapsed time since detection).
  * Adds a recent synthetic detection when a camera exists so auto-departure does not clear it immediately.
