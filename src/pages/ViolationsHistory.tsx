@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, Fragment } from 'react';
 import { useSearchParams, useLocation } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { SearchNoMatchesEmpty } from '@/components/search/SearchNoMatchesEmpty';
@@ -7,14 +7,15 @@ import {
   Search,
   Filter,
   Download,
-  Calendar,
   MapPin,
   BarChart3,
   TrendingUp,
-  CheckCircle,
   Info,
   Home,
   X,
+  ChevronDown,
+  Eye,
+  Shield,
 } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
@@ -41,6 +42,16 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Camera } from '@/types/parking';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+const SERVER_BASE_URL = API_BASE_URL.replace('/api', '');
 
 const STATUS_OPTIONS: { value: ViolationStatus | 'all'; label: string }[] = [
   { value: 'all', label: 'All Statuses' },
@@ -67,10 +78,6 @@ type ViolationListFilters = {
   plateNumber?: string;
   residentId?: string;
 };
-
-function errMessage(error: unknown, fallback: string) {
-  return error instanceof Error ? error.message : fallback;
-}
 
 const URL_PRESETTABLE_STATUSES = new Set(
   STATUS_OPTIONS.filter((o) => o.value !== 'all').map((o) => o.value as string),
@@ -121,6 +128,61 @@ function periodLabel(period: PeriodFilter, startDate?: string, endDate?: string)
   return new Date().toLocaleString(undefined, { month: 'long', year: 'numeric' });
 }
 
+function classifySeverity(status: ViolationStatus): 'infraction' | 'violation' {
+  return status === 'warning' || status === 'pending' ? 'infraction' : 'violation';
+}
+
+function evidenceImageSrc(v: Violation): string | null {
+  if (v.imageBase64) {
+    if (v.imageBase64.startsWith('data:')) return v.imageBase64;
+    return `data:image/jpeg;base64,${v.imageBase64}`;
+  }
+  if (v.imageUrl) {
+    const name = v.imageUrl.split(/[/\\]/).pop();
+    return `${SERVER_BASE_URL}/captured_images/${name}`;
+  }
+  return null;
+}
+
+type TimelineStep = {
+  key: string;
+  label: string;
+  at: Date | null;
+  done: boolean;
+  detail?: string;
+};
+
+function buildTimeline(v: Violation): TimelineStep[] {
+  const detectedAt = new Date(v.timeDetected);
+  const hasWarning = ['warning', 'pending', 'issued', 'resolved', 'cleared'].includes(v.status);
+  const hasTicket = ['issued', 'resolved', 'cleared'].includes(v.status);
+  const isResolved = ['resolved', 'cleared', 'cancelled'].includes(v.status);
+  return [
+    { key: 'detected', label: 'Detected', at: detectedAt, done: true, detail: 'YOLO capture logged' },
+    {
+      key: 'warn',
+      label: 'Warning Sent',
+      at: v.smsSentAt ? new Date(v.smsSentAt) : hasWarning ? detectedAt : null,
+      done: hasWarning,
+      detail: v.smsSentAt ? 'Owner notified via SMS' : 'Queued for warning',
+    },
+    {
+      key: 'issued',
+      label: 'Ticket Issued',
+      at: v.timeIssued ? new Date(v.timeIssued) : null,
+      done: hasTicket,
+      detail: v.ticketId ? `Ticket: ${v.ticketId}` : 'Awaiting issuance',
+    },
+    {
+      key: 'resolved',
+      label: 'Resolved',
+      at: isResolved ? (v.timeIssued ? new Date(v.timeIssued) : detectedAt) : null,
+      done: isResolved,
+      detail: isResolved ? `Status: ${v.status}` : 'Open case',
+    },
+  ];
+}
+
 export default function ViolationsHistory() {
   usePageTracking();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -153,7 +215,8 @@ export default function ViolationsHistory() {
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState<string>('');
   const [registryHasViolations, setRegistryHasViolations] = useState(false);
-  const [clearingId, setClearingId] = useState<string | null>(null);
+  const [expandedViolationId, setExpandedViolationId] = useState<string | null>(null);
+  const [evidenceViolation, setEvidenceViolation] = useState<Violation | null>(null);
   const [periodFilter, setPeriodFilter] = useState<PeriodFilter | null>(() => {
     const p = searchParams.get('period');
     return p === 'day' || p === 'week' || p === 'month' ? p : null;
@@ -359,38 +422,21 @@ export default function ViolationsHistory() {
     residentFilterId,
   ]);
 
-  const handleClearViolation = async (id: string) => {
-    try {
-      setClearingId(id);
-      await violationsAPI.update(id, { status: 'cleared' });
-      toast({
-        title: "Violation Cleared",
-        description: "The violation has been marked as cleared.",
-      });
-      await loadViolations();
-      await loadStats();
-    } catch (error: unknown) {
-      toast({
-        title: "Error",
-        description: errMessage(error, "Failed to clear violation"),
-        variant: "destructive",
-      });
-    } finally {
-      setClearingId(null);
-    }
-  };
-
   const getStatusBadge = (status: ViolationStatus) => {
-    const configs: Record<ViolationStatus, { variant: 'default' | 'secondary' | 'destructive' | 'warning' | 'success'; label: string }> = {
-      warning: { variant: 'warning', label: 'Warning' },
-      issued: { variant: 'destructive', label: 'Issued' },
-      resolved: { variant: 'success', label: 'Resolved' },
-      cleared: { variant: 'secondary', label: 'Cleared' },
-      pending: { variant: 'default', label: 'Pending' },
-      cancelled: { variant: 'secondary', label: 'Cancelled' },
-    };
-    const config = configs[status] || { variant: 'default', label: status };
-    return <Badge variant={config.variant}>{config.label}</Badge>;
+    const severity = classifySeverity(status);
+    const label = severity === 'violation' ? 'Violation' : 'Infraction';
+    if (severity === 'infraction') {
+      return (
+        <Badge variant="outline" className="border-amber-500/60 bg-amber-500/10 text-amber-700 dark:text-amber-300">
+          {label}
+        </Badge>
+      );
+    }
+    return (
+      <Badge className="border-transparent bg-red-600 text-red-50">
+        {label}
+      </Badge>
+    );
   };
 
   const exportToCSV = async () => {
@@ -427,6 +473,75 @@ export default function ViolationsHistory() {
     toast({
       title: "Export Successful",
       description: "Violations data exported to CSV",
+    });
+  };
+
+  const exportToPDF = async () => {
+    await trackAction('export', 'violations', null, { format: 'pdf', count: violations.length });
+    const [{ jsPDF }] = await Promise.all([import('jspdf')]);
+    const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+
+    const readImageAsDataUrl = async (src: string): Promise<string | null> => {
+      try {
+        const response = await fetch(src);
+        const blob = await response.blob();
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(String(reader.result));
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+        return dataUrl;
+      } catch {
+        return null;
+      }
+    };
+
+    for (let i = 0; i < violations.length; i += 1) {
+      const v = violations[i];
+      if (i > 0) doc.addPage();
+
+      doc.setFontSize(15);
+      doc.text('Barangay Blue Ridge B Citation Report', 14, 14);
+      doc.setFontSize(10);
+      doc.text(`Reference: ${v.ticketId || v.id}`, 14, 21);
+      doc.text(`Plate: ${v.plateNumber}`, 14, 27);
+      doc.text(`Location: ${v.cameraLocationId}`, 14, 33);
+      doc.text(`Detected: ${v.timeDetected.toLocaleString()}`, 14, 39);
+      doc.text(`Status: ${classifySeverity(v.status).toUpperCase()} (${v.status})`, 14, 45);
+      if (v.timeIssued) {
+        doc.text(`Ticket Issued: ${v.timeIssued.toLocaleString()}`, 14, 51);
+      }
+      if (v.message) {
+        const lines = doc.splitTextToSize(`Notes: ${v.message}`, pageW - 28);
+        doc.text(lines, 14, 57);
+      }
+
+      const evidenceSrc = evidenceImageSrc(v);
+      const y = 72;
+      const h = 72;
+      if (evidenceSrc) {
+        const imageData = evidenceSrc.startsWith('data:') ? evidenceSrc : await readImageAsDataUrl(evidenceSrc);
+        if (imageData) {
+          doc.addImage(imageData, 'JPEG', 14, y, pageW - 28, h, undefined, 'FAST');
+        } else {
+          doc.rect(14, y, pageW - 28, h);
+          doc.text('Evidence image unavailable', 18, y + 10);
+        }
+      } else {
+        doc.rect(14, y, pageW - 28, h);
+        doc.text('No CCTV evidence on file', 18, y + 10);
+      }
+      doc.setFontSize(9);
+      doc.text(`Generated ${new Date().toLocaleString()}`, 14, pageH - 10);
+    }
+
+    doc.save(`barangay_citation_report_${new Date().toISOString().slice(0, 10)}.pdf`);
+    toast({
+      title: 'Export Successful',
+      description: 'PDF citation report generated.',
     });
   };
 
@@ -655,7 +770,11 @@ export default function ViolationsHistory() {
             <Button variant="outline" onClick={clearFilters} size="sm">
               Clear Filters
             </Button>
-            <Button onClick={exportToCSV} size="sm" className="ml-auto">
+            <Button onClick={exportToPDF} size="sm" variant="outline" className="ml-auto">
+              <Download className="h-4 w-4 mr-2" />
+              Download PDF Report
+            </Button>
+            <Button onClick={exportToCSV} size="sm">
               <Download className="h-4 w-4 mr-2" />
               Export CSV
             </Button>
@@ -682,64 +801,87 @@ export default function ViolationsHistory() {
                   <TableRow className="border-border hover:bg-transparent">
                     <TableHead className="text-muted-foreground">Plate Number</TableHead>
                     <TableHead className="text-muted-foreground">Location</TableHead>
-                    <TableHead className="text-muted-foreground">Status</TableHead>
-                    <TableHead className="text-muted-foreground">Time Detected</TableHead>
-                    <TableHead className="text-muted-foreground">Time Issued</TableHead>
+                    <TableHead className="text-muted-foreground">Current Status</TableHead>
                     <TableHead className="text-muted-foreground">Ticket ID</TableHead>
                     <TableHead className="text-muted-foreground text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {violations.map((violation) => (
-                    <TableRow
-                      key={violation.id}
-                      id={`violation-row-${violation.id}`}
-                      className={cn(
-                        'border-border',
-                        highlightViolationId === violation.id && 'bg-primary/10 ring-2 ring-inset ring-primary/35',
-                      )}
-                    >
-                      <TableCell className="font-mono font-medium">{violation.plateNumber}</TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <MapPin className="h-4 w-4 text-muted-foreground" />
-                          {violation.cameraLocationId}
-                        </div>
-                      </TableCell>
-                      <TableCell>{getStatusBadge(violation.status)}</TableCell>
-                      <TableCell className="text-muted-foreground">
-                        <div className="flex items-center gap-2">
-                          <Calendar className="h-4 w-4" />
-                          {violation.timeDetected.toLocaleString()}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {violation.timeIssued ? violation.timeIssued.toLocaleString() : '-'}
-                      </TableCell>
-                      <TableCell className="font-mono text-sm">
-                        {violation.ticketId || '-'}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {(violation.status === 'warning' || violation.status === 'pending') && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleClearViolation(violation.id)}
-                            disabled={clearingId === violation.id}
-                          >
-                            {clearingId === violation.id ? (
-                              <>Clearing...</>
-                            ) : (
-                              <>
-                                <CheckCircle className="h-4 w-4 mr-1" />
-                                Clear
-                              </>
-                            )}
-                          </Button>
+                  {violations.map((violation) => {
+                    const isExpanded = expandedViolationId === violation.id;
+                    const timeline = buildTimeline(violation);
+                    return (
+                      <Fragment key={violation.id}>
+                        <TableRow
+                          key={violation.id}
+                          id={`violation-row-${violation.id}`}
+                          className={cn(
+                            'border-border',
+                            highlightViolationId === violation.id && 'bg-primary/10 ring-2 ring-inset ring-primary/35',
+                          )}
+                        >
+                          <TableCell className="font-mono font-medium">{violation.plateNumber}</TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-2">
+                              <MapPin className="h-4 w-4 text-muted-foreground" />
+                              {violation.cameraLocationId}
+                            </div>
+                          </TableCell>
+                          <TableCell>{getStatusBadge(violation.status)}</TableCell>
+                          <TableCell className="font-mono text-sm">{violation.ticketId || '-'}</TableCell>
+                          <TableCell className="text-right space-x-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() =>
+                                setExpandedViolationId((prev) => (prev === violation.id ? null : violation.id))
+                              }
+                            >
+                              <Shield className="h-4 w-4 mr-1" />
+                              Audit
+                              <ChevronDown className={cn('h-4 w-4 ml-1 transition-transform', isExpanded && 'rotate-180')} />
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setEvidenceViolation(violation)}
+                            >
+                              <Eye className="h-4 w-4 mr-1" />
+                              Evidence
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                        {isExpanded && (
+                          <TableRow className="border-border bg-muted/20">
+                            <TableCell colSpan={5}>
+                              <div className="py-2">
+                                <p className="text-xs uppercase tracking-wide text-muted-foreground mb-3">Audit Timeline</p>
+                                <div className="space-y-3">
+                                  {timeline.map((step) => (
+                                    <div key={step.key} className="flex items-start gap-3">
+                                      <div className={cn('mt-1 h-3 w-3 rounded-full', step.done ? 'bg-emerald-500' : 'bg-muted-foreground/40')} />
+                                      <div className="min-w-0">
+                                        <p className="text-sm font-medium text-foreground">{step.label}</p>
+                                        <p className="text-xs text-muted-foreground">
+                                          {step.at ? step.at.toLocaleString() : 'Not yet recorded'}
+                                        </p>
+                                        {step.detail ? <p className="text-xs text-muted-foreground/90 mt-0.5">{step.detail}</p> : null}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                                <div className="mt-4">
+                                  <Button variant="ghost" size="sm" onClick={() => setExpandedViolationId(null)}>
+                                    View Details
+                                  </Button>
+                                </div>
+                              </div>
+                            </TableCell>
+                          </TableRow>
                         )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                      </Fragment>
+                    );
+                  })}
                 </TableBody>
               </Table>
             </div>
@@ -764,6 +906,43 @@ export default function ViolationsHistory() {
           </div>
         )}
       </div>
+      <Dialog open={!!evidenceViolation} onOpenChange={(open) => !open && setEvidenceViolation(null)}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>Evidence Viewer</DialogTitle>
+            <DialogDescription>
+              Plate {evidenceViolation?.plateNumber} - {evidenceViolation?.cameraLocationId}
+            </DialogDescription>
+          </DialogHeader>
+          {evidenceViolation ? (
+            <div className="space-y-4">
+              <div className="rounded-lg border bg-muted/20 aspect-video overflow-hidden">
+                {evidenceImageSrc(evidenceViolation) ? (
+                  <img
+                    src={evidenceImageSrc(evidenceViolation) || ''}
+                    alt={`Evidence for ${evidenceViolation.plateNumber}`}
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <div className="h-full w-full flex items-center justify-center text-muted-foreground text-sm">
+                    CCTV evidence is not available for this entry.
+                  </div>
+                )}
+              </div>
+              <div className="rounded-lg border bg-muted/10 p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">YOLOv8 Metadata</p>
+                <ul className="space-y-1 text-sm">
+                  <li><span className="text-muted-foreground">Detection ID:</span> <span className="font-mono">{evidenceViolation.detectionId || 'N/A'}</span></li>
+                  <li><span className="text-muted-foreground">Class:</span> {evidenceViolation.vehicleType || 'vehicle'}</li>
+                  <li><span className="text-muted-foreground">Timestamp:</span> {evidenceViolation.timeDetected.toLocaleString()}</li>
+                  <li><span className="text-muted-foreground">Status:</span> {evidenceViolation.status}</li>
+                  <li><span className="text-muted-foreground">Message:</span> {evidenceViolation.message || 'N/A'}</li>
+                </ul>
+              </div>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
