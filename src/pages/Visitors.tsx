@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, type ReactNode } from 'react';
-import { Plus, Edit, Trash2, Phone, Info, UserPlus, ChevronsUpDown } from 'lucide-react';
+import { Plus, Edit, Trash2, Phone, Info, UserPlus, ChevronsUpDown, MapPin } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
 import { Button } from '@/components/ui/button';
@@ -174,6 +174,20 @@ function residentVisitedStorageValue(r: Resident, allResidents: Resident[]): str
   if (sameName.length <= 1) return name;
   const addr = formatResidentAddressLine(r);
   return addr ? `${name} · ${addr}` : `${name} · ${digitsOnly(r.contactNumber)}`;
+}
+
+/** For Visit resident, show the resident name only (storage may append ` · ` disambiguation). Otherwise return `rented` as stored (e.g. facility). */
+function locationOrVisitedResidentLabel(vehicle: Vehicle, allResidents: Resident[]): string {
+  const rented = (vehicle.rented || '').trim();
+  if (!rented) return '';
+  if ((vehicle.purposeOfVisit || '').trim() !== 'Visit resident') return rented;
+  for (const r of allResidents) {
+    if (residentVisitedStorageValue(r, allResidents) === rented) return r.name.trim();
+  }
+  const sep = ' · ';
+  const i = rented.indexOf(sep);
+  if (i !== -1) return rented.slice(0, i).trim();
+  return rented;
 }
 
 function SearchableResidentSelect({
@@ -351,6 +365,8 @@ export default function Visitors() {
   const [editingVehicle, setEditingVehicle] = useState<Vehicle | null>(null);
   const [vehicleToDelete, setVehicleToDelete] = useState<Vehicle | null>(null);
   const [isDeletingVehicle, setIsDeletingVehicle] = useState(false);
+  const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
+  const [viewingVehicle, setViewingVehicle] = useState<Vehicle | null>(null);
   const [formData, setFormData] = useState({
     plateNumber: '',
     ownerName: '',
@@ -433,11 +449,6 @@ export default function Visitors() {
       return true;
     });
   }, [tabFiltered, filterPlate, filterVehicleType, filterOwner, filterRegisteredOn]);
-
-  const showRentedColumn = useMemo(
-    () => activeTab === 'Reservation' || tabFiltered.some((v) => Boolean(v.rented?.trim())),
-    [activeTab, tabFiltered],
-  );
 
   const hasActiveVisitorFilters = useMemo(
     () =>
@@ -664,6 +675,11 @@ export default function Visitors() {
 
   const deleteButtonClassName =
     'h-8 w-8 border-red-600 text-red-600 hover:bg-red-600/15 hover:text-red-700 dark:hover:bg-red-600/20';
+
+  const handleViewVisitorVehicle = (vehicle: Vehicle) => {
+    setViewingVehicle(vehicle);
+    setIsViewDialogOpen(true);
+  };
 
   const purposeSelectValue = useMemo(() => {
     if (formData.purposeOfVisit === PURPOSE_OTHER) return PURPOSE_OTHER;
@@ -1019,7 +1035,18 @@ export default function Visitors() {
             <div className="block sm:hidden space-y-3">
               {displayedRows.map((vehicle) => (
                 <div key={vehicle.id} className="glass-card rounded-xl p-4 space-y-2">
-                  <div className="font-mono font-medium text-lg">{vehicle.plateNumber}</div>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="font-mono font-medium text-lg">{vehicle.plateNumber}</div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 shrink-0"
+                      onClick={() => handleViewVisitorVehicle(vehicle)}
+                      aria-label="View visitor summary"
+                    >
+                      <Info className="h-4 w-4" />
+                    </Button>
+                  </div>
                   <div className="text-sm text-muted-foreground">{formatVehicleTypeLabel(vehicle.vehicleType)}</div>
                   <div className="text-sm font-medium">{vehicle.ownerName}</div>
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -1028,8 +1055,10 @@ export default function Visitors() {
                   </div>
                   {vehicle.rented ? (
                     <div className="text-xs text-muted-foreground">
-                      {(vehicle.purposeOfVisit || '').trim() === 'Visit resident' ? 'Visiting' : 'Location'}:{' '}
-                      {vehicle.rented}
+                      {(vehicle.purposeOfVisit || '').trim() === 'Visit resident'
+                        ? 'Resident visited'
+                        : 'Location'}
+                      : {locationOrVisitedResidentLabel(vehicle, residents)}
                     </div>
                   ) : null}
                   <div className="text-xs text-muted-foreground">
@@ -1065,9 +1094,6 @@ export default function Visitors() {
                       <TableHead className="text-muted-foreground">Vehicle Type</TableHead>
                       <TableHead className="text-muted-foreground">Owner</TableHead>
                       <TableHead className="text-muted-foreground">Contact</TableHead>
-                      {showRentedColumn ? (
-                        <TableHead className="text-muted-foreground">Location</TableHead>
-                      ) : null}
                       <TableHead className="text-muted-foreground">Registered</TableHead>
                       <TableHead className="text-muted-foreground text-right">Actions</TableHead>
                     </TableRow>
@@ -1084,14 +1110,19 @@ export default function Visitors() {
                             {vehicle.contactNumber}
                           </div>
                         </TableCell>
-                        {showRentedColumn ? (
-                          <TableCell className="text-muted-foreground text-sm">{vehicle.rented || '—'}</TableCell>
-                        ) : null}
                         <TableCell className="text-muted-foreground text-sm">
                           {new Date(vehicle.registeredAt).toLocaleDateString()}
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex items-center justify-end gap-2">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleViewVisitorVehicle(vehicle)}
+                              aria-label="View visitor summary"
+                            >
+                              <Info className="h-4 w-4" />
+                            </Button>
                             {isAdmin && (
                               <>
                                 <Button variant="ghost" size="icon" onClick={() => handleOpenDialog(vehicle)}>
@@ -1117,6 +1148,86 @@ export default function Visitors() {
                 </Table>
               </div>
             </div>
+
+            <Dialog
+              open={isViewDialogOpen}
+              onOpenChange={(open) => {
+                if (!open) {
+                  setIsViewDialogOpen(false);
+                  setViewingVehicle(null);
+                }
+              }}
+            >
+              <DialogContent className="bg-card border-border mx-4 sm:mx-auto max-w-[calc(100vw-2rem)] sm:max-w-md">
+                <DialogHeader>
+                  <DialogTitle>{viewingVehicle?.ownerName ?? 'Visitor summary'}</DialogTitle>
+                  <DialogDescription>
+                    {viewingVehicle ? (
+                      <>
+                        Visitor record for{' '}
+                        <span className="font-mono font-medium text-foreground">{viewingVehicle.plateNumber}</span>
+                      </>
+                    ) : (
+                      'Visitor details'
+                    )}
+                  </DialogDescription>
+                </DialogHeader>
+                {viewingVehicle ? (
+                  <div className="space-y-4 py-2 text-sm">
+                    <div>
+                      <p className="text-xs uppercase text-muted-foreground">Vehicle type</p>
+                      <p className="font-medium text-foreground">
+                        {formatVehicleTypeLabel(viewingVehicle.vehicleType)}
+                      </p>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <Phone className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
+                      <div>
+                        <p className="text-xs uppercase text-muted-foreground">Contact</p>
+                        <p className="font-medium text-foreground">{viewingVehicle.contactNumber}</p>
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase text-muted-foreground">Purpose of visit</p>
+                      <p className="font-medium text-foreground">
+                        {(viewingVehicle.purposeOfVisit || '').trim() || '—'}
+                      </p>
+                    </div>
+                    {viewingVehicle.rented?.trim() ? (
+                      <div>
+                        <p className="text-xs uppercase text-muted-foreground">
+                          {(viewingVehicle.purposeOfVisit || '').trim() === 'Visit resident'
+                            ? 'Resident visited'
+                            : 'Location / facility'}
+                        </p>
+                        <p className="font-medium text-foreground">
+                          {locationOrVisitedResidentLabel(viewingVehicle, residents)}
+                        </p>
+                      </div>
+                    ) : null}
+                    {formatResidentAddressLine(viewingVehicle) ? (
+                      <div className="flex items-start gap-2">
+                        <MapPin className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
+                        <div>
+                          <p className="text-xs uppercase text-muted-foreground">Address</p>
+                          <p className="font-medium text-foreground leading-snug">
+                            {formatResidentAddressLine(viewingVehicle)}
+                          </p>
+                        </div>
+                      </div>
+                    ) : null}
+                    {viewingVehicle.visitorCategory ? (
+                      <p className="text-xs text-muted-foreground capitalize">
+                        Category: {viewingVehicle.visitorCategory}
+                      </p>
+                    ) : null}
+                    <p className="text-xs text-muted-foreground">
+                      Registered {new Date(viewingVehicle.registeredAt).toLocaleDateString()}
+                    </p>
+                  </div>
+                ) : null}
+              </DialogContent>
+            </Dialog>
 
             <AlertDialog
               open={!!vehicleToDelete}
