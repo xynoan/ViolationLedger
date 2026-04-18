@@ -48,8 +48,17 @@ try {
     );
     console.log('✅ Admin user updated successfully!');
   } else {
-    // Create new user
-    const userId = 'USER-ADMIN-001';
+    // Create new user — id must be unique (USER-ADMIN-001 may already exist from a prior admin)
+    let userId = 'USER-ADMIN-001';
+    for (let n = 1; n < 10000; n++) {
+      const candidate =
+        n === 1 ? 'USER-ADMIN-001' : `USER-ADMIN-${String(n).padStart(3, '0')}`;
+      const idTaken = db.prepare('SELECT 1 FROM users WHERE id = ?').get(candidate);
+      if (!idTaken) {
+        userId = candidate;
+        break;
+      }
+    }
     const now = new Date().toISOString();
 
     db.prepare(`
