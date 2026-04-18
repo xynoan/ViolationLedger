@@ -1150,37 +1150,10 @@ export default function Residents() {
               </p>
             </div>
           </div>
-          <div className="space-y-2">
-            <span className="text-xs text-muted-foreground font-medium">Sort by</span>
-            <ToggleGroup
-              type="single"
-              value={sortBy}
-              onValueChange={(v) => {
-                if (v) setSortBy(v as ResidentSort);
-              }}
-              variant="outline"
-              size="sm"
-              className="flex flex-wrap justify-start gap-1.5"
-              aria-label="Sort residents"
-            >
-              <ToggleGroupItem value="name_asc" className="text-xs px-2.5">
-                Name (A–Z)
-              </ToggleGroupItem>
-              <ToggleGroupItem value="most_vehicles" className="text-xs px-2.5">
-                Most Vehicles
-              </ToggleGroupItem>
-              <ToggleGroupItem value="recent_violation" className="text-xs px-2.5">
-                Recent Activity
-              </ToggleGroupItem>
-            </ToggleGroup>
-            <p className="text-[11px] text-muted-foreground leading-snug">
-              Recent activity uses the latest violation date for vehicles linked to each resident.
-            </p>
-          </div>
           {hasActiveFilters && (
             <div className="flex flex-wrap items-center gap-2 pt-1">
               <Button type="button" variant="ghost" size="sm" className="h-8" onClick={clearSearchAndFilters}>
-                Reset filters &amp; sort
+                Reset filter
               </Button>
             </div>
           )}
