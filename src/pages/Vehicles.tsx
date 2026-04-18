@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Plus,
-  Search,
   Edit,
   Trash2,
   Car,
@@ -51,7 +50,6 @@ import { vehiclesAPI, residentsAPI, violationsAPI } from '@/lib/api';
 import { useAuth } from '@/hooks/useAuth';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { SearchNoMatchesEmpty } from '@/components/search/SearchNoMatchesEmpty';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { formatResidentAddressLine } from '@/lib/residentStreets';
@@ -83,6 +81,28 @@ function formatVehicleTypeLabel(value?: string): string {
 }
 
 const normPlate = (p: string) => String(p || '').replace(/\s+/g, '').toUpperCase();
+
+const VEHICLE_TYPE_PRESET_SLUGS = new Set(
+  VEHICLE_TYPE_OPTIONS.filter((o) => o.value !== VEHICLE_TYPE_OTHER).map((o) => o.value),
+);
+
+function vehicleMatchesTypeFilter(vehicle: Vehicle, filterSlug: string): boolean {
+  if (!filterSlug) return true;
+  const t = (vehicle.vehicleType || '').trim().toLowerCase();
+  if (filterSlug === VEHICLE_TYPE_OTHER) return !VEHICLE_TYPE_PRESET_SLUGS.has(t);
+  return t === filterSlug;
+}
+
+function registeredAtMatchesDay(registeredAt: Date | string, isoDay: string): boolean {
+  const day = isoDay.trim();
+  if (!day) return true;
+  const [y, m, d] = day.split('-').map(Number);
+  if (!y || !m || !d) return true;
+  const start = new Date(y, m - 1, d, 0, 0, 0, 0).getTime();
+  const end = new Date(y, m - 1, d, 23, 59, 59, 999).getTime();
+  const ts = new Date(registeredAt).getTime();
+  return ts >= start && ts <= end;
+}
 
 function violationsForResidentLinkedPlates(
   residentId: string,
@@ -156,7 +176,10 @@ export default function Vehicles() {
   const [violations, setViolations] = useState<Violation[]>([]);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [searchTerm, setSearchTerm] = useState('');
+  const [filterPlate, setFilterPlate] = useState('');
+  const [filterVehicleType, setFilterVehicleType] = useState('');
+  const [filterOwner, setFilterOwner] = useState('');
+  const [filterRegisteredOn, setFilterRegisteredOn] = useState('');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
   const [editingVehicle, setEditingVehicle] = useState<Vehicle | null>(null);
@@ -183,14 +206,14 @@ export default function Vehicles() {
     }
   }, []);
 
-  const loadVehicles = useCallback(async (initial = false, term = '') => {
+  const loadVehicles = useCallback(async (initial = false) => {
     try {
       if (initial) {
         setIsInitialLoading(true);
       } else {
         setIsRefreshing(true);
       }
-      const data = await vehiclesAPI.getAll(term || undefined);
+      const data = await vehiclesAPI.getAll();
       setVehicles(data);
     } catch (error) {
       console.error('Error loading vehicles:', error);
@@ -211,14 +234,6 @@ export default function Vehicles() {
   useEffect(() => {
     loadVehicles(true);
   }, [loadVehicles]);
-
-  useEffect(() => {
-    if (isInitialLoading) return;
-    const timeout = setTimeout(() => {
-      loadVehicles(false, searchTerm);
-    }, 250);
-    return () => clearTimeout(timeout);
-  }, [isInitialLoading, loadVehicles, searchTerm]);
 
   // Load residents on mount so view dialog can resolve resident names
   useEffect(() => {
@@ -255,13 +270,40 @@ export default function Vehicles() {
   );
 
   const filteredLinkedVehicles = useMemo(() => {
-    const q = searchTerm.trim().toLowerCase();
-    if (!q) return vehiclesLinkedToRegisteredResidents;
-    return vehiclesLinkedToRegisteredResidents.filter(
-      (v) =>
-        v.plateNumber.toLowerCase().includes(q) || v.ownerName.toLowerCase().includes(q),
-    );
-  }, [vehiclesLinkedToRegisteredResidents, searchTerm]);
+    const plateQ = normPlate(filterPlate);
+    const ownerQ = filterOwner.trim().toLowerCase();
+    return vehiclesLinkedToRegisteredResidents.filter((v) => {
+      if (plateQ && !normPlate(v.plateNumber).includes(plateQ)) return false;
+      if (!vehicleMatchesTypeFilter(v, filterVehicleType)) return false;
+      if (ownerQ && !v.ownerName.toLowerCase().includes(ownerQ)) return false;
+      if (!registeredAtMatchesDay(v.registeredAt, filterRegisteredOn)) return false;
+      return true;
+    });
+  }, [
+    vehiclesLinkedToRegisteredResidents,
+    filterPlate,
+    filterVehicleType,
+    filterOwner,
+    filterRegisteredOn,
+  ]);
+
+  const hasActiveRegistryFilters = useMemo(
+    () =>
+      Boolean(
+        filterPlate.trim() ||
+          filterVehicleType ||
+          filterOwner.trim() ||
+          filterRegisteredOn.trim(),
+      ),
+    [filterPlate, filterVehicleType, filterOwner, filterRegisteredOn],
+  );
+
+  const clearRegistryFilters = useCallback(() => {
+    setFilterPlate('');
+    setFilterVehicleType('');
+    setFilterOwner('');
+    setFilterRegisteredOn('');
+  }, []);
 
   const residentFilterId = searchParams.get('residentId')?.trim() ?? '';
   const [residentFilterLabel, setResidentFilterLabel] = useState<string | null>(null);
@@ -615,18 +657,76 @@ export default function Vehicles() {
             </Button>
           </div>
         )}
-        {/* Actions Bar */}
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 sm:gap-4">
-          <div className="relative flex-1 sm:max-w-md">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              placeholder="Search by plate or owner..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-9 bg-secondary"
-            />
+        {/* Filters */}
+        <div className="flex flex-col gap-3 sm:gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="filter-plate" className="text-xs text-muted-foreground">
+                Plate number
+              </Label>
+              <Input
+                id="filter-plate"
+                placeholder="Any plate…"
+                value={filterPlate}
+                onChange={(e) => setFilterPlate(e.target.value.toUpperCase())}
+                className="bg-secondary uppercase font-mono"
+                spellCheck={false}
+                autoCapitalize="characters"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="filter-vehicle-type" className="text-xs text-muted-foreground">
+                Vehicle type
+              </Label>
+              <Select value={filterVehicleType || '__all__'} onValueChange={(v) => setFilterVehicleType(v === '__all__' ? '' : v)}>
+                <SelectTrigger id="filter-vehicle-type" className="bg-secondary">
+                  <SelectValue placeholder="All types" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">All types</SelectItem>
+                  {VEHICLE_TYPE_OPTIONS.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="filter-owner" className="text-xs text-muted-foreground">
+                Owner
+              </Label>
+              <Input
+                id="filter-owner"
+                placeholder="Owner name…"
+                value={filterOwner}
+                onChange={(e) => setFilterOwner(e.target.value)}
+                className="bg-secondary"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="filter-registered" className="text-xs text-muted-foreground">
+                Date registered
+              </Label>
+              <Input
+                id="filter-registered"
+                type="date"
+                value={filterRegisteredOn}
+                onChange={(e) => setFilterRegisteredOn(e.target.value)}
+                className="bg-secondary"
+              />
+            </div>
           </div>
+          {hasActiveRegistryFilters ? (
+            <div className="flex justify-end">
+              <Button type="button" variant="outline" size="sm" onClick={clearRegistryFilters}>
+                Clear filters
+              </Button>
+            </div>
+          ) : null}
+        </div>
 
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-3 sm:gap-4">
           {!isBarangayUser && (
             <>
               <Button asChild className="w-full sm:w-auto">
@@ -1028,24 +1128,41 @@ export default function Vehicles() {
             <h3 className="text-lg font-semibold text-foreground mb-2">No vehicles for this resident</h3>
             <p className="text-muted-foreground mb-6 text-sm max-w-md mx-auto">
               {residentFilterLabel
-                ? `No resident-linked vehicles match for ${residentFilterLabel} with the current search.`
+                ? `No resident-linked vehicles match for ${residentFilterLabel} with the current filters.`
                 : 'No vehicles match this resident filter.'}
             </p>
             <div className="flex flex-col sm:flex-row gap-2 justify-center">
               <Button type="button" variant="secondary" onClick={clearResidentFilter}>
                 Show all vehicles
               </Button>
-              <Button type="button" variant="outline" onClick={() => setSearchTerm('')}>
-                Clear search
-              </Button>
+              {hasActiveRegistryFilters ? (
+                <Button type="button" variant="outline" onClick={clearRegistryFilters}>
+                  Clear filters
+                </Button>
+              ) : null}
             </div>
           </div>
-        ) : vehiclesLinkedToRegisteredResidents.length > 0 && searchTerm.trim() ? (
-          <SearchNoMatchesEmpty
-            searchTerm={searchTerm}
-            onClear={() => setSearchTerm('')}
-            hint="Check your spelling or try searching for a different plate number or resident owner name."
-          />
+        ) : vehiclesLinkedToRegisteredResidents.length > 0 &&
+          hasActiveRegistryFilters &&
+          displayedLinkedVehicles.length === 0 ? (
+          <div className="glass-card rounded-xl p-8 sm:p-12 text-center">
+            <Car className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+            <h3 className="text-lg font-semibold text-foreground mb-2">No matching vehicles</h3>
+            <p className="text-muted-foreground mb-6 text-sm max-w-md mx-auto">
+              Nothing in the registry matches the plate, type, owner, or registration date you selected. Try loosening or
+              clearing filters.
+            </p>
+            <div className="flex flex-col sm:flex-row gap-2 justify-center">
+              <Button type="button" variant="default" onClick={clearRegistryFilters}>
+                Clear filters
+              </Button>
+              {residentFilterId ? (
+                <Button type="button" variant="outline" onClick={clearResidentFilter}>
+                  Show all vehicles
+                </Button>
+              ) : null}
+            </div>
+          </div>
         ) : vehicles.length > 0 && vehiclesLinkedToRegisteredResidents.length === 0 ? (
           <div className="glass-card rounded-xl p-8 sm:p-12 text-center">
             <Car className="h-12 w-12 sm:h-16 sm:w-16 text-muted-foreground mx-auto mb-4" />
