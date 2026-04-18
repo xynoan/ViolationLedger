@@ -20,6 +20,7 @@ const VEHICLE_TYPE_OPTIONS = [
   { value: 'tricycle', label: 'Tricycle' },
   { value: 'other', label: 'Other' },
 ] as const;
+const VEHICLE_TYPE_OTHER = 'other';
 
 export default function AddVehicleQuick() {
   usePageTracking();
@@ -30,6 +31,7 @@ export default function AddVehicleQuick() {
   const [formData, setFormData] = useState({
     plateNumber: '',
     vehicleType: 'car',
+    vehicleTypeOther: '',
     residentId: '',
   });
 
@@ -55,7 +57,12 @@ export default function AddVehicleQuick() {
   }, []);
 
   const resetFormForNext = () => {
-    setFormData((prev) => ({ ...prev, plateNumber: '' }));
+    setFormData({
+      plateNumber: '',
+      vehicleType: 'car',
+      vehicleTypeOther: '',
+      residentId: '',
+    });
     requestAnimationFrame(() => {
       plateInputRef.current?.focus();
       plateInputRef.current?.select();
@@ -90,6 +97,17 @@ export default function AddVehicleQuick() {
       });
       return;
     }
+    const customVehicleType = formData.vehicleTypeOther.trim();
+    const vehicleTypeValue =
+      formData.vehicleType === VEHICLE_TYPE_OTHER ? customVehicleType : formData.vehicleType;
+    if (!vehicleTypeValue) {
+      toast({
+        title: 'Validation Error',
+        description: 'Please enter the vehicle type.',
+        variant: 'destructive',
+      });
+      return;
+    }
 
     setIsSaving(true);
     try {
@@ -101,7 +119,7 @@ export default function AddVehicleQuick() {
         residentId: selectedResident.id,
         dataSource: 'barangay',
         rented: null,
-        vehicleType: formData.vehicleType,
+        vehicleType: vehicleTypeValue,
       });
 
       setLastSavedPlate(plateNumber);
@@ -188,7 +206,13 @@ export default function AddVehicleQuick() {
               </Label>
               <Select
                 value={formData.vehicleType}
-                onValueChange={(v) => setFormData((prev) => ({ ...prev, vehicleType: v }))}
+                onValueChange={(v) =>
+                  setFormData((prev) => ({
+                    ...prev,
+                    vehicleType: v,
+                    vehicleTypeOther: v === VEHICLE_TYPE_OTHER ? prev.vehicleTypeOther : '',
+                  }))
+                }
               >
                 <SelectTrigger id="quick-vehicle-type" className="bg-secondary">
                   <SelectValue />
@@ -201,6 +225,14 @@ export default function AddVehicleQuick() {
                   ))}
                 </SelectContent>
               </Select>
+              {formData.vehicleType === VEHICLE_TYPE_OTHER ? (
+                <Input
+                  placeholder="Enter vehicle type"
+                  value={formData.vehicleTypeOther}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, vehicleTypeOther: e.target.value }))}
+                  className="bg-secondary"
+                />
+              ) : null}
             </div>
 
             <Button type="submit" className="w-full sm:w-auto" disabled={isSaving}>

@@ -48,6 +48,8 @@ const VEHICLE_TYPE_OPTIONS = [
   { value: 'tricycle', label: 'Tricycle' },
   { value: 'other', label: 'Other' },
 ] as const;
+const VEHICLE_TYPE_OTHER = 'other';
+const PURPOSE_OTHER = 'Other';
 
 const RENTED_OPTIONS = ['Court', 'Community Center', 'Barangay Hall'] as const;
 const RENTED_NONE = '__rented_none__';
@@ -113,7 +115,9 @@ export default function Visitors() {
     ownerName: '',
     contactNumber: '',
     vehicleType: 'car' as string,
+    vehicleTypeOther: '',
     purposeOfVisit: '',
+    purposeOfVisitOther: '',
     rented: '',
     visitorCategory: 'guest' as VisitorTab,
   });
@@ -185,7 +189,9 @@ export default function Visitors() {
       ownerName: '',
       contactNumber: '',
       vehicleType: 'car',
+      vehicleTypeOther: '',
       purposeOfVisit: purposes[0] ?? '',
+      purposeOfVisitOther: '',
       rented: '',
       visitorCategory: category,
     });
@@ -212,13 +218,19 @@ export default function Visitors() {
 
     if (vehicle) {
       const cat = deriveVisitorCategory(vehicle);
+      const normalizedVehicleType = (vehicle.vehicleType || '').toLowerCase();
+      const hasPresetVehicleType = VEHICLE_TYPE_OPTIONS.some((opt) => opt.value === normalizedVehicleType);
+      const purposeOptions = purposeOptionsForCategory(cat);
+      const hasPresetPurpose = purposeOptions.includes(vehicle.purposeOfVisit || '');
       setEditingVehicle(vehicle);
       setFormData({
         plateNumber: vehicle.plateNumber.toUpperCase(),
         ownerName: vehicle.ownerName,
         contactNumber: digitsOnly(vehicle.contactNumber),
-        vehicleType: vehicle.vehicleType || 'car',
-        purposeOfVisit: vehicle.purposeOfVisit || purposeOptionsForCategory(cat)[0] || '',
+        vehicleType: hasPresetVehicleType ? normalizedVehicleType : VEHICLE_TYPE_OTHER,
+        vehicleTypeOther: hasPresetVehicleType ? '' : vehicle.vehicleType || '',
+        purposeOfVisit: hasPresetPurpose ? vehicle.purposeOfVisit || '' : PURPOSE_OTHER,
+        purposeOfVisitOther: hasPresetPurpose ? '' : vehicle.purposeOfVisit || '',
         rented: vehicle.rented || '',
         visitorCategory: cat,
       });
@@ -246,11 +258,24 @@ export default function Visitors() {
     const ownerTrimmed = formData.ownerName.trim();
     const contactClean = digitsOnly(formData.contactNumber);
     const cat = formData.visitorCategory;
+    const customVehicleType = formData.vehicleTypeOther.trim();
+    const vehicleTypeValue =
+      formData.vehicleType === VEHICLE_TYPE_OTHER ? customVehicleType : formData.vehicleType;
+    const customPurpose = formData.purposeOfVisitOther.trim();
+    const purposeValue = formData.purposeOfVisit === PURPOSE_OTHER ? customPurpose : formData.purposeOfVisit;
 
-    if (!plateTrimmed || !ownerTrimmed || !formData.purposeOfVisit) {
+    if (!plateTrimmed || !ownerTrimmed || !purposeValue) {
       toast({
         title: 'Validation Error',
         description: 'Please fill in plate number, owner name, purpose of visit, and contact number',
+        variant: 'destructive',
+      });
+      return;
+    }
+    if (!vehicleTypeValue) {
+      toast({
+        title: 'Validation Error',
+        description: 'Please enter the vehicle type',
         variant: 'destructive',
       });
       return;
@@ -285,8 +310,8 @@ export default function Visitors() {
       contactNumber: contactClean,
       residentId: null as string | null,
       rented: cat === 'rental' ? formData.rented : null,
-      purposeOfVisit: formData.purposeOfVisit,
-      vehicleType: formData.vehicleType,
+      purposeOfVisit: purposeValue,
+      vehicleType: vehicleTypeValue,
       visitorCategory: cat,
     };
 
@@ -354,7 +379,12 @@ export default function Visitors() {
 
   const purposeSelectValue = useMemo(() => {
     const opts = purposeOptionsForCategory(formData.visitorCategory);
-    if (opts.includes(formData.purposeOfVisit as (typeof opts)[number])) return formData.purposeOfVisit;
+    if (
+      opts.includes(formData.purposeOfVisit as (typeof opts)[number]) ||
+      formData.purposeOfVisit === PURPOSE_OTHER
+    ) {
+      return formData.purposeOfVisit;
+    }
     return opts[0] ?? '';
   }, [formData.purposeOfVisit, formData.visitorCategory]);
 
@@ -442,6 +472,7 @@ export default function Visitors() {
                             ...prev,
                             visitorCategory: nextCat,
                             purposeOfVisit: nextPurposes[0] ?? prev.purposeOfVisit,
+                            purposeOfVisitOther: '',
                             rented: nextCat === 'rental' ? prev.rented : '',
                           }));
                         }}
@@ -479,7 +510,13 @@ export default function Visitors() {
                     </Label>
                     <Select
                       value={formData.vehicleType}
-                      onValueChange={(v) => setFormData({ ...formData, vehicleType: v })}
+                      onValueChange={(v) =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          vehicleType: v,
+                          vehicleTypeOther: v === VEHICLE_TYPE_OTHER ? prev.vehicleTypeOther : '',
+                        }))
+                      }
                     >
                       <SelectTrigger id="v-type" className="bg-secondary">
                         <SelectValue />
@@ -492,6 +529,16 @@ export default function Visitors() {
                         ))}
                       </SelectContent>
                     </Select>
+                    {formData.vehicleType === VEHICLE_TYPE_OTHER ? (
+                      <Input
+                        placeholder="Enter vehicle type"
+                        value={formData.vehicleTypeOther}
+                        onChange={(e) =>
+                          setFormData((prev) => ({ ...prev, vehicleTypeOther: e.target.value }))
+                        }
+                        className="bg-secondary"
+                      />
+                    ) : null}
                     </div>
                     <div className="space-y-2">
                     <Label htmlFor="v-owner">
@@ -529,7 +576,13 @@ export default function Visitors() {
                     </Label>
                     <Select
                       value={purposeSelectValue}
-                      onValueChange={(v) => setFormData({ ...formData, purposeOfVisit: v })}
+                      onValueChange={(v) =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          purposeOfVisit: v,
+                          purposeOfVisitOther: v === PURPOSE_OTHER ? prev.purposeOfVisitOther : '',
+                        }))
+                      }
                     >
                       <SelectTrigger id="v-purpose" className="bg-secondary">
                         <SelectValue placeholder="Select purpose" />
@@ -540,8 +593,19 @@ export default function Visitors() {
                             {opt}
                           </SelectItem>
                         ))}
+                        <SelectItem value={PURPOSE_OTHER}>{PURPOSE_OTHER}</SelectItem>
                       </SelectContent>
                     </Select>
+                    {formData.purposeOfVisit === PURPOSE_OTHER ? (
+                      <Input
+                        placeholder="Enter purpose of visit"
+                        value={formData.purposeOfVisitOther}
+                        onChange={(e) =>
+                          setFormData((prev) => ({ ...prev, purposeOfVisitOther: e.target.value }))
+                        }
+                        className="bg-secondary"
+                      />
+                    ) : null}
                     </div>
                   {formData.visitorCategory === 'rental' ? (
                     <div className="space-y-2">

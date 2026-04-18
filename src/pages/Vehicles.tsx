@@ -65,6 +65,7 @@ const VEHICLE_TYPE_OPTIONS = [
   { value: 'tricycle', label: 'Tricycle' },
   { value: 'other', label: 'Other' },
 ] as const;
+const VEHICLE_TYPE_OTHER = 'other';
 
 function errMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
@@ -167,6 +168,7 @@ export default function Vehicles() {
     ownerName: '',
     residentId: '',
     vehicleType: 'car' as string,
+    vehicleTypeOther: '',
   });
   const [ownerSuggestOpen, setOwnerSuggestOpen] = useState(false);
   const ownerComboRef = useRef<HTMLDivElement>(null);
@@ -335,6 +337,7 @@ export default function Vehicles() {
       ownerName: '',
       residentId: '',
       vehicleType: 'car',
+      vehicleTypeOther: '',
     });
     setEditingVehicle(null);
     setOwnerSuggestOpen(false);
@@ -361,15 +364,19 @@ export default function Vehicles() {
     }
     
     if (vehicle) {
+      const normalizedVehicleType = (vehicle.vehicleType || '').toLowerCase();
+      const hasPresetVehicleType = VEHICLE_TYPE_OPTIONS.some((opt) => opt.value === normalizedVehicleType);
       setEditingVehicle(vehicle);
       setFormData({
         plateNumber: vehicle.plateNumber.toUpperCase(),
         ownerName: vehicle.ownerName,
         residentId: vehicle.residentId || '',
-        vehicleType: vehicle.vehicleType || 'car',
+        vehicleType: hasPresetVehicleType ? normalizedVehicleType : VEHICLE_TYPE_OTHER,
+        vehicleTypeOther: hasPresetVehicleType ? '' : vehicle.vehicleType || '',
       });
     } else {
       resetForm();
+      setOwnerSuggestOpen(false);
     }
     setIsDialogOpen(true);
   };
@@ -412,6 +419,17 @@ export default function Vehicles() {
       });
       return;
     }
+    const customVehicleType = formData.vehicleTypeOther.trim();
+    const vehicleTypeValue =
+      formData.vehicleType === VEHICLE_TYPE_OTHER ? customVehicleType : formData.vehicleType;
+    if (!vehicleTypeValue) {
+      toast({
+        title: "Validation Error",
+        description: "Please enter the vehicle type",
+        variant: "destructive",
+      });
+      return;
+    }
 
     if (!ownerNameValid(formData.ownerName)) {
       toast({
@@ -428,7 +446,7 @@ export default function Vehicles() {
       contactNumber: contactForPayload,
       residentId: formData.residentId || null,
       rented: null as string | null,
-      vehicleType: formData.vehicleType,
+      vehicleType: vehicleTypeValue,
     };
 
     try {
@@ -650,7 +668,13 @@ export default function Vehicles() {
                     </Label>
                     <Select
                       value={formData.vehicleType}
-                      onValueChange={(v) => setFormData({ ...formData, vehicleType: v })}
+                      onValueChange={(v) =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          vehicleType: v,
+                          vehicleTypeOther: v === VEHICLE_TYPE_OTHER ? prev.vehicleTypeOther : '',
+                        }))
+                      }
                     >
                       <SelectTrigger id="vehicleType" className="bg-secondary">
                         <SelectValue placeholder="Select type" />
@@ -663,6 +687,16 @@ export default function Vehicles() {
                         ))}
                       </SelectContent>
                     </Select>
+                    {formData.vehicleType === VEHICLE_TYPE_OTHER ? (
+                      <Input
+                        placeholder="Enter vehicle type"
+                        value={formData.vehicleTypeOther}
+                        onChange={(e) =>
+                          setFormData((prev) => ({ ...prev, vehicleTypeOther: e.target.value }))
+                        }
+                        className="bg-secondary"
+                      />
+                    ) : null}
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="ownerName">
