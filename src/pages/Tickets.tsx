@@ -1,15 +1,11 @@
 import { useState, useEffect, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { Camera, Car, Bike, Truck, Bus, Image as ImageIcon, Calendar, Clock, ZoomIn, ChevronDown, Search } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
 import { Badge } from '@/components/ui/badge';
 import { Camera as CameraType } from '@/types/parking';
 import { camerasAPI, detectionsAPI } from '@/lib/api';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Switch } from '@/components/ui/switch';
-import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
 import { SearchNoMatchesEmpty } from '@/components/search/SearchNoMatchesEmpty';
 import {
@@ -52,13 +48,11 @@ interface CaptureResult {
 
 export default function Tickets() {
   usePageTracking();
-  const navigate = useNavigate();
   const [captureResults, setCaptureResults] = useState<CaptureResult[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [cameras, setCameras] = useState<CameraType[]>([]);
   const [selectedImage, setSelectedImage] = useState<{ src: string; alt: string } | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [violationsOnly, setViolationsOnly] = useState(false);
 
   useEffect(() => {
     loadCaptureResults();
@@ -173,15 +167,10 @@ export default function Tickets() {
 
   const filteredCaptureResults = useMemo(
     () =>
-      captureResults
-        .filter((result) =>
-          result.locationId.toLowerCase().includes(searchTerm.trim().toLowerCase()),
-        )
-        .filter((result) => {
-          if (!violationsOnly) return true;
-          return getDwellMinutes(result.firstDetected, result.lastSeen) > 30;
-        }),
-    [captureResults, searchTerm, violationsOnly],
+      captureResults.filter((result) =>
+        result.locationId.toLowerCase().includes(searchTerm.trim().toLowerCase()),
+      ),
+    [captureResults, searchTerm],
   );
 
   const getImageSrc = (result: CaptureResult): string | null => {
@@ -280,27 +269,6 @@ export default function Tickets() {
                     <p className="text-muted-foreground">Dwell Duration</p>
                     <p className="font-medium">{formatDuration(dwellStatus.minutes)} ({getDwellToneLabel(dwellStatus.tone)})</p>
                   </div>
-                </div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      navigate(`/warnings?cameraId=${encodeURIComponent(result.cameraId)}&locationId=${encodeURIComponent(result.locationId)}`);
-                    }}
-                  >
-                    Issue Warning
-                  </Button>
-                  <Button
-                    size="sm"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      navigate(`/violations?cameraId=${encodeURIComponent(result.cameraId)}&locationId=${encodeURIComponent(result.locationId)}`);
-                    }}
-                  >
-                    File Violation
-                  </Button>
                 </div>
               </div>
               {hasImage ? (
@@ -407,7 +375,7 @@ export default function Tickets() {
       />
 
       <div className="sticky top-16 z-20 border-b bg-background/95 backdrop-blur">
-        <div className="p-4 sm:px-6 flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
+        <div className="p-4 sm:px-6">
           <div className="relative w-full sm:max-w-sm">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
@@ -416,10 +384,6 @@ export default function Tickets() {
               placeholder="Search location (e.g., Twin Peaks Drive)"
               className="pl-9"
             />
-          </div>
-          <div className="flex items-center gap-2">
-            <Switch id="violations-only" checked={violationsOnly} onCheckedChange={setViolationsOnly} />
-            <Label htmlFor="violations-only">Violations Only</Label>
           </div>
         </div>
       </div>
@@ -435,20 +399,12 @@ export default function Tickets() {
             <p className="text-muted-foreground text-sm sm:text-base">No capture results yet</p>
             <p className="text-xs text-muted-foreground mt-2">Captures will appear here after the first analysis</p>
           </div>
-        ) : searchTerm.trim() ? (
+        ) : (
           <SearchNoMatchesEmpty
             searchTerm={searchTerm}
             onClear={() => setSearchTerm('')}
             hint="Check your spelling or try searching for a different location ID."
           />
-        ) : (
-          <div className="glass-card rounded-xl p-6 sm:p-8 text-center">
-            <Camera className="h-10 w-10 sm:h-12 sm:w-12 text-muted-foreground mx-auto mb-3" />
-            <p className="text-muted-foreground text-sm sm:text-base">No captures match the current filters</p>
-            <p className="text-xs text-muted-foreground mt-2">
-              Turn off &quot;Violations Only&quot; or adjust your search to see more results.
-            </p>
-          </div>
         )}
       </div>
       
