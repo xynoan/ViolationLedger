@@ -15,9 +15,12 @@ const ALLOWED_VEHICLE_TYPES = new Set([
 ]);
 
 function normalizeVehicleType(value) {
-  const v = typeof value === 'string' ? value.trim().toLowerCase() : '';
-  if (ALLOWED_VEHICLE_TYPES.has(v)) return v;
-  return 'car';
+  const raw = typeof value === 'string' ? value.trim() : '';
+  if (!raw) return 'car';
+  const normalized = raw.toLowerCase();
+  if (ALLOWED_VEHICLE_TYPES.has(normalized)) return normalized;
+  // Preserve custom types entered when "Other" is selected.
+  return raw;
 }
 
 const ALLOWED_VISITOR_CATEGORY = new Set(['guest', 'delivery', 'rental']);
@@ -26,6 +29,15 @@ function normalizeVisitorCategory(value) {
   const v = typeof value === 'string' ? value.trim().toLowerCase() : '';
   if (ALLOWED_VISITOR_CATEGORY.has(v)) return v;
   return null;
+}
+
+function isUniquePlateConstraintError(error) {
+  const message = String(error?.message || '').toLowerCase();
+  return (
+    error?.code === 'SQLITE_CONSTRAINT_UNIQUE' ||
+    message.includes('unique constraint failed') ||
+    message.includes('vehicles.platenumber')
+  );
 }
 
 router.use(authenticateToken);
@@ -181,7 +193,7 @@ router.post('/', (req, res) => {
       registeredAt: new Date(vehicle.registeredAt)
     });
   } catch (error) {
-    if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+    if (isUniquePlateConstraintError(error)) {
       res.status(409).json({ error: 'Plate number already exists' });
     } else {
       res.status(500).json({ error: error.message });
