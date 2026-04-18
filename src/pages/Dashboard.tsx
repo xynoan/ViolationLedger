@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Car, AlertTriangle, CheckCircle, Camera, Plus, Pause, Play, FlaskConical } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { Car, AlertTriangle, CheckCircle, Camera, Plus, Pause, Play, FlaskConical, BarChart3 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
@@ -7,10 +7,8 @@ import { StatCard } from '@/components/dashboard/StatCard';
 import { CameraFeed } from '@/components/dashboard/CameraFeed';
 import { CaptureResults } from '@/components/dashboard/CaptureResults';
 import { WarningTimer } from '@/components/dashboard/WarningTimer';
-import Analytics from '@/pages/Analytics';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Vehicle, Camera as CameraType, Violation } from '@/types/parking';
 import { vehiclesAPI, camerasAPI, violationsAPI, detectionsAPI, detectionAPI } from '@/lib/api';
 import { toast } from '@/hooks/use-toast';
@@ -242,35 +240,6 @@ export default function Dashboard() {
   const firstOnlineCamera = onlineCameras[0];
   const registeredPlates = vehicles.map((vehicle) => vehicle.plateNumber);
   const hasData = vehicles.length > 0 || cameras.length > 0 || violations.length > 0;
-  const activeAlertStatuses = new Set<Violation['status']>(['warning', 'pending', 'issued']);
-  const activeAlerts = violations.filter((v) => activeAlertStatuses.has(v.status));
-
-  const topViolators = useMemo(() => {
-    const vehicleByPlate = new Map(vehicles.map((v) => [v.plateNumber.toUpperCase(), v]));
-    const grouped = new Map<string, { name: string; count: number; resident: boolean }>();
-
-    for (const violation of activeAlerts) {
-      const plateKey = violation.plateNumber.toUpperCase();
-      const linkedVehicle = vehicleByPlate.get(plateKey);
-      const name = linkedVehicle?.ownerName?.trim() || `Unknown (${violation.plateNumber})`;
-      const key = linkedVehicle?.residentId ? `resident:${linkedVehicle.residentId}` : `name:${name.toLowerCase()}`;
-      const existing = grouped.get(key);
-      if (existing) {
-        existing.count += 1;
-      } else {
-        grouped.set(key, { name, count: 1, resident: Boolean(linkedVehicle?.residentId) });
-      }
-    }
-
-    return [...grouped.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)).slice(0, 8);
-  }, [activeAlerts, vehicles]);
-
-  const frequentViolators = useMemo(() => {
-    const residents = topViolators.filter((entry) => entry.resident).slice(0, 5);
-    const nonResidents = topViolators.filter((entry) => !entry.resident).slice(0, 5);
-    return { residents, nonResidents };
-  }, [topViolators]);
-
   const goToCaptureResults = useCallback(() => {
     const section = document.getElementById('capture-results-section');
     if (section) {
@@ -294,6 +263,12 @@ export default function Dashboard() {
       <Header 
         title="Dashboard" 
         subtitle="Monitor parking violations in real-time"
+        action={
+          <Button variant="outline" size="sm" onClick={() => navigate('/analytics')}>
+            <BarChart3 className="h-4 w-4 mr-2" />
+            View Analytics
+          </Button>
+        }
         autoRefreshNotifications={false}
       />
 
@@ -499,63 +474,6 @@ export default function Dashboard() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
-              <div className="glass-card rounded-xl p-4">
-                <h3 className="text-base font-semibold mb-3">Top Violators</h3>
-                {topViolators.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No active violator records yet.</p>
-                ) : (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Name</TableHead>
-                        <TableHead className="text-right">Violations</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {topViolators.map((entry) => (
-                        <TableRow key={`${entry.name}-${entry.resident ? 'r' : 'n'}`}>
-                          <TableCell className="font-medium">{entry.name}</TableCell>
-                          <TableCell className="text-right">{entry.count}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                )}
-              </div>
-
-              <div className="glass-card rounded-xl p-4 space-y-4">
-                <h3 className="text-base font-semibold">Frequent Violators</h3>
-                <div className="space-y-2">
-                  <p className="text-xs font-semibold uppercase text-muted-foreground">Residents</p>
-                  {frequentViolators.residents.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">No resident violators in active records.</p>
-                  ) : (
-                    frequentViolators.residents.map((entry) => (
-                      <div key={`resident-${entry.name}`} className="flex items-center justify-between text-sm">
-                        <span>{entry.name}</span>
-                        <Badge variant="secondary">{entry.count}</Badge>
-                      </div>
-                    ))
-                  )}
-                </div>
-                <div className="space-y-2">
-                  <p className="text-xs font-semibold uppercase text-muted-foreground">Non-residents</p>
-                  {frequentViolators.nonResidents.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">No non-resident violators in active records.</p>
-                  ) : (
-                    frequentViolators.nonResidents.map((entry) => (
-                      <div key={`nonresident-${entry.name}`} className="flex items-center justify-between text-sm">
-                        <span>{entry.name}</span>
-                        <Badge variant="secondary">{entry.count}</Badge>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <Analytics embedded />
           </div>
         )}
       </div>

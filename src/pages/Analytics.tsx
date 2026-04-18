@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { 
   BarChart3, 
   Car, 
@@ -22,7 +22,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { analyticsAPI, camerasAPI, type AnalyticsResponse } from '@/lib/api';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { analyticsAPI, camerasAPI, vehiclesAPI, violationsAPI, type AnalyticsResponse } from '@/lib/api';
 import { toast } from '@/hooks/use-toast';
 import {
   ChartContainer,
@@ -30,7 +31,7 @@ import {
   ChartTooltipContent,
 } from '@/components/ui/chart';
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid } from 'recharts';
-import { Camera as CameraType } from '@/types/parking';
+import { Camera as CameraType, Vehicle, Violation } from '@/types/parking';
 
 const COLORS = ['#3b82f6', '#ef4444', '#f59e0b', '#10b981', '#8b5cf6', '#ec4899'];
 const VEHICLE_TYPE_COLORS: Record<string, string> = {
@@ -90,12 +91,15 @@ export default function Analytics({ embedded = false }: AnalyticsProps) {
   const [analytics, setAnalytics] = useState<AnalyticsResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [cameras, setCameras] = useState<CameraType[]>([]);
+  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
+  const [violations, setViolations] = useState<Violation[]>([]);
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [locationFilter, setLocationFilter] = useState('all');
 
   useEffect(() => {
     loadCameras();
+    loadViolatorData();
     loadAnalytics();
   }, []);
 
@@ -131,6 +135,29 @@ export default function Analytics({ embedded = false }: AnalyticsProps) {
       });
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const loadViolatorData = async () => {
+    try {
+      const [vehiclesData, violationsData] = await Promise.all([
+        vehiclesAPI.getAll().catch(() => []),
+        violationsAPI.getAll().catch(() => []),
+      ]);
+      setVehicles(vehiclesData);
+      setViolations(
+        (violationsData || []).map((v: any) => ({
+          ...v,
+          timeDetected: new Date(v.timeDetected),
+          timeIssued: v.timeIssued ? new Date(v.timeIssued) : undefined,
+          warningExpiresAt: v.warningExpiresAt ? new Date(v.warningExpiresAt) : undefined,
+          smsSentAt: v.smsSentAt ? new Date(v.smsSentAt) : undefined,
+          ownerSmsScheduledAt: v.ownerSmsScheduledAt ? new Date(v.ownerSmsScheduledAt) : undefined,
+          assignedAt: v.assignedAt ? new Date(v.assignedAt) : undefined,
+        })),
+      );
+    } catch (error) {
+      console.error('Error loading violator data:', error);
     }
   };
 
@@ -239,6 +266,34 @@ export default function Analytics({ embedded = false }: AnalyticsProps) {
 
   const violationTrendMeta = getTrendMeta(descriptive?.sevenDayComparison);
   const warningTrendMeta = getTrendMeta(analytics?.warnings.sevenDayComparison);
+  const activeAlertStatuses = new Set<Violation['status']>(['warning', 'pending', 'issued']);
+  const activeAlerts = violations.filter((v) => activeAlertStatuses.has(v.status));
+
+  const topViolators = useMemo(() => {
+    const vehicleByPlate = new Map(vehicles.map((v) => [v.plateNumber.toUpperCase(), v]));
+    const grouped = new Map<string, { name: string; count: number; resident: boolean }>();
+
+    for (const violation of activeAlerts) {
+      const plateKey = violation.plateNumber.toUpperCase();
+      const linkedVehicle = vehicleByPlate.get(plateKey);
+      const name = linkedVehicle?.ownerName?.trim() || `Unknown (${violation.plateNumber})`;
+      const key = linkedVehicle?.residentId ? `resident:${linkedVehicle.residentId}` : `name:${name.toLowerCase()}`;
+      const existing = grouped.get(key);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        grouped.set(key, { name, count: 1, resident: Boolean(linkedVehicle?.residentId) });
+      }
+    }
+
+    return [...grouped.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)).slice(0, 8);
+  }, [activeAlerts, vehicles]);
+
+  const frequentViolators = useMemo(() => {
+    const residents = topViolators.filter((entry) => entry.resident).slice(0, 5);
+    const nonResidents = topViolators.filter((entry) => !entry.resident).slice(0, 5);
+    return { residents, nonResidents };
+  }, [topViolators]);
 
   if (isLoading) {
     if (embedded) {
@@ -567,6 +622,72 @@ export default function Analytics({ embedded = false }: AnalyticsProps) {
             )}
           </CardContent>
         </Card>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Top Violators</CardTitle>
+              <CardDescription>Most frequent active violators across warning and pending records</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {topViolators.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No active violator records yet.</p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Name</TableHead>
+                      <TableHead className="text-right">Violations</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {topViolators.map((entry) => (
+                      <TableRow key={`${entry.name}-${entry.resident ? 'r' : 'n'}`}>
+                        <TableCell className="font-medium">{entry.name}</TableCell>
+                        <TableCell className="text-right">{entry.count}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Frequent Violators</CardTitle>
+              <CardDescription>Breakdown of recurring violators by resident status</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <p className="text-xs font-semibold uppercase text-muted-foreground">Residents</p>
+                {frequentViolators.residents.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No resident violators in active records.</p>
+                ) : (
+                  frequentViolators.residents.map((entry) => (
+                    <div key={`resident-${entry.name}`} className="flex items-center justify-between text-sm">
+                      <span>{entry.name}</span>
+                      <Badge variant="secondary">{entry.count}</Badge>
+                    </div>
+                  ))
+                )}
+              </div>
+              <div className="space-y-2">
+                <p className="text-xs font-semibold uppercase text-muted-foreground">Non-residents</p>
+                {frequentViolators.nonResidents.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No non-resident violators in active records.</p>
+                ) : (
+                  frequentViolators.nonResidents.map((entry) => (
+                    <div key={`nonresident-${entry.name}`} className="flex items-center justify-between text-sm">
+                      <span>{entry.name}</span>
+                      <Badge variant="secondary">{entry.count}</Badge>
+                    </div>
+                  ))
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
 
         <Card>
           <CardHeader>
