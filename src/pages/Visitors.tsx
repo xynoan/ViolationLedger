@@ -464,7 +464,7 @@ export default function Visitors() {
                     </Label>
                     <Input
                       id="v-plate"
-                      placeholder="ABC 1234"
+                      placeholder="ABC123"
                       value={formData.plateNumber}
                       onChange={(e) =>
                         setFormData({ ...formData, plateNumber: e.target.value.toUpperCase() })
@@ -495,7 +495,7 @@ export default function Visitors() {
                     </div>
                     <div className="space-y-2">
                     <Label htmlFor="v-owner">
-                      Owner Name <span className="text-red-600">*</span>
+                      Owner <span className="text-red-600">*</span>
                     </Label>
                     <Input
                       id="v-owner"
@@ -514,9 +514,10 @@ export default function Visitors() {
                     <Input
                       id="v-contact"
                       placeholder="09171234567"
+                      maxLength={11}
                       value={formData.contactNumber}
                       onChange={(e) =>
-                        setFormData({ ...formData, contactNumber: digitsOnly(e.target.value) })
+                        setFormData({ ...formData, contactNumber: digitsOnly(e.target.value).slice(0, 11) })
                       }
                       className="bg-secondary"
                       inputMode="numeric"

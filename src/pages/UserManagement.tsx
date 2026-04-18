@@ -34,6 +34,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { cn } from '@/lib/utils';
 import { isValidEmail, sanitizeEmail } from '@/lib/emailValidation';
 
+const digitsOnly = (value: string) => value.replace(/\D/g, '');
+const lettersAndSpacesOnly = (value: string) => value.replace(/[^a-zA-Z\s]/g, '');
+
 interface User {
   id: string;
   email: string;
@@ -570,18 +573,7 @@ export default function UserManagement() {
                 </div>
               )}
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="name">
-                Name <span className="text-destructive">*</span>
-              </Label>
-              <Input
-                id="name"
-                value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                placeholder="User's full name"
-                disabled={isSubmitting}
-              />
-            </div>
+
             <div className="space-y-2">
               <Label htmlFor="confirmPassword">Confirm Password</Label>
               <Input
@@ -593,15 +585,31 @@ export default function UserManagement() {
                 disabled={isSubmitting}
               />
             </div>
+            
+            <div className="space-y-2">
+              <Label htmlFor="name">
+                Name <span className="text-destructive">*</span>
+              </Label>
+              <Input
+                id="name"
+                value={formData.name}
+                onChange={(e) => setFormData({ ...formData, name: lettersAndSpacesOnly(e.target.value) })}
+                placeholder="User's full name"
+                disabled={isSubmitting}
+              />
+            </div>
+            
             <div className="space-y-2">
               <Label htmlFor="contactNumber">Contact Number for 2FA</Label>
               <Input
                 id="contactNumber"
                 type="tel"
+                maxLength={11}
                 value={formData.contactNumber}
-                onChange={(e) => setFormData({ ...formData, contactNumber: e.target.value })}
-                placeholder="09XXXXXXXXX or +639XXXXXXXXX"
+                onChange={(e) => setFormData({ ...formData, contactNumber: digitsOnly(e.target.value).slice(0, 11) })}
+                placeholder="09123456789"
                 disabled={isSubmitting}
+                inputMode="numeric"
               />
             </div>
             <div className="space-y-2">

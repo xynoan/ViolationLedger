@@ -71,6 +71,8 @@ type StandingFilter = 'all' | 'active_violations' | 'clean';
 type ResidentSort = 'name_asc' | 'most_vehicles' | 'recent_violation';
 
 const normPlate = (p: string) => String(p || '').replace(/\s+/g, '').toUpperCase();
+const digitsOnly = (value: string) => value.replace(/\D/g, '');
+const lettersAndSpacesOnly = (value: string) => value.replace(/[^a-zA-Z\s]/g, '');
 
 /** Parse address text into unique location keys: Barangay numbers + comma-separated street/area segments (excludes leading Lot lines). */
 function extractLocationKeysFromAddress(address: string | undefined): string[] {
@@ -984,7 +986,7 @@ export default function Residents() {
                         id="firstName"
                         placeholder="Juan"
                         value={formData.firstName}
-                        onChange={(e) => setFormData({ ...formData, firstName: e.target.value })}
+                        onChange={(e) => setFormData({ ...formData, firstName: lettersAndSpacesOnly(e.target.value) })}
                         className="bg-secondary"
                       />
                     </div>
@@ -994,7 +996,7 @@ export default function Residents() {
                         id="middleName"
                         placeholder="Santos"
                         value={formData.middleName}
-                        onChange={(e) => setFormData({ ...formData, middleName: e.target.value })}
+                        onChange={(e) => setFormData({ ...formData, middleName: lettersAndSpacesOnly(e.target.value) })}
                         className="bg-secondary"
                       />
                     </div>
@@ -1006,7 +1008,7 @@ export default function Residents() {
                         id="lastName"
                         placeholder="Dela Cruz"
                         value={formData.lastName}
-                        onChange={(e) => setFormData({ ...formData, lastName: e.target.value })}
+                        onChange={(e) => setFormData({ ...formData, lastName: lettersAndSpacesOnly(e.target.value) })}
                         className="bg-secondary"
                       />
                     </div>
@@ -1027,10 +1029,12 @@ export default function Residents() {
                     </Label>
                     <Input
                       id="contactNumber"
-                      placeholder="+639171234567"
+                      placeholder="09171234567"
+                      maxLength={11}
                       value={formData.contactNumber}
-                      onChange={(e) => setFormData({ ...formData, contactNumber: e.target.value })}
+                      onChange={(e) => setFormData({ ...formData, contactNumber: digitsOnly(e.target.value).slice(0, 11) })}
                       className="bg-secondary"
+                      inputMode="numeric"
                     />
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
