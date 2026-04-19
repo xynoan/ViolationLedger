@@ -141,6 +141,56 @@ function saveVehicleDetectionsFromWorker(cameraId, msg) {
   }
 }
 
+/**
+ * Persist readable plate OCR rows so GET /detections/recent-plates and monitoring can see them.
+ * Vehicle-only rows use plateNumber NONE; plates come from msg.plates separately.
+ */
+function savePlateDetectionsFromWorker(cameraId, msg) {
+  try {
+    const plates = Array.isArray(msg?.plates) ? msg.plates : [];
+    if (!plates.length) return;
+
+    const timestamp =
+      typeof msg?.timestamp === 'string' ? msg.timestamp : new Date().toISOString();
+    const imageUrl = typeof msg?.imageUrl === 'string' ? msg.imageUrl : null;
+    let savedCount = 0;
+
+    plates.forEach((p, index) => {
+      if (!p || typeof p.plateNumber !== 'string') return;
+      const raw = p.plateNumber.trim();
+      const upper = raw.toUpperCase();
+      if (!raw || upper === 'NONE' || upper === 'BLUR' || upper === 'UNKNOWN') return;
+
+      const detectionId = `DET-${cameraId}-${Date.now()}-p${index}-${Math.random().toString(36).slice(2, 10)}`;
+      const confidence = typeof p.confidence === 'number' ? p.confidence : 0;
+      const bbox = p.bbox ? JSON.stringify(p.bbox) : null;
+      const className =
+        typeof p.class_name === 'string' && p.class_name.trim()
+          ? p.class_name.trim()
+          : 'plate';
+
+      insertDetectionStmt.run(
+        detectionId,
+        cameraId,
+        raw,
+        timestamp,
+        confidence,
+        imageUrl,
+        bbox,
+        className,
+        null,
+      );
+      savedCount += 1;
+    });
+
+    if (savedCount > 0) {
+      console.log(`[Detection] Camera ${cameraId}: saved ${savedCount} readable plate row(s) for recent-plates`);
+    }
+  } catch (e) {
+    console.error('[Detection] Failed to persist plate detections from worker:', e);
+  }
+}
+
 async function sendNoPlateBarangayAlert(cameraId, msg) {
   const vehicles = Array.isArray(msg?.vehicles) ? msg.vehicles : [];
   const plates = Array.isArray(msg?.plates) ? msg.plates : [];
@@ -305,6 +355,7 @@ function startWorker(cameraId, rtspUrl) {
         sendNoPlateBarangayAlert(cameraId, msg).catch((e) => {
           console.error('[Detection] sendNoPlateBarangayAlert error:', e);
         });
+        savePlateDetectionsFromWorker(cameraId, msg);
         saveVehicleDetectionsFromWorker(cameraId, msg);
         broadcast(cameraId, msg);
       } catch (e) {
