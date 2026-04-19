@@ -501,33 +501,51 @@ router.post('/test-seed-active-warning', (req, res) => {
       WHERE plateNumber = ? AND cameraLocationId = ? AND status IN ('warning', 'pending')
     `);
 
+    /** One entry per distinct location (first camera wins) so we try every vehicle × location pair. */
+    const locationEntries = [];
+    const seenLocationIds = new Set();
+    for (const cam of cameras) {
+      const loc = cam.locationId;
+      if (!loc || !String(loc).trim()) continue;
+      if (seenLocationIds.has(loc)) continue;
+      seenLocationIds.add(loc);
+      locationEntries.push({ locationId: loc, cameraId: cam.id });
+    }
+
+    let locCandidates;
+    if (locationEntries.length > 0) {
+      locCandidates = locationEntries.map((e) => ({
+        cameraLocationId: e.locationId,
+        cameraId: e.cameraId,
+      }));
+    } else {
+      const locRows = db
+        .prepare(
+          `SELECT DISTINCT cameraLocationId as loc FROM violations 
+           WHERE cameraLocationId IS NOT NULL AND TRIM(cameraLocationId) != '' LIMIT 100`,
+        )
+        .all();
+      const locs = locRows.map((r) => r.loc).filter(Boolean);
+      locCandidates =
+        locs.length > 0
+          ? locs.map((loc) => ({ cameraLocationId: loc, cameraId: null }))
+          : [{ cameraLocationId: 'TEST-LOCATION-1', cameraId: null }];
+    }
+
     let plateNumber;
     let cameraLocationId;
     let cameraId = null;
-    let attempts = 0;
     let picked = false;
 
-    while (attempts < 50 && !picked) {
-      attempts += 1;
-      plateNumber = vehicles[Math.floor(Math.random() * vehicles.length)].plateNumber;
-      if (cameras.length > 0) {
-        const cam = cameras[Math.floor(Math.random() * cameras.length)];
-        cameraLocationId = cam.locationId;
-        cameraId = cam.id;
-      } else {
-        const locRows = db
-          .prepare(
-            `SELECT DISTINCT cameraLocationId as loc FROM violations 
-             WHERE cameraLocationId IS NOT NULL AND TRIM(cameraLocationId) != '' LIMIT 100`,
-          )
-          .all();
-        const locs = locRows.map((r) => r.loc).filter(Boolean);
-        cameraLocationId =
-          locs.length > 0 ? locs[Math.floor(Math.random() * locs.length)] : 'TEST-LOCATION-1';
-        cameraId = null;
-      }
-      if (!hasActiveConflict.get(plateNumber, cameraLocationId)) {
-        picked = true;
+    outer: for (const v of vehicles) {
+      for (const cand of locCandidates) {
+        if (!hasActiveConflict.get(v.plateNumber, cand.cameraLocationId)) {
+          plateNumber = v.plateNumber;
+          cameraLocationId = cand.cameraLocationId;
+          cameraId = cand.cameraId;
+          picked = true;
+          break outer;
+        }
       }
     }
 
