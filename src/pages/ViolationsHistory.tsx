@@ -43,6 +43,7 @@ const STATUS_OPTIONS: { value: ViolationStatus | 'all'; label: string }[] = [
   { value: 'all', label: 'All Statuses' },
   { value: 'warning', label: 'Warning' },
   { value: 'issued', label: 'Issued' },
+  { value: 'cleared', label: 'Cleared' },
 ];
 
 interface ViolationStats {
@@ -88,8 +89,14 @@ export default function ViolationsHistory() {
   const [clearingId, setClearingId] = useState<string | null>(null);
 
   const visibleViolations = useMemo(
-    () => violations.filter((v) => v.status === 'warning' || v.status === 'issued'),
-    [violations],
+    () =>
+      violations.filter((v) => {
+        if (statusFilter === 'all') {
+          return v.status === 'warning' || v.status === 'issued' || v.status === 'cleared';
+        }
+        return v.status === statusFilter;
+      }),
+    [violations, statusFilter],
   );
 
   const multiPlateContext = useMemo(() => {
@@ -253,7 +260,9 @@ export default function ViolationsHistory() {
       !residentFilterId;
     if (broadest) {
       setRegistryHasViolations(
-        violations.some((v) => v.status === 'warning' || v.status === 'issued'),
+        violations.some(
+          (v) => v.status === 'warning' || v.status === 'issued' || v.status === 'cleared',
+        ),
       );
     }
   }, [violations, statusFilter, locationFilter, startDate, endDate, debouncedSearchTerm, residentFilterId]);
@@ -342,7 +351,10 @@ export default function ViolationsHistory() {
   if (isInitialLoading) {
     return (
       <div className="min-h-screen">
-        <Header title="Violations History" subtitle="View and manage all parking violations" />
+        <Header
+          title="Violations History"
+          subtitle="Warnings, issued tickets, and cleared violations (auto or manual clear)"
+        />
         <div className="p-4 sm:p-6 flex items-center justify-center min-h-[50vh]">
           <div className="h-8 w-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
         </div>
@@ -354,7 +366,7 @@ export default function ViolationsHistory() {
     <div className="min-h-screen">
       <Header 
         title="Violations History" 
-        subtitle="View and manage all parking violations"
+        subtitle="Warnings, issued tickets, and cleared violations (auto or manual clear)"
       />
 
       <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
@@ -393,7 +405,7 @@ export default function ViolationsHistory() {
         )}
         {/* Statistics Cards */}
         {stats && !isLoadingStats && !residentFilterId && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="glass-card rounded-xl p-4">
               <div className="flex items-center justify-between">
                 <div>
@@ -419,6 +431,15 @@ export default function ViolationsHistory() {
                   <p className="text-2xl font-bold text-destructive mt-1">{stats.byStatus.issued || 0}</p>
                 </div>
                 <FileText className="h-8 w-8 text-destructive" />
+              </div>
+            </div>
+            <div className="glass-card rounded-xl p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-muted-foreground">Cleared</p>
+                  <p className="text-2xl font-bold text-muted-foreground mt-1">{stats.byStatus.cleared || 0}</p>
+                </div>
+                <CheckCircle className="h-8 w-8 text-muted-foreground" />
               </div>
             </div>
           </div>
@@ -588,8 +609,10 @@ export default function ViolationsHistory() {
             <h3 className="text-lg font-semibold text-foreground mb-2">No active violations</h3>
             <p className="text-muted-foreground">
               {debouncedSearchTerm.trim()
-                ? 'No warnings or issued tickets match your search or filters.'
-                : 'There are no warnings or issued tickets in this view. Other statuses are hidden.'}
+                ? 'No violations match your search or filters for this status.'
+                : statusFilter === 'cleared'
+                  ? 'No cleared violations in this view. Try All Statuses or adjust filters.'
+                  : 'There are no warnings, issued tickets, or cleared records in this view. Other statuses are hidden.'}
             </p>
           </div>
         ) : registryHasViolations && debouncedSearchTerm.trim() ? (
