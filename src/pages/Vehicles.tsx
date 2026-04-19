@@ -30,7 +30,6 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
@@ -48,7 +47,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from '@/hooks/use-toast';
 import { vehiclesAPI, residentsAPI, violationsAPI } from '@/lib/api';
 import { useAuth } from '@/hooks/useAuth';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
@@ -180,7 +179,6 @@ export default function Vehicles() {
   const [filterVehicleType, setFilterVehicleType] = useState('');
   const [filterOwner, setFilterOwner] = useState('');
   const [filterRegisteredOn, setFilterRegisteredOn] = useState('');
-  const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
   const [editingVehicle, setEditingVehicle] = useState<Vehicle | null>(null);
   const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
@@ -420,12 +418,6 @@ export default function Vehicles() {
       resetForm();
       setOwnerSuggestOpen(false);
     }
-    setIsDialogOpen(true);
-  };
-
-  const handleCloseDialog = () => {
-    setIsDialogOpen(false);
-    resetForm();
   };
 
   const handleSaveVehicle = async () => {
@@ -513,7 +505,7 @@ export default function Vehicles() {
           description: "New vehicle registered successfully",
         });
       }
-      handleCloseDialog();
+      resetForm();
       loadVehicles();
       const affectedResidentIds = new Set<string>();
       if (formData.residentId) affectedResidentIds.add(formData.residentId);
@@ -636,8 +628,8 @@ export default function Vehicles() {
         <div className="flex items-start gap-2 rounded-lg border border-border bg-card/70 px-3 py-2 text-sm text-muted-foreground">
           <Info className="mt-0.5 h-4 w-4 text-primary" />
           <p className="leading-relaxed">
-            This registry lists vehicles linked to a registered resident. Use Add Vehicle to register a plate and tie it
-            to a resident for SMS and enforcement workflows.
+            This registry lists vehicles linked to a registered resident. Use the form below to register a plate and
+            tie it to a resident for SMS and enforcement workflows.
           </p>
         </div>
         {residentFilterId && (
@@ -655,6 +647,157 @@ export default function Vehicles() {
             <Button type="button" variant="outline" size="sm" className="shrink-0" onClick={clearResidentFilter}>
               Show all vehicles
             </Button>
+          </div>
+        )}
+        {!isBarangayUser && (
+          <div className="glass-card rounded-xl p-4 sm:p-6 space-y-4">
+            <div className="space-y-1">
+              <h2 className="text-lg font-semibold text-foreground">
+                {editingVehicle ? 'Edit Vehicle' : 'Register New Vehicle'}
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                {editingVehicle
+                  ? 'Update the vehicle information below.'
+                  : 'Enter the vehicle details to register it in the system.'}
+              </p>
+            </div>
+            <div className="space-y-4 max-h-[80vh] overflow-y-auto sm:max-h-none">
+              <div className="space-y-2">
+                <Label htmlFor="plateNumber">
+                  Plate Number <span className="text-red-600">*</span>
+                </Label>
+                <Input
+                  id="plateNumber"
+                  placeholder="ABC 1234"
+                  value={formData.plateNumber}
+                  onChange={(e) =>
+                    setFormData({ ...formData, plateNumber: e.target.value.toUpperCase() })
+                  }
+                  className="bg-secondary uppercase"
+                  autoCapitalize="characters"
+                  spellCheck={false}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="vehicleType">
+                  Vehicle Type <span className="text-red-600">*</span>
+                </Label>
+                <Select
+                  value={formData.vehicleType}
+                  onValueChange={(v) =>
+                    setFormData((prev) => ({
+                      ...prev,
+                      vehicleType: v,
+                      vehicleTypeOther: v === VEHICLE_TYPE_OTHER ? prev.vehicleTypeOther : '',
+                    }))
+                  }
+                >
+                  <SelectTrigger id="vehicleType" className="bg-secondary">
+                    <SelectValue placeholder="Select type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {VEHICLE_TYPE_OPTIONS.map((opt) => (
+                      <SelectItem key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {formData.vehicleType === VEHICLE_TYPE_OTHER ? (
+                  <Input
+                    placeholder="Enter vehicle type"
+                    value={formData.vehicleTypeOther}
+                    onChange={(e) =>
+                      setFormData((prev) => ({ ...prev, vehicleTypeOther: e.target.value }))
+                    }
+                    className="bg-secondary"
+                  />
+                ) : null}
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="ownerName">
+                  Owner Name <span className="text-red-600">*</span>
+                </Label>
+                <div ref={ownerComboRef} className="relative">
+                  <div className="relative">
+                    <Input
+                      id="ownerName"
+                      placeholder="Search or type owner name…"
+                      value={formData.ownerName}
+                      onChange={(e) => {
+                        const next = lettersAndSpacesOnly(e.target.value);
+                        setFormData((prev) => {
+                          const linked = prev.residentId
+                            ? residents.find((x) => x.id === prev.residentId)
+                            : undefined;
+                          const keepLink = linked && linked.name === next;
+                          return {
+                            ...prev,
+                            ownerName: next,
+                            residentId: keepLink ? prev.residentId : '',
+                          };
+                        });
+                        setOwnerSuggestOpen(true);
+                      }}
+                      onFocus={() => setOwnerSuggestOpen(true)}
+                      className="bg-secondary pr-9"
+                      inputMode="text"
+                      autoComplete="off"
+                      aria-autocomplete="list"
+                      aria-expanded={ownerSuggestOpen}
+                      aria-controls="resident-owner-suggestions"
+                    />
+                    <ChevronDown className="absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+                  </div>
+                  {ownerSuggestOpen && suggestedResidents.length > 0 ? (
+                    <ul
+                      id="resident-owner-suggestions"
+                      role="listbox"
+                      className={cn(
+                        'absolute z-[100] mt-1 max-h-48 w-full overflow-auto rounded-md border border-border bg-popover py-1 shadow-md',
+                      )}
+                    >
+                      {suggestedResidents.map((r) => (
+                        <li key={r.id} role="option" aria-selected={formData.residentId === r.id}>
+                          <button
+                            type="button"
+                            className={cn(
+                              'flex w-full flex-col gap-0.5 px-3 py-2 text-left text-sm hover:bg-accent hover:text-accent-foreground',
+                              formData.residentId === r.id && 'bg-accent/60',
+                            )}
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              selectOwnerResident(r);
+                            }}
+                          >
+                            <span className="font-medium text-foreground">{r.name}</span>
+                            <span className="text-xs text-muted-foreground">{r.contactNumber}</span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
+                {formData.residentId ? (
+                  <p className="text-xs text-muted-foreground">
+                    Linked to resident — vehicle will be saved with this resident&apos;s ID.
+                  </p>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    Type to search residents by name or number, or enter a standalone owner name.
+                  </p>
+                )}
+              </div>
+              <div className="pt-2">
+                <Button
+                  type="button"
+                  className="w-full bg-green-600 text-white hover:bg-green-700 sm:w-auto sm:min-w-[12rem]"
+                  onClick={() => void handleSaveVehicle()}
+                >
+                  {editingVehicle ? 'Save Changes' : 'Register Vehicle'}
+                </Button>
+              </div>
+            </div>
           </div>
         )}
         {/* Filters */}
@@ -726,175 +869,6 @@ export default function Vehicles() {
           ) : null}
         </div>
 
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-3 sm:gap-4">
-          {!isBarangayUser && (
-            <>
-              <Button asChild className="w-full sm:w-auto">
-                <Link to="/vehicles/add">
-                  <Plus className="h-4 w-4 mr-2" />
-                  Add Vehicle
-                </Link>
-              </Button>
-              <Dialog open={isDialogOpen} onOpenChange={(open) => (!open ? handleCloseDialog() : undefined)}>
-              <DialogContent className="bg-card border-border mx-4 sm:mx-auto max-w-[calc(100vw-2rem)] sm:max-w-lg">
-                <DialogHeader>
-                  <DialogTitle>{editingVehicle ? 'Edit Vehicle' : 'Register New Vehicle'}</DialogTitle>
-                  <DialogDescription>
-                    {editingVehicle 
-                      ? 'Update the vehicle information below.' 
-                      : 'Enter the vehicle details to register it in the system.'}
-                  </DialogDescription>
-                </DialogHeader>
-                <div className="space-y-4 py-4 max-h-[80vh] overflow-y-auto">
-                  <div className="space-y-2">
-                    <Label htmlFor="plateNumber">
-                      Plate Number <span className="text-red-600">*</span>
-                    </Label>
-                    <Input
-                      id="plateNumber"
-                      placeholder="ABC 1234"
-                      value={formData.plateNumber}
-                      onChange={(e) =>
-                        setFormData({ ...formData, plateNumber: e.target.value.toUpperCase() })
-                      }
-                      className="bg-secondary uppercase"
-                      autoCapitalize="characters"
-                      spellCheck={false}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="vehicleType">
-                      Vehicle Type <span className="text-red-600">*</span>
-                    </Label>
-                    <Select
-                      value={formData.vehicleType}
-                      onValueChange={(v) =>
-                        setFormData((prev) => ({
-                          ...prev,
-                          vehicleType: v,
-                          vehicleTypeOther: v === VEHICLE_TYPE_OTHER ? prev.vehicleTypeOther : '',
-                        }))
-                      }
-                    >
-                      <SelectTrigger id="vehicleType" className="bg-secondary">
-                        <SelectValue placeholder="Select type" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {VEHICLE_TYPE_OPTIONS.map((opt) => (
-                          <SelectItem key={opt.value} value={opt.value}>
-                            {opt.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    {formData.vehicleType === VEHICLE_TYPE_OTHER ? (
-                      <Input
-                        placeholder="Enter vehicle type"
-                        value={formData.vehicleTypeOther}
-                        onChange={(e) =>
-                          setFormData((prev) => ({ ...prev, vehicleTypeOther: e.target.value }))
-                        }
-                        className="bg-secondary"
-                      />
-                    ) : null}
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="ownerName">
-                      Owner Name <span className="text-red-600">*</span>
-                    </Label>
-                    <div ref={ownerComboRef} className="relative">
-                      <div className="relative">
-                        <Input
-                          id="ownerName"
-                          placeholder="Search or type owner name…"
-                          value={formData.ownerName}
-                          onChange={(e) => {
-                            const next = lettersAndSpacesOnly(e.target.value);
-                            setFormData((prev) => {
-                              const linked = prev.residentId
-                                ? residents.find((x) => x.id === prev.residentId)
-                                : undefined;
-                              const keepLink = linked && linked.name === next;
-                              return {
-                                ...prev,
-                                ownerName: next,
-                                residentId: keepLink ? prev.residentId : '',
-                              };
-                            });
-                            setOwnerSuggestOpen(true);
-                          }}
-                          onFocus={() => setOwnerSuggestOpen(true)}
-                          className="bg-secondary pr-9"
-                          inputMode="text"
-                          autoComplete="off"
-                          aria-autocomplete="list"
-                          aria-expanded={ownerSuggestOpen}
-                          aria-controls="resident-owner-suggestions"
-                        />
-                        <ChevronDown className="absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground pointer-events-none" />
-                      </div>
-                      {ownerSuggestOpen && suggestedResidents.length > 0 ? (
-                        <ul
-                          id="resident-owner-suggestions"
-                          role="listbox"
-                          className={cn(
-                            'absolute z-[100] mt-1 max-h-48 w-full overflow-auto rounded-md border border-border bg-popover py-1 shadow-md',
-                          )}
-                        >
-                          {suggestedResidents.map((r) => (
-                            <li key={r.id} role="option" aria-selected={formData.residentId === r.id}>
-                              <button
-                                type="button"
-                                className={cn(
-                                  'flex w-full flex-col gap-0.5 px-3 py-2 text-left text-sm hover:bg-accent hover:text-accent-foreground',
-                                  formData.residentId === r.id && 'bg-accent/60',
-                                )}
-                                onMouseDown={(e) => {
-                                  e.preventDefault();
-                                  selectOwnerResident(r);
-                                }}
-                              >
-                                <span className="font-medium text-foreground">{r.name}</span>
-                                <span className="text-xs text-muted-foreground">{r.contactNumber}</span>
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                      ) : null}
-                    </div>
-                    {formData.residentId ? (
-                      <p className="text-xs text-muted-foreground">
-                        Linked to resident — vehicle will be saved with this resident&apos;s ID.
-                      </p>
-                    ) : (
-                      <p className="text-xs text-muted-foreground">
-                        Type to search residents by name or number, or enter a standalone owner name.
-                      </p>
-                    )}
-                  </div>
-                  <DialogFooter className="!flex-row gap-2 pt-2 sm:justify-stretch">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="flex-1 border-red-600 bg-red-600 text-white hover:bg-red-700 hover:text-white"
-                      onClick={handleCloseDialog}
-                    >
-                      Cancel
-                    </Button>
-                    <Button
-                      type="button"
-                      className="flex-1 bg-green-600 text-white hover:bg-green-700"
-                      onClick={handleSaveVehicle}
-                    >
-                      {editingVehicle ? 'Save Changes' : 'Register Vehicle'}
-                    </Button>
-                  </DialogFooter>
-                </div>
-              </DialogContent>
-              </Dialog>
-            </>
-          )}
-        </div>
         {isRefreshing && (
           <p className="text-xs text-muted-foreground">Refreshing results...</p>
         )}

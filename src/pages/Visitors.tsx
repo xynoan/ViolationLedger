@@ -17,10 +17,8 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from '@/components/ui/dialog';
 import {
   AlertDialog,
@@ -361,7 +359,6 @@ export default function Visitors() {
   const [filterOwner, setFilterOwner] = useState('');
   const [filterRegisteredOn, setFilterRegisteredOn] = useState('');
   const [activeTab, setActiveTab] = useState<VisitorListTab>(VISITOR_LIST_TAB_ALL);
-  const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingVehicle, setEditingVehicle] = useState<Vehicle | null>(null);
   const [vehicleToDelete, setVehicleToDelete] = useState<Vehicle | null>(null);
   const [isDeletingVehicle, setIsDeletingVehicle] = useState(false);
@@ -413,10 +410,6 @@ export default function Visitors() {
   useEffect(() => {
     void loadResidents();
   }, [loadResidents]);
-
-  useEffect(() => {
-    if (isDialogOpen) void loadResidents();
-  }, [isDialogOpen, loadResidents]);
 
   const nonResidentVehicles = useMemo(
     () => vehicles.filter((v) => !v.residentId || String(v.residentId).trim() === ''),
@@ -523,12 +516,6 @@ export default function Visitors() {
     } else {
       resetForm(activeTab);
     }
-    setIsDialogOpen(true);
-  };
-
-  const handleCloseDialog = () => {
-    setIsDialogOpen(false);
-    resetForm(activeTab);
   };
 
   const handleSaveVehicle = async () => {
@@ -626,7 +613,7 @@ export default function Visitors() {
         });
         toast({ title: 'Visitor Registered', description: 'Visitor vehicle registered successfully' });
       }
-      handleCloseDialog();
+      resetForm(activeTab);
       loadVehicles();
       void loadResidents();
     } catch (error: unknown) {
@@ -722,6 +709,176 @@ export default function Visitors() {
       />
 
       <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
+        {!isBarangayUser && (
+          <div className="glass-card rounded-xl p-4 sm:p-6 space-y-4">
+            <div className="space-y-1">
+              <h2 className="text-lg font-semibold text-foreground">
+                {editingVehicle ? 'Edit Visitor Vehicle' : 'Register Visitor'}
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                {editingVehicle
+                  ? 'Update visitor vehicle details.'
+                  : activeTab === VISITOR_LIST_TAB_ALL
+                    ? 'Register a visitor vehicle. Choose purpose in the form.'
+                    : `Register a vehicle for the same purpose as this tab (${activeTab}). You can change purpose in the form if needed.`}
+              </p>
+            </div>
+            <div className="space-y-4 max-h-[78vh] overflow-y-auto sm:max-h-none">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label htmlFor="v-plate">
+                    Plate Number <span className="text-red-600">*</span>
+                  </Label>
+                  <Input
+                    id="v-plate"
+                    placeholder="ABC123"
+                    value={formData.plateNumber}
+                    onChange={(e) =>
+                      setFormData({ ...formData, plateNumber: e.target.value.toUpperCase() })
+                    }
+                    className="bg-secondary uppercase"
+                    spellCheck={false}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="v-type">
+                    Vehicle Type <span className="text-red-600">*</span>
+                  </Label>
+                  <Select
+                    value={formData.vehicleType}
+                    onValueChange={(v) =>
+                      setFormData((prev) => ({
+                        ...prev,
+                        vehicleType: v,
+                        vehicleTypeOther: v === VEHICLE_TYPE_OTHER ? prev.vehicleTypeOther : '',
+                      }))
+                    }
+                  >
+                    <SelectTrigger id="v-type" className="bg-secondary">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {VEHICLE_TYPE_OPTIONS.map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {formData.vehicleType === VEHICLE_TYPE_OTHER ? (
+                    <Input
+                      placeholder="Enter vehicle type"
+                      value={formData.vehicleTypeOther}
+                      onChange={(e) =>
+                        setFormData((prev) => ({ ...prev, vehicleTypeOther: e.target.value }))
+                      }
+                      className="bg-secondary"
+                    />
+                  ) : null}
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="v-owner">
+                    Owner <span className="text-red-600">*</span>
+                  </Label>
+                  <Input
+                    id="v-owner"
+                    placeholder="Juan dela Cruz"
+                    value={formData.ownerName}
+                    onChange={(e) =>
+                      setFormData({ ...formData, ownerName: lettersAndSpacesOnly(e.target.value) })
+                    }
+                    className="bg-secondary"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="v-contact">
+                    Contact Number <span className="text-red-600">*</span>
+                  </Label>
+                  <Input
+                    id="v-contact"
+                    placeholder="09171234567"
+                    maxLength={11}
+                    value={formData.contactNumber}
+                    onChange={(e) =>
+                      setFormData({ ...formData, contactNumber: digitsOnly(e.target.value).slice(0, 11) })
+                    }
+                    className="bg-secondary"
+                    inputMode="numeric"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="v-purpose">
+                    Purpose of Visit <span className="text-red-600">(Required)</span>
+                  </Label>
+                  <Select
+                    value={purposeSelectValue}
+                    onValueChange={(v) =>
+                      setFormData((prev) => ({
+                        ...prev,
+                        purposeOfVisit: v,
+                        purposeOfVisitOther: v === PURPOSE_OTHER ? prev.purposeOfVisitOther : '',
+                        rented: '',
+                      }))
+                    }
+                  >
+                    <SelectTrigger id="v-purpose" className="bg-secondary">
+                      <SelectValue placeholder="Select purpose" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {VISITOR_PURPOSE_TABS.map((opt) => (
+                        <SelectItem key={opt} value={opt}>
+                          {opt}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {formData.purposeOfVisit === PURPOSE_OTHER ? (
+                    <Input
+                      placeholder="Enter purpose of visit"
+                      value={formData.purposeOfVisitOther}
+                      onChange={(e) =>
+                        setFormData((prev) => ({ ...prev, purposeOfVisitOther: e.target.value }))
+                      }
+                      className="bg-secondary"
+                    />
+                  ) : null}
+                </div>
+                {formData.purposeOfVisit === 'Visit resident' ? (
+                  <SearchableResidentSelect
+                    id="v-visit-resident"
+                    label="Resident being visited"
+                    requiredMark
+                    placeholder="Search residents from registry…"
+                    residents={residents}
+                    value={formData.rented}
+                    onChange={(v) => setFormData((prev) => ({ ...prev, rented: v }))}
+                  />
+                ) : showRentedField ? (
+                  <SearchableLocationSelect
+                    id="v-rented"
+                    label="Rented / Location"
+                    requiredMark
+                    placeholder="Search facility…"
+                    options={RENTED_OPTIONS}
+                    value={formData.rented}
+                    onChange={(v) => setFormData((prev) => ({ ...prev, rented: v }))}
+                  />
+                ) : null}
+              </div>
+
+              <div className="pt-2">
+                <Button
+                  type="button"
+                  className="w-full bg-green-600 text-white hover:bg-green-700 sm:w-auto sm:min-w-[12rem]"
+                  onClick={() => void handleSaveVehicle()}
+                >
+                  {editingVehicle ? 'Save Changes' : 'Register Visitor'}
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <Tabs
           value={activeTab}
           onValueChange={(v) => setActiveTab(v as VisitorListTab)}
@@ -766,7 +923,7 @@ export default function Visitors() {
             <p className="text-xs text-muted-foreground">Filters applied to this tab.</p>
           ) : (
             <p className="text-xs text-muted-foreground">
-              Add filters below to narrow the list, or register a vehicle with the button on the right.
+              Add filters below to narrow the list, or use the registration form at the top of the page.
             </p>
           )}
         </div>
@@ -840,192 +997,6 @@ export default function Visitors() {
               </Button>
             </div>
           ) : null}
-        </div>
-
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-3 sm:gap-4">
-          {!isBarangayUser && (
-            <Dialog open={isDialogOpen} onOpenChange={(open) => (open ? handleOpenDialog() : handleCloseDialog())}>
-              <DialogTrigger asChild>
-                <Button className="w-full sm:w-auto bg-green-600 text-white hover:bg-green-700">
-                  <Plus className="h-4 w-4 mr-2" />
-                  Register Visitor
-                </Button>
-              </DialogTrigger>
-              <DialogContent className="bg-card border-border mx-4 sm:mx-auto max-w-[calc(100vw-2rem)] sm:max-w-4xl">
-                <DialogHeader>
-                  <DialogTitle>{editingVehicle ? 'Edit Visitor Vehicle' : 'Register Visitor'}</DialogTitle>
-                  <DialogDescription>
-                    {editingVehicle
-                      ? 'Update visitor vehicle details.'
-                      : activeTab === VISITOR_LIST_TAB_ALL
-                        ? 'Register a visitor vehicle. Choose purpose in the form.'
-                        : `Register a vehicle for the same purpose as this tab (${activeTab}). You can change purpose in the form if needed.`}
-                  </DialogDescription>
-                </DialogHeader>
-                <div className="space-y-4 py-4 max-h-[78vh] overflow-y-auto">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div className="space-y-2">
-                    <Label htmlFor="v-plate">
-                      Plate Number <span className="text-red-600">*</span>
-                    </Label>
-                    <Input
-                      id="v-plate"
-                      placeholder="ABC123"
-                      value={formData.plateNumber}
-                      onChange={(e) =>
-                        setFormData({ ...formData, plateNumber: e.target.value.toUpperCase() })
-                      }
-                      className="bg-secondary uppercase"
-                      spellCheck={false}
-                    />
-                    </div>
-                    <div className="space-y-2">
-                    <Label htmlFor="v-type">
-                      Vehicle Type <span className="text-red-600">*</span>
-                    </Label>
-                    <Select
-                      value={formData.vehicleType}
-                      onValueChange={(v) =>
-                        setFormData((prev) => ({
-                          ...prev,
-                          vehicleType: v,
-                          vehicleTypeOther: v === VEHICLE_TYPE_OTHER ? prev.vehicleTypeOther : '',
-                        }))
-                      }
-                    >
-                      <SelectTrigger id="v-type" className="bg-secondary">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {VEHICLE_TYPE_OPTIONS.map((opt) => (
-                          <SelectItem key={opt.value} value={opt.value}>
-                            {opt.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    {formData.vehicleType === VEHICLE_TYPE_OTHER ? (
-                      <Input
-                        placeholder="Enter vehicle type"
-                        value={formData.vehicleTypeOther}
-                        onChange={(e) =>
-                          setFormData((prev) => ({ ...prev, vehicleTypeOther: e.target.value }))
-                        }
-                        className="bg-secondary"
-                      />
-                    ) : null}
-                    </div>
-                    <div className="space-y-2">
-                    <Label htmlFor="v-owner">
-                      Owner <span className="text-red-600">*</span>
-                    </Label>
-                    <Input
-                      id="v-owner"
-                      placeholder="Juan dela Cruz"
-                      value={formData.ownerName}
-                      onChange={(e) =>
-                        setFormData({ ...formData, ownerName: lettersAndSpacesOnly(e.target.value) })
-                      }
-                      className="bg-secondary"
-                    />
-                    </div>
-                    <div className="space-y-2">
-                    <Label htmlFor="v-contact">
-                      Contact Number <span className="text-red-600">*</span>
-                    </Label>
-                    <Input
-                      id="v-contact"
-                      placeholder="09171234567"
-                      maxLength={11}
-                      value={formData.contactNumber}
-                      onChange={(e) =>
-                        setFormData({ ...formData, contactNumber: digitsOnly(e.target.value).slice(0, 11) })
-                      }
-                      className="bg-secondary"
-                      inputMode="numeric"
-                    />
-                    </div>
-                    <div className="space-y-2">
-                    <Label htmlFor="v-purpose">
-                      Purpose of Visit <span className="text-red-600">(Required)</span>
-                    </Label>
-                    <Select
-                      value={purposeSelectValue}
-                      onValueChange={(v) =>
-                        setFormData((prev) => ({
-                          ...prev,
-                          purposeOfVisit: v,
-                          purposeOfVisitOther: v === PURPOSE_OTHER ? prev.purposeOfVisitOther : '',
-                          rented: '',
-                        }))
-                      }
-                    >
-                      <SelectTrigger id="v-purpose" className="bg-secondary">
-                        <SelectValue placeholder="Select purpose" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {VISITOR_PURPOSE_TABS.map((opt) => (
-                          <SelectItem key={opt} value={opt}>
-                            {opt}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    {formData.purposeOfVisit === PURPOSE_OTHER ? (
-                      <Input
-                        placeholder="Enter purpose of visit"
-                        value={formData.purposeOfVisitOther}
-                        onChange={(e) =>
-                          setFormData((prev) => ({ ...prev, purposeOfVisitOther: e.target.value }))
-                        }
-                        className="bg-secondary"
-                      />
-                    ) : null}
-                    </div>
-                  {formData.purposeOfVisit === 'Visit resident' ? (
-                    <SearchableResidentSelect
-                      id="v-visit-resident"
-                      label="Resident being visited"
-                      requiredMark
-                      placeholder="Search residents from registry…"
-                      residents={residents}
-                      value={formData.rented}
-                      onChange={(v) => setFormData((prev) => ({ ...prev, rented: v }))}
-                    />
-                  ) : showRentedField ? (
-                    <SearchableLocationSelect
-                      id="v-rented"
-                      label="Rented / Location"
-                      requiredMark
-                      placeholder="Search facility…"
-                      options={RENTED_OPTIONS}
-                      value={formData.rented}
-                      onChange={(v) => setFormData((prev) => ({ ...prev, rented: v }))}
-                    />
-                  ) : null}
-                  </div>
-
-                  <DialogFooter className="!flex-row gap-2 pt-2 sm:justify-stretch">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="flex-1 border-red-600 bg-red-600 text-white hover:bg-red-700 hover:text-white"
-                      onClick={handleCloseDialog}
-                    >
-                      Cancel
-                    </Button>
-                    <Button
-                      type="button"
-                      className="flex-1 bg-green-600 text-white hover:bg-green-700"
-                      onClick={() => void handleSaveVehicle()}
-                    >
-                      {editingVehicle ? 'Save Changes' : 'Register Visitor'}
-                    </Button>
-                  </DialogFooter>
-                </div>
-              </DialogContent>
-            </Dialog>
-          )}
         </div>
 
         {isRefreshing && <p className="text-xs text-muted-foreground">Refreshing results...</p>}
