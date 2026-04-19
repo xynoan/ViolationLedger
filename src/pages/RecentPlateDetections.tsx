@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Navigate } from 'react-router-dom';
-import { ScanLine, RefreshCw } from 'lucide-react';
+import { ScanLine, RefreshCw, FlaskConical } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
 import { useAuth } from '@/hooks/useAuth';
@@ -31,6 +31,10 @@ export default function RecentPlateDetections() {
   );
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [testSeedLoading, setTestSeedLoading] = useState(false);
+
+  const showTestDetectionSeed =
+    import.meta.env.DEV === true || import.meta.env.VITE_SHOW_TEST_WARNING_BUTTON === 'true';
 
   const load = useCallback(async () => {
     try {
@@ -82,6 +86,31 @@ export default function RecentPlateDetections() {
     load();
   };
 
+  const handleSeedTestDetection = async () => {
+    setTestSeedLoading(true);
+    try {
+      const result = (await detectionsAPI.seedTestRecentPlate()) as {
+        plateNumber?: string;
+        locationId?: string;
+      };
+      toast({
+        title: 'Test detection added',
+        description: `Plate ${result.plateNumber} at ${result.locationId ?? 'location'}`,
+      });
+      setRefreshing(true);
+      await load();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Failed to add test detection';
+      toast({
+        title: 'Test detection failed',
+        description: msg,
+        variant: 'destructive',
+      });
+    } finally {
+      setTestSeedLoading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen">
       <Header
@@ -119,10 +148,25 @@ export default function RecentPlateDetections() {
               </span>
             )}
           </div>
-          <Button type="button" variant="outline" size="sm" disabled={refreshing} onClick={handleRefresh}>
-            <RefreshCw className={`h-4 w-4 mr-1.5 ${refreshing ? 'animate-spin' : ''}`} />
-            Refresh
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            {showTestDetectionSeed && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={testSeedLoading || refreshing}
+                onClick={handleSeedTestDetection}
+                title="Insert one synthetic detection row (dev / test only; no violation)"
+              >
+                <FlaskConical className="h-4 w-4 mr-1 shrink-0" />
+                {testSeedLoading ? 'Adding…' : 'Add test detection'}
+              </Button>
+            )}
+            <Button type="button" variant="outline" size="sm" disabled={refreshing} onClick={handleRefresh}>
+              <RefreshCw className={`h-4 w-4 mr-1.5 ${refreshing ? 'animate-spin' : ''}`} />
+              Refresh
+            </Button>
+          </div>
         </div>
 
         <div className="glass-card overflow-hidden rounded-xl border border-border">

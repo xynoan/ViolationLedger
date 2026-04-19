@@ -1,6 +1,6 @@
 import express from 'express';
 import db from '../database.js';
-import { normalizePlateForMatch } from './violations.js';
+import { normalizePlateForMatch, isTestViolationSeedAllowed } from './violations.js';
 
 const router = express.Router();
 
@@ -86,6 +86,60 @@ router.get('/recent-plates', (req, res) => {
       since,
       count: entries.length,
       entries,
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Insert one synthetic readable-plate detection (dev / ALLOW_TEST_VIOLATION_SEED only).
+ * Does not create a violation — for Recent plate detections / presence testing.
+ */
+router.post('/test-seed', (req, res) => {
+  try {
+    if (!isTestViolationSeedAllowed()) {
+      return res.status(403).json({
+        error: 'Test detection seed is disabled (production). Set ALLOW_TEST_VIOLATION_SEED=true to enable.',
+      });
+    }
+
+    const cameras = db
+      .prepare(
+        `SELECT id, locationId FROM cameras
+         WHERE locationId IS NOT NULL AND TRIM(locationId) != ''`,
+      )
+      .all();
+
+    if (!cameras.length) {
+      return res.status(400).json({ error: 'No cameras with a location configured' });
+    }
+
+    const cam = cameras[Math.floor(Math.random() * cameras.length)];
+
+    const vehicles = db.prepare('SELECT plateNumber FROM vehicles WHERE plateNumber IS NOT NULL AND TRIM(plateNumber) != \'\'').all();
+    let plateNumber;
+    if (vehicles.length) {
+      plateNumber = vehicles[Math.floor(Math.random() * vehicles.length)].plateNumber;
+    } else {
+      plateNumber = `TST-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
+    }
+
+    const detectionId = `DET-TEST-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const ts = new Date().toISOString();
+
+    db.prepare(`
+      INSERT INTO detections (id, cameraId, plateNumber, timestamp, confidence, imageUrl, bbox, class_name, imageBase64)
+      VALUES (?, ?, ?, ?, ?, NULL, NULL, 'car', NULL)
+    `).run(detectionId, cam.id, plateNumber, ts, 1.0);
+
+    return res.status(201).json({
+      detectionId,
+      plateNumber,
+      cameraId: cam.id,
+      locationId: cam.locationId,
+      timestamp: ts,
+      note: 'Test data — synthetic detection row',
     });
   } catch (error) {
     res.status(500).json({ error: error.message });

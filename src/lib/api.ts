@@ -265,6 +265,9 @@ export const detectionsAPI = {
     const q = sp.toString();
     return fetchAPI(`/detections/recent-plates${q ? `?${q}` : ''}`, { cache: false });
   },
+  /** Dev / ALLOW_TEST_VIOLATION_SEED: inserts one synthetic detection row (no violation). */
+  seedTestRecentPlate: () =>
+    fetchAPI('/detections/test-seed', { method: 'POST' }),
 };
 
 // Captures API

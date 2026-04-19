@@ -23,8 +23,8 @@ export function normalizePlateForMatch(plateNumber) {
   return String(plateNumber).replace(/\s+/g, '').toUpperCase();
 }
 
-/** Dev / explicit-flag only: POST /test-seed-active-warning */
-function isTestViolationSeedAllowed() {
+/** Dev / explicit-flag only: POST /test-seed-active-warning, /detections/test-seed */
+export function isTestViolationSeedAllowed() {
   if (process.env.ALLOW_TEST_VIOLATION_SEED === 'true') return true;
   return process.env.NODE_ENV !== 'production';
 }
