@@ -20,7 +20,8 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Camera } from '@/types/parking';
 import { toast } from '@/hooks/use-toast';
-import { camerasAPI } from '@/lib/api';
+import { camerasAPI, vehiclesAPI } from '@/lib/api';
+import type { Vehicle } from '@/types/parking';
 import { useAuth } from '@/hooks/useAuth';
 import { useFormOptions } from '@/hooks/useFormOptions';
 
@@ -32,6 +33,7 @@ export default function Cameras() {
   const residentStreets = formOptions.residentStreets;
   const streetSet = useMemo(() => new Set(residentStreets), [residentStreets]);
   const [cameras, setCameras] = useState<Camera[]>([]);
+  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [newCamera, setNewCamera] = useState({
@@ -45,6 +47,18 @@ export default function Cameras() {
 
   const onlineCameras = cameras.filter(c => c.status === 'online');
 
+  const { residentPlates, visitorPlates } = useMemo(() => {
+    const resident: string[] = [];
+    const visitor: string[] = [];
+    for (const v of vehicles) {
+      const linked =
+        v.residentId != null && String(v.residentId).trim() !== '';
+      if (linked) resident.push(v.plateNumber);
+      else visitor.push(v.plateNumber);
+    }
+    return { residentPlates: resident, visitorPlates: visitor };
+  }, [vehicles]);
+
   // Load cameras from API on initial mount only
   useEffect(() => {
     loadCameras();
@@ -53,7 +67,20 @@ export default function Cameras() {
   const loadCameras = async (bypassCache = false) => {
     try {
       setIsLoading(true);
-      const data = await camerasAPI.getAll(bypassCache ? { cache: false } : undefined);
+      const [camRes, vehRes] = await Promise.allSettled([
+        camerasAPI.getAll(bypassCache ? { cache: false } : undefined),
+        vehiclesAPI.getAll(),
+      ]);
+      if (vehRes.status === 'fulfilled') {
+        setVehicles(vehRes.value);
+      } else {
+        console.error('Error loading vehicles for plate lookup:', vehRes.reason);
+        setVehicles([]);
+      }
+      if (camRes.status === 'rejected') {
+        throw camRes.reason;
+      }
+      const data = camRes.value;
       console.log('Loaded cameras from API:', data);
       // Ensure deviceId is properly set (convert null/empty to undefined for frontend)
       const camerasWithDeviceId = data.map((camera: any) => {
@@ -381,7 +408,9 @@ export default function Cameras() {
             {cameras.map((camera) => (
               <CameraFeed 
                 key={camera.id} 
-                camera={camera} 
+                camera={camera}
+                residentPlates={residentPlates}
+                visitorPlates={visitorPlates}
                 onRefresh={() => loadCameras(true)}
                 onDelete={handleDeleteCamera}
                 canDelete={isAdmin}

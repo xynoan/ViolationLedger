@@ -3,6 +3,7 @@ import { Camera as CameraIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Camera } from '@/types/parking';
 import { usePlateRecognition } from '@/hooks/usePlateRecognition';
+import { normalizePlateForOcrMatch } from '@/lib/plateNormalize';
 
 export interface Detection {
   bbox: number[];
@@ -11,17 +12,17 @@ export interface Detection {
   plateNumber?: string;
 }
 
-function normalizePlate(plate: unknown): string {
-  if (typeof plate !== 'string') return '';
-  return plate.replace(/\W+/g, '').toUpperCase();
-}
+export type PlateRegistryStatus = 'RESIDENT' | 'VISITOR' | 'UNREGISTERED';
 
 interface VideoPlayerProps {
   stream: MediaStream | null;
   isOnline: boolean;
   camera: Camera;
   detections: Detection[];
-  registeredPlates?: string[];
+  /** Plates linked to a resident (resident vehicles). */
+  residentPlates?: string[];
+  /** Registered visitor vehicles (no residentId). */
+  visitorPlates?: string[];
   fullscreen?: boolean;
   enablePlateRecognition?: boolean;
   onPlateMetaChange?: (meta: {
@@ -42,7 +43,8 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
   isOnline,
   camera,
   detections: apiDetections,
-  registeredPlates = [],
+  residentPlates = [],
+  visitorPlates = [],
   fullscreen = false,
   enablePlateRecognition = false,
   onPlateMetaChange,
@@ -84,27 +86,41 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
   const detections = enablePlateRecognition
     ? plateDetections
     : apiDetections;
-  const registeredPlateSet = new Set(
-    registeredPlates
-      .map((plate) => normalizePlate(plate))
-      .filter(Boolean)
+  const residentPlateSet = useMemo(
+    () =>
+      new Set(
+        residentPlates.map((p) => normalizePlateForOcrMatch(p)).filter(Boolean),
+      ),
+    [residentPlates],
   );
+  const visitorPlateSet = useMemo(
+    () =>
+      new Set(
+        visitorPlates.map((p) => normalizePlateForOcrMatch(p)).filter(Boolean),
+      ),
+    [visitorPlates],
+  );
+
   const recognizedPlates = useMemo(() => {
-    const deduped = new Map<string, { plate: string; status: 'REGISTERED' | 'UNREGISTERED' | null }>();
+    const deduped = new Map<string, { plate: string; status: PlateRegistryStatus | null }>();
 
     detections.forEach((detection) => {
       const rawPlate = typeof detection.plateNumber === 'string' ? detection.plateNumber.trim() : '';
       if (!rawPlate) return;
-      const normalized = normalizePlate(rawPlate);
+      const normalized = normalizePlateForOcrMatch(rawPlate);
       if (!normalized || normalized === 'NONE' || normalized === 'BLUR') return;
       if (deduped.has(normalized)) return;
 
-      const status = registeredPlateSet.has(normalized) ? 'REGISTERED' : 'UNREGISTERED';
+      const status: PlateRegistryStatus = residentPlateSet.has(normalized)
+        ? 'RESIDENT'
+        : visitorPlateSet.has(normalized)
+          ? 'VISITOR'
+          : 'UNREGISTERED';
       deduped.set(normalized, { plate: rawPlate, status });
     });
 
     return [...deduped.values()];
-  }, [detections, registeredPlateSet]);
+  }, [detections, residentPlateSet, visitorPlateSet]);
   const hasVehicleDetection = useMemo(
     () =>
       detections.some(
@@ -325,7 +341,7 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
             detection.class_name === 'bus' ||
             detection.class_name === 'vehicle';
           const normalizedPlate =
-            typeof plateLabel === 'string' ? normalizePlate(plateLabel) : '';
+            typeof plateLabel === 'string' ? normalizePlateForOcrMatch(plateLabel) : '';
           const hasReadablePlate =
             typeof plateLabel === 'string' &&
             plateLabel.trim().length > 0 &&
@@ -334,9 +350,13 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           const baseLabel = typeof plateLabel === 'string' && plateLabel.trim().length > 0
             ? plateLabel
             : `${detection.class_name} ${(detection.confidence * 100).toFixed(0)}%`;
-          const plateStatus =
+          const plateStatus: PlateRegistryStatus | null =
             hasReadablePlate
-              ? (registeredPlateSet.has(normalizedPlate) ? 'REGISTERED' : 'UNREGISTERED')
+              ? residentPlateSet.has(normalizedPlate)
+                ? 'RESIDENT'
+                : visitorPlateSet.has(normalizedPlate)
+                  ? 'VISITOR'
+                  : 'UNREGISTERED'
               : null;
           const label: string = isVehicleClass
               ? `${baseLabel} Detected`
@@ -357,13 +377,19 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
                 <div
                   className={cn(
                     'absolute -top-12 left-0 z-50 rounded-md border px-2 py-0.5 font-semibold shadow-lg backdrop-blur-sm',
-                    plateStatus === 'REGISTERED'
+                    plateStatus === 'RESIDENT'
                       ? 'border-emerald-300 bg-emerald-600 text-white'
-                      : 'border-red-200 bg-red-700 text-white ring-1 ring-red-300/70',
+                      : plateStatus === 'VISITOR'
+                        ? 'border-sky-300 bg-sky-700 text-white'
+                        : 'border-red-200 bg-red-700 text-white ring-1 ring-red-300/70',
                     fullscreen ? 'text-xs' : 'text-[10px]'
                   )}
                 >
-                  {plateStatus}
+                  {plateStatus === 'RESIDENT'
+                    ? 'Resident'
+                    : plateStatus === 'VISITOR'
+                      ? 'Visitor'
+                      : 'Unregistered'}
                 </div>
               )}
               {hasReadablePlate && (
@@ -411,13 +437,19 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
                       <span
                         className={cn(
                           'rounded border px-1 py-0.5 font-semibold',
-                          entry.status === 'REGISTERED'
+                          entry.status === 'RESIDENT'
                             ? 'border-emerald-300 bg-emerald-700/80 text-emerald-100'
-                            : 'border-red-200 bg-red-700 text-red-50 ring-1 ring-red-300/70',
+                            : entry.status === 'VISITOR'
+                              ? 'border-sky-300 bg-sky-800/90 text-sky-50'
+                              : 'border-red-200 bg-red-700 text-red-50 ring-1 ring-red-300/70',
                           fullscreen ? 'text-[10px]' : 'text-[9px]'
                         )}
                       >
-                        {entry.status}
+                        {entry.status === 'RESIDENT'
+                          ? 'Resident'
+                          : entry.status === 'VISITOR'
+                            ? 'Visitor'
+                            : 'Unregistered'}
                       </span>
                     )}
                   </div>

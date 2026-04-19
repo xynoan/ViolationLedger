@@ -35,7 +35,10 @@ import { toast } from '@/hooks/use-toast';
 
 interface CameraFeedProps {
   camera: Camera;
-  registeredPlates?: string[];
+  /** Plates linked to residents (from vehicles with residentId). */
+  residentPlates?: string[];
+  /** Registered visitor vehicles (vehicles without residentId). */
+  visitorPlates?: string[];
   onRefresh?: () => void;
   onDelete?: (id: string) => void;
   canDelete?: boolean;
@@ -43,7 +46,8 @@ interface CameraFeedProps {
 
 export const CameraFeed = memo(function CameraFeed({
   camera,
-  registeredPlates = [],
+  residentPlates = [],
+  visitorPlates = [],
   onRefresh,
   onDelete,
   canDelete = true,
@@ -141,7 +145,8 @@ export const CameraFeed = memo(function CameraFeed({
             isOnline={isOnline}
             camera={camera}
             detections={detections}
-            registeredPlates={registeredPlates}
+            residentPlates={residentPlates}
+            visitorPlates={visitorPlates}
             enablePlateRecognition={false}
           />
         </div>
@@ -194,7 +199,8 @@ export const CameraFeed = memo(function CameraFeed({
               isOnline={isOnline}
               camera={camera}
               detections={detections}
-              registeredPlates={registeredPlates}
+              residentPlates={residentPlates}
+            visitorPlates={visitorPlates}
               fullscreen
               enablePlateRecognition={false}
             />
