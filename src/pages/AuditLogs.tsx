@@ -1,20 +1,10 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useLocation } from 'react-router-dom';
-import { FileText, Filter, RefreshCw, Calendar, User, Search, Trash2, Info } from 'lucide-react';
+import { FileText, Filter, RefreshCw, Calendar, User, Search, Info } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -73,21 +63,7 @@ function formatRoleLabel(role: string): string {
     .join(' ');
 }
 
-const actionTypes = [
-  'view',
-  'page_view',
-  'button_click',
-  'create',
-  'update',
-  'delete',
-  'login',
-  'logout',
-  'capture',
-  'upload',
-  'export',
-  'filter',
-  'search',
-];
+const actionTypes = ['viewed', 'create', 'update', 'delete', 'login', 'logout'] as const;
 
 export default function AuditLogs() {
   usePageTracking();
@@ -108,7 +84,6 @@ export default function AuditLogs() {
     totalPages: 0,
   });
   const [stats, setStats] = useState<AuditLogStats | null>(null);
-  const [showClearDialog, setShowClearDialog] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
@@ -136,10 +111,29 @@ export default function AuditLogs() {
     });
   }, [logs, searchQuery]);
 
+  const loadStats = useCallback(async () => {
+    try {
+      const params: any = {};
+      if (filters.startDate) {
+        params.startDate = new Date(filters.startDate).toISOString();
+      }
+      if (filters.endDate) {
+        params.endDate = new Date(filters.endDate).toISOString();
+      }
+      const data = await auditLogsAPI.getStats(params);
+      setStats(data);
+    } catch (error) {
+      console.error('Error loading stats:', error);
+    }
+  }, [filters.startDate, filters.endDate]);
+
   useEffect(() => {
     loadUsers();
-    loadStats();
   }, []);
+
+  useEffect(() => {
+    loadStats();
+  }, [loadStats]);
 
   useEffect(() => {
     loadLogs();
@@ -193,22 +187,6 @@ export default function AuditLogs() {
     }
   };
 
-  const loadStats = useCallback(async () => {
-    try {
-      const params: any = {};
-      if (filters.startDate) {
-        params.startDate = new Date(filters.startDate).toISOString();
-      }
-      if (filters.endDate) {
-        params.endDate = new Date(filters.endDate).toISOString();
-      }
-      const data = await auditLogsAPI.getStats(params);
-      setStats(data);
-    } catch (error) {
-      console.error('Error loading stats:', error);
-    }
-  }, [filters.startDate, filters.endDate]);
-
   const clearFilters = () => {
     setFilters({
       userId: 'all',
@@ -218,26 +196,6 @@ export default function AuditLogs() {
     });
     setSearchQuery('');
     setPagination((prev) => ({ ...prev, page: 1 }));
-  };
-
-  const handleClearLogs = async () => {
-    try {
-      await auditLogsAPI.clearAll();
-      toast({
-        title: "Success",
-        description: "All audit logs have been cleared",
-      });
-      setShowClearDialog(false);
-      loadLogs();
-      loadStats();
-    } catch (error: any) {
-      console.error('Error clearing audit logs:', error);
-      toast({
-        title: "Error",
-        description: error.message || "Failed to clear audit logs",
-        variant: "destructive",
-      });
-    }
   };
 
   if (isLoading && logs.length === 0) {
@@ -253,27 +211,7 @@ export default function AuditLogs() {
 
   return (
       <div className="min-h-screen">
-      <Header
-        title="Activity Logs"
-        subtitle="A clear view of who did what in the system"
-        action={
-          <div className="flex gap-2">
-            <Button onClick={loadLogs} disabled={isLoading} variant="outline" size="sm">
-              <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
-              Refresh
-            </Button>
-            <Button 
-              onClick={() => setShowClearDialog(true)} 
-              disabled={isLoading || pagination.total === 0} 
-              variant="destructive" 
-              size="sm"
-            >
-              <Trash2 className="h-4 w-4 mr-2" />
-              Clear All
-            </Button>
-          </div>
-        }
-      />
+      <Header title="Activity Logs" subtitle="A clear view of who did what in the system" />
 
       <div className="p-4 sm:p-6 space-y-6">
         {/* Stats Cards */}
@@ -605,28 +543,6 @@ export default function AuditLogs() {
           </CardContent>
         </Card>
       </div>
-
-      {/* Clear Logs Confirmation Dialog */}
-      <AlertDialog open={showClearDialog} onOpenChange={setShowClearDialog}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Clear All Audit Logs</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to delete all audit logs? This action cannot be undone. 
-              All {pagination.total} log entries will be permanently deleted.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleClearLogs}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              Clear All Logs
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }

@@ -1,11 +1,13 @@
 import express from 'express';
 import db from '../database.js';
 import { authenticateToken } from '../middleware/auth.js';
+import { auditLog } from '../middleware/audit.js';
 
 const router = express.Router();
 
 // All notification routes require authentication
 router.use(authenticateToken);
+router.use(auditLog);
 
 function getStatements() {
   return {

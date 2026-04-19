@@ -2,6 +2,7 @@ import express from 'express';
 import db from '../database.js';
 import { sendViolationSms } from '../utils/smsService.js';
 import { authenticateToken, requireRole } from '../middleware/auth.js';
+import { auditLog } from '../middleware/audit.js';
 import { getGracePeriodMinutes, getOwnerSmsDelayConfig } from '../runtime_config.js';
 
 const router = express.Router();
@@ -350,7 +351,7 @@ router.get('/', (req, res) => {
   }
 });
 
-router.put('/:id/assign', authenticateToken, requireRole('barangay_user', 'admin'), (req, res) => {
+router.put('/:id/assign', authenticateToken, auditLog, requireRole('barangay_user', 'admin'), (req, res) => {
   try {
     const violation = db.prepare('SELECT * FROM violations WHERE id = ?').get(req.params.id);
     if (!violation) {

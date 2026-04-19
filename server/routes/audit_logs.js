@@ -71,8 +71,13 @@ router.get('/', requireRole('admin'), (req, res) => {
     }
     
     if (action) {
-      conditions.push('action = ?');
-      params.push(action);
+      // Single "Viewed" filter for both API resource reads (`view`) and SPA page tracking (`page_view`)
+      if (action === 'viewed') {
+        conditions.push("(action = 'view' OR action = 'page_view')");
+      } else {
+        conditions.push('action = ?');
+        params.push(action);
+      }
     }
     
     if (startDate) {

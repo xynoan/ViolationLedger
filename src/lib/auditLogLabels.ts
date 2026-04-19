@@ -5,6 +5,8 @@
  */
 
 const ACTION_LABELS: Record<string, string> = {
+  /** Combined filter value for Activity Logs (matches `view` and `page_view` in DB) */
+  viewed: 'Viewed',
   view: 'Viewed',
   page_view: 'Viewed',
   button_click: 'Button action',

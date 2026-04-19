@@ -1,6 +1,7 @@
 import express from 'express';
 import db from '../database.js';
 import { authenticateToken, requireRole } from '../middleware/auth.js';
+import { auditLog } from '../middleware/audit.js';
 
 const router = express.Router();
 
@@ -41,6 +42,7 @@ function isUniquePlateConstraintError(error) {
 }
 
 router.use(authenticateToken);
+router.use(auditLog);
 router.get('/', (req, res) => {
   try {
     const { search } = req.query;

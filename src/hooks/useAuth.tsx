@@ -1,5 +1,10 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { authAPI, getTrustedDeviceExpiresAtStorageKey, getTrustedDeviceTokenStorageKey } from '@/lib/api';
+import {
+  authAPI,
+  auditLogsAPI,
+  getTrustedDeviceExpiresAtStorageKey,
+  getTrustedDeviceTokenStorageKey,
+} from '@/lib/api';
 
 interface User {
   id: string;
@@ -75,6 +80,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (response.token && response.user) {
       localStorage.setItem('auth_token', response.token);
       setUser(response.user);
+      void auditLogsAPI.logActivity({
+        action: 'login',
+        resource: 'authentication',
+        resourceId: response.user.id,
+        details: { email: response.user.email },
+      });
       return response;
     }
     throw new Error('Invalid response from server');
@@ -94,12 +105,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       setUser(response.user);
+      void auditLogsAPI.logActivity({
+        action: 'login',
+        resource: 'authentication',
+        resourceId: response.user.id,
+        details: { email: response.user.email, via: '2fa' },
+      });
       return response.user;
     }
     throw new Error('Invalid response from server');
   };
 
   const logout = () => {
+    const token = localStorage.getItem('auth_token');
+    if (token && user) {
+      void auditLogsAPI.logActivity({
+        action: 'logout',
+        resource: 'authentication',
+        resourceId: user.id,
+        details: { email: user.email },
+      });
+    }
     localStorage.removeItem('auth_token');
     setUser(null);
   };

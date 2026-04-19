@@ -1,6 +1,7 @@
 import express from 'express';
 import db from '../database.js';
 import { authenticateToken, requireRole } from '../middleware/auth.js';
+import { auditLog } from '../middleware/audit.js';
 import { syncDetectionWorkers } from '../detection_service.js';
 
 const router = express.Router();
@@ -113,7 +114,7 @@ router.get('/:id', (req, res) => {
   }
 });
 
-router.post('/', authenticateToken, requireRole('admin'), (req, res) => {
+router.post('/', authenticateToken, auditLog, requireRole('admin'), (req, res) => {
   try {
     console.log('POST /api/cameras - Request body:', JSON.stringify(req.body, null, 2));
     
@@ -309,7 +310,7 @@ router.post('/', authenticateToken, requireRole('admin'), (req, res) => {
   }
 });
 
-router.put('/:id', authenticateToken, requireRole('admin'), (req, res) => {
+router.put('/:id', authenticateToken, auditLog, requireRole('admin'), (req, res) => {
   try {
     const statements = getStatements();
     const { name, locationId, status, deviceId, isFixed, illegalParkingZone, detectionRtspUrl } = req.body;
@@ -386,7 +387,7 @@ router.put('/:id', authenticateToken, requireRole('admin'), (req, res) => {
 
 // DELETE camera
 // DELETE camera (Admin only)
-router.delete('/:id', authenticateToken, requireRole('admin'), (req, res) => {
+router.delete('/:id', authenticateToken, auditLog, requireRole('admin'), (req, res) => {
   try {
     console.log('DELETE /api/cameras/:id - Camera ID:', req.params.id);
     const statements = getStatements();
