@@ -11,9 +11,11 @@ import { getSmsServiceStatus } from '../utils/smsService.js';
 import { getPythonExecutable } from '../python_executable.js';
 import {
   getGracePeriodMinutes,
+  getPostGraceVerificationMinutes,
   getRuntimeConfig,
   setGracePeriodMinutes,
   setOwnerSmsDelayMinutes,
+  setPostGraceVerificationMinutes,
 } from '../runtime_config.js';
 
 function readEnvFile() {
@@ -168,6 +170,7 @@ async function checkAIService() {
 function checkMonitoringServices() {
   const ownerSmsDelay = monitoringService.getOwnerSmsDelayConfig();
   const gracePeriodMinutes = getGracePeriodMinutes();
+  const postGraceVerificationMinutes = getPostGraceVerificationMinutes();
   return {
     monitoring: {
       status: monitoringService.isRunning ? 'healthy' : 'unhealthy',
@@ -188,6 +191,7 @@ function checkMonitoringServices() {
     },
     ownerSmsDelay,
     gracePeriodMinutes,
+    postGraceVerificationMinutes,
   };
 }
 
@@ -277,6 +281,7 @@ router.get('/runtime-config', (req, res) => {
       ...config,
       ownerSmsDelayConfig: monitoringService.getOwnerSmsDelayConfig(),
       gracePeriodMinutes: getGracePeriodMinutes(),
+      postGraceVerificationMinutes: getPostGraceVerificationMinutes(),
     });
   } catch (error) {
     console.error('Get runtime config error:', error);
@@ -288,7 +293,12 @@ router.get('/runtime-config', (req, res) => {
 
 router.post('/runtime-config', (req, res) => {
   try {
-    const { ownerSmsDelayMinutes, ownerSmsDelayDisabledForDemo, gracePeriodMinutes } = req.body || {};
+    const {
+      ownerSmsDelayMinutes,
+      ownerSmsDelayDisabledForDemo,
+      gracePeriodMinutes,
+      postGraceVerificationMinutes,
+    } = req.body || {};
     if (ownerSmsDelayMinutes !== undefined) {
       const parsedOwnerDelay = Number.parseInt(String(ownerSmsDelayMinutes), 10);
       if (!Number.isFinite(parsedOwnerDelay) || parsedOwnerDelay <= 0) {
@@ -309,12 +319,20 @@ router.post('/runtime-config', (req, res) => {
       }
       setGracePeriodMinutes(parsedGracePeriod);
     }
+    if (postGraceVerificationMinutes !== undefined) {
+      const parsed = Number.parseInt(String(postGraceVerificationMinutes), 10);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        return res.status(400).json({ error: 'postGraceVerificationMinutes must be a positive integer' });
+      }
+      setPostGraceVerificationMinutes(parsed);
+    }
     const config = getRuntimeConfig();
     res.json({
       success: true,
       ...config,
       ownerSmsDelayConfig: monitoringService.getOwnerSmsDelayConfig(),
       gracePeriodMinutes: getGracePeriodMinutes(),
+      postGraceVerificationMinutes: getPostGraceVerificationMinutes(),
     });
   } catch (error) {
     console.error('Update runtime config error:', error);

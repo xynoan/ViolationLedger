@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { Clock, AlertTriangle, Check, Camera, Ticket, ImageOff, MessageSquare } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -29,12 +29,33 @@ interface WarningTimerProps {
   ownerSmsUi?: 'full' | 'graceOnly';
 }
 
-/** Seconds until expiry; negative = overdue by that many seconds. */
-function computeDeltaSec(warningExpiresAt: Date | undefined): number | null {
-  if (!warningExpiresAt) return null;
-  const now = Date.now();
-  const expires = new Date(warningExpiresAt).getTime();
-  return Math.floor((expires - now) / 1000);
+/** Seconds until a wall-clock instant. */
+function computeDeltaSecUntil(targetMs: number): number {
+  return Math.floor((targetMs - Date.now()) / 1000);
+}
+
+/**
+ * Sequential model (matches Settings): grace ends after the owner SMS window —
+ * SMS scheduled time + grace period, or detection + grace when SMS is immediate (demo).
+ */
+function computeSequentialGraceEndMs(
+  violation: Violation,
+  gracePeriodMinutes: number,
+  ownerSmsDelayMinutes: number,
+  ownerSmsDelayDisabledForDemo: boolean,
+): number {
+  const detectedMs = new Date(violation.timeDetected).getTime();
+  const scheduledSmsMs = violation.ownerSmsScheduledAt
+    ? new Date(violation.ownerSmsScheduledAt).getTime()
+    : null;
+
+  if (ownerSmsDelayDisabledForDemo) {
+    return detectedMs + gracePeriodMinutes * 60 * 1000;
+  }
+  if (scheduledSmsMs != null) {
+    return scheduledSmsMs + gracePeriodMinutes * 60 * 1000;
+  }
+  return detectedMs + ownerSmsDelayMinutes * 60 * 1000 + gracePeriodMinutes * 60 * 1000;
 }
 
 function formatHms(seconds: number): string {
@@ -68,18 +89,62 @@ export function WarningTimer({
   smsStatusBadge = 'full',
   ownerSmsUi = 'full',
 }: WarningTimerProps) {
-  const [deltaSec, setDeltaSec] = useState<number | null>(() => computeDeltaSec(violation.warningExpiresAt));
+  const [gracePeriodMinutes, setGracePeriodMinutes] = useState(30);
+  const [ownerSmsDelayMinutes, setOwnerSmsDelayMinutes] = useState(5);
+  const [postGraceVerificationMinutes, setPostGraceVerificationMinutes] = useState(5);
+  const [graceDeltaSec, setGraceDeltaSec] = useState<number | null>(null);
+  const [verificationDeltaSec, setVerificationDeltaSec] = useState<number | null>(null);
   const [sendingSms, setSendingSms] = useState(false);
   const [ownerSmsDelayDisabledForDemo, setOwnerSmsDelayDisabledForDemo] = useState(false);
+  const [autoClearFailed, setAutoClearFailed] = useState(false);
+  const onCancelRef = useRef(onCancel);
+  onCancelRef.current = onCancel;
+  const autoClearInvokedRef = useRef(false);
+
+  useEffect(() => {
+    autoClearInvokedRef.current = false;
+    setAutoClearFailed(false);
+  }, [violation.id]);
+
+  /** After grace + verification window (client clock), call clear (same as Clear button) instead of waiting on monitoring poll. */
+  useEffect(() => {
+    if (autoClearInvokedRef.current) return;
+    if (violation.status !== 'warning') return;
+    const clear = onCancelRef.current;
+    if (!clear) return;
+    if (graceDeltaSec === null || verificationDeltaSec === null) return;
+    if (graceDeltaSec > 0 || verificationDeltaSec > 0) return;
+
+    autoClearInvokedRef.current = true;
+    void Promise.resolve(clear(violation.id)).catch(() => {
+      autoClearInvokedRef.current = false;
+      setAutoClearFailed(true);
+    });
+  }, [violation.id, violation.status, graceDeltaSec, verificationDeltaSec]);
 
   useEffect(() => {
     const tick = () => {
-      setDeltaSec(computeDeltaSec(violation.warningExpiresAt));
+      const graceEndMs = computeSequentialGraceEndMs(
+        violation,
+        gracePeriodMinutes,
+        ownerSmsDelayMinutes,
+        ownerSmsDelayDisabledForDemo,
+      );
+      const verificationEndMs = graceEndMs + postGraceVerificationMinutes * 60 * 1000;
+      setGraceDeltaSec(computeDeltaSecUntil(graceEndMs));
+      setVerificationDeltaSec(computeDeltaSecUntil(verificationEndMs));
     };
     tick();
     const interval = setInterval(tick, 1000);
     return () => clearInterval(interval);
-  }, [violation.warningExpiresAt]);
+  }, [
+    violation.timeDetected,
+    violation.ownerSmsScheduledAt,
+    gracePeriodMinutes,
+    ownerSmsDelayMinutes,
+    postGraceVerificationMinutes,
+    ownerSmsDelayDisabledForDemo,
+  ]);
 
   useEffect(() => {
     if (ownerSmsUi === 'graceOnly' && smsStatusBadge === 'sentOnly') return;
@@ -99,10 +164,39 @@ export function WarningTimer({
     };
   }, [ownerSmsUi, smsStatusBadge]);
 
-  const tier = tierFromDelta(deltaSec);
-  const isOverdue = deltaSec !== null && deltaSec <= 0;
-  const overdueSeconds = isOverdue && deltaSec !== null ? Math.abs(deltaSec) : 0;
-  const canIssueTicket = deltaSec !== null && deltaSec <= 0;
+  useEffect(() => {
+    let mounted = true;
+    healthAPI
+      .getRuntimeConfig()
+      .then((config) => {
+        if (!mounted) return;
+        const pg = Number(config?.postGraceVerificationMinutes ?? 5);
+        const g = Number(config?.gracePeriodMinutes ?? 30);
+        const sms = Number(config?.ownerSmsDelayMinutes ?? 5);
+        setPostGraceVerificationMinutes(Number.isFinite(pg) && pg > 0 ? pg : 5);
+        setGracePeriodMinutes(Number.isFinite(g) && g > 0 ? g : 30);
+        setOwnerSmsDelayMinutes(Number.isFinite(sms) && sms > 0 ? sms : 5);
+      })
+      .catch(() => {
+        if (!mounted) return;
+        setPostGraceVerificationMinutes(5);
+        setGracePeriodMinutes(30);
+        setOwnerSmsDelayMinutes(5);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const isInPostGraceVerificationWindow =
+    graceDeltaSec !== null &&
+    graceDeltaSec <= 0 &&
+    verificationDeltaSec !== null &&
+    verificationDeltaSec > 0;
+  const tier = isInPostGraceVerificationWindow ? 'urgent' : tierFromDelta(graceDeltaSec);
+  const isOverdue = graceDeltaSec !== null && graceDeltaSec <= 0;
+  const overdueSeconds = isOverdue && graceDeltaSec !== null ? Math.abs(graceDeltaSec) : 0;
+  const canIssueTicket = graceDeltaSec !== null && graceDeltaSec <= 0;
 
   const borderClass = {
     overdue: 'border-l-red-600',
@@ -137,7 +231,7 @@ export function WarningTimer({
 
   const smsSentAt = violation.smsSentAt;
   const smsScheduledAt = violation.ownerSmsScheduledAt;
-  const ownerSmsCountdownSec = smsScheduledAt ? computeDeltaSec(smsScheduledAt) : null;
+  const ownerSmsCountdownSec = smsScheduledAt ? computeDeltaSecUntil(new Date(smsScheduledAt).getTime()) : null;
   const canSendSms =
     Boolean(onSendSms) &&
     !violation.unregisteredUrgent &&
@@ -301,15 +395,43 @@ export function WarningTimer({
                   </div>
                 ) : (
                   <>
-                    {isOverdue ? (
+                    {isInPostGraceVerificationWindow && verificationDeltaSec !== null ? (
                       <div className="text-right">
-                        <div className="font-mono text-lg font-bold text-red-600">OVERDUE</div>
-                        <div className="font-mono text-sm font-semibold text-red-600 tabular-nums">
-                          +{formatHms(overdueSeconds)}
+                        <div className="text-[10px] text-muted-foreground uppercase tracking-wide">
+                          Final verification
                         </div>
-                        <div className="text-[10px] text-muted-foreground">since grace ended</div>
+                        <div className="font-mono text-xl font-bold tabular-nums text-orange-500">
+                          {formatHms(verificationDeltaSec)}
+                        </div>
+                        <div className="text-[10px] text-muted-foreground">
+                          then auto-clear if plate not seen again
+                        </div>
                       </div>
-                    ) : deltaSec !== null ? (
+                    ) : isOverdue ? (
+                      <div className="text-right">
+                        {verificationDeltaSec !== null && verificationDeltaSec <= 0 ? (
+                          autoClearFailed ? (
+                            <p className="text-xs text-destructive text-right max-w-[12rem] ml-auto leading-snug">
+                              Could not clear automatically. Use Clear below.
+                            </p>
+                          ) : onCancel ? (
+                            <div className="text-sm font-medium text-muted-foreground tabular-nums">
+                              Clearing…
+                            </div>
+                          ) : (
+                            <span className="text-sm text-muted-foreground">—</span>
+                          )
+                        ) : (
+                          <>
+                            <div className="font-mono text-lg font-bold text-red-600">OVERDUE</div>
+                            <div className="font-mono text-sm font-semibold text-red-600 tabular-nums">
+                              +{formatHms(overdueSeconds)}
+                            </div>
+                            <div className="text-[10px] text-muted-foreground">since grace ended</div>
+                          </>
+                        )}
+                      </div>
+                    ) : graceDeltaSec !== null ? (
                       <div className="text-right">
                         <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Grace ends in</div>
                         <span
@@ -321,7 +443,7 @@ export function WarningTimer({
                             tier === 'unknown' && 'text-foreground',
                           )}
                         >
-                          {formatHms(deltaSec)}
+                          {formatHms(graceDeltaSec)}
                         </span>
                       </div>
                     ) : (

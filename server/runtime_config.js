@@ -8,11 +8,14 @@ const RUNTIME_CONFIG_PATH = join(__dirname, 'runtime_config.json');
 
 export const DEFAULT_OWNER_SMS_DELAY_MINUTES = 5;
 export const DEFAULT_GRACE_PERIOD_MINUTES = 30;
+/** After grace ends, wait this long with no post-grace plate detection before auto-clearing the warning. */
+export const DEFAULT_POST_GRACE_VERIFICATION_MINUTES = 5;
 
 const DEFAULT_CONFIG = Object.freeze({
   ownerSmsDelayMinutes: DEFAULT_OWNER_SMS_DELAY_MINUTES,
   ownerSmsDelayDisabledForDemo: false,
   gracePeriodMinutes: DEFAULT_GRACE_PERIOD_MINUTES,
+  postGraceVerificationMinutes: DEFAULT_POST_GRACE_VERIFICATION_MINUTES,
 });
 
 function clampPositiveInteger(value, fallback) {
@@ -31,6 +34,10 @@ function sanitizeConfig(raw) {
     gracePeriodMinutes: clampPositiveInteger(
       raw?.gracePeriodMinutes,
       DEFAULT_GRACE_PERIOD_MINUTES,
+    ),
+    postGraceVerificationMinutes: clampPositiveInteger(
+      raw?.postGraceVerificationMinutes,
+      DEFAULT_POST_GRACE_VERIFICATION_MINUTES,
     ),
   };
 }
@@ -64,6 +71,7 @@ export function getRuntimeConfig() {
     ownerSmsDelayMinutes: config.ownerSmsDelayMinutes,
     ownerSmsDelayDisabledForDemo: config.ownerSmsDelayDisabledForDemo,
     gracePeriodMinutes: config.gracePeriodMinutes,
+    postGraceVerificationMinutes: config.postGraceVerificationMinutes,
   };
 }
 
@@ -105,4 +113,17 @@ export function setGracePeriodMinutes(gracePeriodMinutes) {
   return updateRuntimeConfig({
     gracePeriodMinutes: clampPositiveInteger(gracePeriodMinutes, DEFAULT_GRACE_PERIOD_MINUTES),
   }).gracePeriodMinutes;
+}
+
+export function getPostGraceVerificationMinutes() {
+  return getRuntimeConfig().postGraceVerificationMinutes;
+}
+
+export function setPostGraceVerificationMinutes(postGraceVerificationMinutes) {
+  return updateRuntimeConfig({
+    postGraceVerificationMinutes: clampPositiveInteger(
+      postGraceVerificationMinutes,
+      DEFAULT_POST_GRACE_VERIFICATION_MINUTES,
+    ),
+  }).postGraceVerificationMinutes;
 }

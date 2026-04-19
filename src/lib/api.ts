@@ -362,6 +362,7 @@ export const healthAPI = {
     ownerSmsDelayMinutes?: number;
     ownerSmsDelayDisabledForDemo?: boolean;
     gracePeriodMinutes?: number;
+    postGraceVerificationMinutes?: number;
   }) =>
     fetchAPI('/health/runtime-config', {
       method: 'POST',

@@ -5,6 +5,7 @@ import { sendViolationSms } from './utils/smsService.js';
 import {
   getGracePeriodMinutes,
   getOwnerSmsDelayConfig,
+  getPostGraceVerificationMinutes,
   setOwnerSmsDelayDisabledForDemo,
 } from './runtime_config.js';
 
@@ -60,6 +61,7 @@ function hasPostGracePlatePresence(warning, graceEndsAtIso) {
  * Monitoring service that runs every 15 seconds to:
  * 1. Resolve Active Warnings when the vehicle is no longer detected at that location (short lookback)
  * 2. Check if warnings have expired and vehicle is still present (notify Barangay)
+ * 3. After grace + post-grace verification window, if the plate was never seen again at/after grace end, clear the warning
  */
 class MonitoringService {
   constructor() {
@@ -262,16 +264,26 @@ class MonitoringService {
 
       let notifiedCount = 0;
       let warningsTransitionedToPending = 0;
+      let warningsAutoCleared = 0;
       let ownerSmsSentCount = 0;
 
       for (const warning of activeWarnings) {
         const now = new Date();
         const expiresAt = warning.warningExpiresAt ? new Date(warning.warningExpiresAt) : null;
         const isExpired = expiresAt && now >= expiresAt;
-        const hasPostGraceDetection =
-          isExpired && warning.warningExpiresAt
-            ? hasPostGracePlatePresence(warning, warning.warningExpiresAt)
-            : false;
+        const postGracePresence = warning.warningExpiresAt
+          ? hasPostGracePlatePresence(warning, warning.warningExpiresAt)
+          : false;
+        const hasPostGraceDetection = Boolean(isExpired && postGracePresence);
+        const clearanceMinutes = getPostGraceVerificationMinutes();
+        const verificationEndsAt =
+          expiresAt && warning.warningExpiresAt
+            ? new Date(expiresAt.getTime() + clearanceMinutes * 60 * 1000)
+            : null;
+        const shouldAutoClearNoPresence =
+          verificationEndsAt &&
+          now >= verificationEndsAt &&
+          !postGracePresence;
         const hasReadablePlate =
           warning.plateNumber &&
           warning.plateNumber !== 'NONE' &&
@@ -487,6 +499,23 @@ class MonitoringService {
             }
           }
         }
+
+        if (shouldAutoClearNoPresence && warning.status === 'warning') {
+          try {
+            db.prepare(`
+              UPDATE violations
+              SET status = 'cleared'
+              WHERE id = ?
+                AND status = 'warning'
+            `).run(warning.id);
+            warningsAutoCleared += 1;
+            console.log(
+              `✅ Auto-cleared warning ${warning.id} (plate ${warning.plateNumber}): no detection at/after grace end within ${clearanceMinutes}m verification window after grace.`
+            );
+          } catch (clearErr) {
+            console.error(`❌ Error auto-clearing violation ${warning.id}:`, clearErr);
+          }
+        }
       }
 
       if (
@@ -494,10 +523,11 @@ class MonitoringService {
         markedOutOfViewCount > 0 ||
         restoredInViewCount > 0 ||
         warningsTransitionedToPending > 0 ||
+        warningsAutoCleared > 0 ||
         ownerSmsSentCount > 0
       ) {
         console.log(
-          `✅ Monitoring check complete: ${markedOutOfViewCount} marked out-of-view, ${restoredInViewCount} restored in-view, ${ownerSmsSentCount} owner SMS sent, ${notifiedCount} notified, ${warningsTransitionedToPending} moved to pending`
+          `✅ Monitoring check complete: ${markedOutOfViewCount} marked out-of-view, ${restoredInViewCount} restored in-view, ${ownerSmsSentCount} owner SMS sent, ${notifiedCount} notified, ${warningsTransitionedToPending} moved to pending, ${warningsAutoCleared} auto-cleared`
         );
       } else {
         console.log(`✅ Monitoring check complete: No updates needed`);

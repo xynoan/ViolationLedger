@@ -31,6 +31,7 @@ interface HealthStatus {
         effectiveDelayMinutes: number;
       };
       gracePeriodMinutes?: number;
+      postGraceVerificationMinutes?: number;
     };
   };
   system: {
@@ -54,6 +55,7 @@ export default function Settings() {
   const [disableSmsDelayForDemo, setDisableSmsDelayForDemo] = useState(false);
   const [ownerSmsDelayMinutes, setOwnerSmsDelayMinutes] = useState(5);
   const [gracePeriodMinutes, setGracePeriodMinutes] = useState(30);
+  const [postGraceVerificationMinutes, setPostGraceVerificationMinutes] = useState(5);
   const [updatingSmsDelay, setUpdatingSmsDelay] = useState(false);
   const [savingRuntimeConfig, setSavingRuntimeConfig] = useState(false);
 
@@ -70,6 +72,9 @@ export default function Settings() {
       setDisableSmsDelayForDemo(disabledForDemo);
       setOwnerSmsDelayMinutes(Number(ownerSmsDelayConfig?.delayMinutes ?? 5));
       setGracePeriodMinutes(Number(data?.services?.monitoring?.gracePeriodMinutes ?? 30));
+      setPostGraceVerificationMinutes(
+        Number(data?.services?.monitoring?.postGraceVerificationMinutes ?? 5),
+      );
     } catch (error: any) {
       console.error('Failed to fetch health status:', error);
       toast({
@@ -137,6 +142,7 @@ export default function Settings() {
   const handleSaveDemoTimers = async () => {
     const smsDelay = Number.parseInt(String(ownerSmsDelayMinutes), 10);
     const graceDelay = Number.parseInt(String(gracePeriodMinutes), 10);
+    const postGraceVerify = Number.parseInt(String(postGraceVerificationMinutes), 10);
     if (!Number.isFinite(smsDelay) || smsDelay <= 0) {
       toast({
         title: 'Invalid SMS timer',
@@ -153,6 +159,14 @@ export default function Settings() {
       });
       return;
     }
+    if (!Number.isFinite(postGraceVerify) || postGraceVerify <= 0) {
+      toast({
+        title: 'Invalid post-grace verification',
+        description: 'Post-grace verification must be a positive number of minutes.',
+        variant: 'destructive',
+      });
+      return;
+    }
 
     setSavingRuntimeConfig(true);
     try {
@@ -160,6 +174,7 @@ export default function Settings() {
         ownerSmsDelayMinutes: smsDelay,
         ownerSmsDelayDisabledForDemo: disableSmsDelayForDemo,
         gracePeriodMinutes: graceDelay,
+        postGraceVerificationMinutes: postGraceVerify,
       });
       toast({
         title: 'Demo timers saved',
@@ -255,6 +270,26 @@ export default function Settings() {
                   After this expires, the warning escalates for Barangay action.
                 </p>
               </div>
+              <div className="space-y-2 md:col-span-2">
+                <Label htmlFor="post-grace-verification-minutes">
+                  Post-grace verification (minutes)
+                </Label>
+                <Input
+                  id="post-grace-verification-minutes"
+                  type="number"
+                  min={1}
+                  value={postGraceVerificationMinutes}
+                  onChange={(event) =>
+                    setPostGraceVerificationMinutes(Math.max(1, Number(event.target.value || 1)))
+                  }
+                  disabled={savingRuntimeConfig}
+                />
+                <p className="text-xs text-muted-foreground">
+                  After grace ends, wait this long for a new plate capture at this spot. If none appears,
+                  the warning auto-clears (vehicle treated as gone). If the plate is seen again after grace,
+                  the warning escalates as before.
+                </p>
+              </div>
             </div>
             <div className="flex items-center justify-between rounded-md border p-4">
               <div className="space-y-1 pr-4">
@@ -286,14 +321,16 @@ export default function Settings() {
               <span>
                 Order of timers: Owner SMS timer ({disableSmsDelayForDemo ? 0 : ownerSmsDelayMinutes}m)
                 {' '}→ Warning grace period ({gracePeriodMinutes}m)
+                {' '}→ Post-grace verification ({postGraceVerificationMinutes}m)
               </span>
               <Button size="sm" onClick={handleSaveDemoTimers} disabled={savingRuntimeConfig || updatingSmsDelay}>
                 {savingRuntimeConfig ? 'Saving…' : 'Save demo timers'}
               </Button>
             </div>
             <p className="text-xs text-muted-foreground">
-              On active warnings, the large countdown uses that order: SMS delay first (unless demo mode is on), then time
-              left until the grace period ends. It is not two separate full-length timers added together.
+              On active warnings, the main countdown follows that order: SMS delay first (unless demo mode is on), then time
+              until grace ends, then a final verification countdown. The first two are not stacked full-length timers; the
+              verification window runs only after grace.
             </p>
           </CardContent>
         </Card>
