@@ -4,6 +4,12 @@ import { cn } from '@/lib/utils';
 import { Camera } from '@/types/parking';
 import { usePlateRecognition } from '@/hooks/usePlateRecognition';
 import { normalizePlateForOcrMatch } from '@/lib/plateNormalize';
+import {
+  type PlateRegistryStatus,
+  resolvePlateRegistryStatus,
+} from '@/lib/cameraPlateRegistry';
+
+export type { PlateRegistryStatus };
 
 export interface Detection {
   bbox: number[];
@@ -12,8 +18,6 @@ export interface Detection {
   plateNumber?: string;
 }
 
-export type PlateRegistryStatus = 'RESIDENT' | 'VISITOR' | 'UNREGISTERED';
-
 interface VideoPlayerProps {
   stream: MediaStream | null;
   isOnline: boolean;
@@ -21,8 +25,12 @@ interface VideoPlayerProps {
   detections: Detection[];
   /** Plates linked to a resident (resident vehicles). */
   residentPlates?: string[];
-  /** Registered visitor vehicles (no residentId). */
+  /** Registered guest visitors (no residentId; not delivery/drop-off). */
   visitorPlates?: string[];
+  /** Delivery-category visitor plates (mutually exclusive with drop-off / guest visitor lists). */
+  deliveryPlates?: string[];
+  /** Drop-off purpose visitor plates. */
+  dropoffPlates?: string[];
   fullscreen?: boolean;
   enablePlateRecognition?: boolean;
   onPlateMetaChange?: (meta: {
@@ -38,6 +46,57 @@ export interface VideoPlayerHandle {
   captureFrame: () => Promise<string | null>;
 }
 
+function plateStatusLabel(status: PlateRegistryStatus): string {
+  switch (status) {
+    case 'RESIDENT':
+      return 'Resident';
+    case 'VISITOR':
+      return 'Visitor';
+    case 'DELIVERY':
+      return 'Delivery';
+    case 'DROPOFF':
+      return 'Drop-off';
+    default:
+      return 'Unregistered';
+  }
+}
+
+function plateStatusOverlayClass(status: PlateRegistryStatus, fullscreen: boolean): string {
+  const size = fullscreen ? 'text-xs' : 'text-[10px]';
+  const base =
+    'absolute -top-12 left-0 z-50 rounded-md border px-2 py-0.5 font-semibold shadow-lg backdrop-blur-sm ' +
+    size;
+  switch (status) {
+    case 'RESIDENT':
+      return cn(base, 'border-emerald-300 bg-emerald-600 text-white');
+    case 'VISITOR':
+      return cn(base, 'border-sky-300 bg-sky-700 text-white');
+    case 'DELIVERY':
+      return cn(base, 'border-orange-300 bg-orange-700 text-white');
+    case 'DROPOFF':
+      return cn(base, 'border-amber-300 bg-amber-800 text-white');
+    default:
+      return cn(base, 'border-red-200 bg-red-700 text-white ring-1 ring-red-300/70');
+  }
+}
+
+function plateStatusPanelClass(status: PlateRegistryStatus, fullscreen: boolean): string {
+  const size = fullscreen ? 'text-[10px]' : 'text-[9px]';
+  const base = 'rounded border px-1 py-0.5 font-semibold ' + size;
+  switch (status) {
+    case 'RESIDENT':
+      return cn(base, 'border-emerald-300 bg-emerald-700/80 text-emerald-100');
+    case 'VISITOR':
+      return cn(base, 'border-sky-300 bg-sky-800/90 text-sky-50');
+    case 'DELIVERY':
+      return cn(base, 'border-orange-300 bg-orange-800/90 text-orange-50');
+    case 'DROPOFF':
+      return cn(base, 'border-amber-300 bg-amber-900/90 text-amber-50');
+    default:
+      return cn(base, 'border-red-200 bg-red-700 text-red-50 ring-1 ring-red-300/70');
+  }
+}
+
 export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(function VideoPlayer({
   stream,
   isOnline,
@@ -45,6 +104,8 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
   detections: apiDetections,
   residentPlates = [],
   visitorPlates = [],
+  deliveryPlates = [],
+  dropoffPlates = [],
   fullscreen = false,
   enablePlateRecognition = false,
   onPlateMetaChange,
@@ -100,6 +161,20 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       ),
     [visitorPlates],
   );
+  const deliveryPlateSet = useMemo(
+    () =>
+      new Set(
+        deliveryPlates.map((p) => normalizePlateForOcrMatch(p)).filter(Boolean),
+      ),
+    [deliveryPlates],
+  );
+  const dropoffPlateSet = useMemo(
+    () =>
+      new Set(
+        dropoffPlates.map((p) => normalizePlateForOcrMatch(p)).filter(Boolean),
+      ),
+    [dropoffPlates],
+  );
 
   const recognizedPlates = useMemo(() => {
     const deduped = new Map<string, { plate: string; status: PlateRegistryStatus | null }>();
@@ -111,16 +186,24 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       if (!normalized || normalized === 'NONE' || normalized === 'BLUR') return;
       if (deduped.has(normalized)) return;
 
-      const status: PlateRegistryStatus = residentPlateSet.has(normalized)
-        ? 'RESIDENT'
-        : visitorPlateSet.has(normalized)
-          ? 'VISITOR'
-          : 'UNREGISTERED';
+      const status: PlateRegistryStatus = resolvePlateRegistryStatus(
+        normalized,
+        residentPlateSet,
+        dropoffPlateSet,
+        deliveryPlateSet,
+        visitorPlateSet,
+      );
       deduped.set(normalized, { plate: rawPlate, status });
     });
 
     return [...deduped.values()];
-  }, [detections, residentPlateSet, visitorPlateSet]);
+  }, [
+    detections,
+    residentPlateSet,
+    dropoffPlateSet,
+    deliveryPlateSet,
+    visitorPlateSet,
+  ]);
   const hasVehicleDetection = useMemo(
     () =>
       detections.some(
@@ -352,11 +435,13 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
             : `${detection.class_name} ${(detection.confidence * 100).toFixed(0)}%`;
           const plateStatus: PlateRegistryStatus | null =
             hasReadablePlate
-              ? residentPlateSet.has(normalizedPlate)
-                ? 'RESIDENT'
-                : visitorPlateSet.has(normalizedPlate)
-                  ? 'VISITOR'
-                  : 'UNREGISTERED'
+              ? resolvePlateRegistryStatus(
+                  normalizedPlate,
+                  residentPlateSet,
+                  dropoffPlateSet,
+                  deliveryPlateSet,
+                  visitorPlateSet,
+                )
               : null;
           const label: string = isVehicleClass
               ? `${baseLabel} Detected`
@@ -374,22 +459,8 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
               }}
             >
               {plateStatus && (
-                <div
-                  className={cn(
-                    'absolute -top-12 left-0 z-50 rounded-md border px-2 py-0.5 font-semibold shadow-lg backdrop-blur-sm',
-                    plateStatus === 'RESIDENT'
-                      ? 'border-emerald-300 bg-emerald-600 text-white'
-                      : plateStatus === 'VISITOR'
-                        ? 'border-sky-300 bg-sky-700 text-white'
-                        : 'border-red-200 bg-red-700 text-white ring-1 ring-red-300/70',
-                    fullscreen ? 'text-xs' : 'text-[10px]'
-                  )}
-                >
-                  {plateStatus === 'RESIDENT'
-                    ? 'Resident'
-                    : plateStatus === 'VISITOR'
-                      ? 'Visitor'
-                      : 'Unregistered'}
+                <div className={plateStatusOverlayClass(plateStatus, fullscreen)}>
+                  {plateStatusLabel(plateStatus)}
                 </div>
               )}
               {hasReadablePlate && (
@@ -434,22 +505,8 @@ export const VideoPlayer = memo(forwardRef<VideoPlayerHandle, VideoPlayerProps>(
                       {entry.plate}
                     </span>
                     {entry.status && (
-                      <span
-                        className={cn(
-                          'rounded border px-1 py-0.5 font-semibold',
-                          entry.status === 'RESIDENT'
-                            ? 'border-emerald-300 bg-emerald-700/80 text-emerald-100'
-                            : entry.status === 'VISITOR'
-                              ? 'border-sky-300 bg-sky-800/90 text-sky-50'
-                              : 'border-red-200 bg-red-700 text-red-50 ring-1 ring-red-300/70',
-                          fullscreen ? 'text-[10px]' : 'text-[9px]'
-                        )}
-                      >
-                        {entry.status === 'RESIDENT'
-                          ? 'Resident'
-                          : entry.status === 'VISITOR'
-                            ? 'Visitor'
-                            : 'Unregistered'}
+                      <span className={plateStatusPanelClass(entry.status, fullscreen)}>
+                        {plateStatusLabel(entry.status)}
                       </span>
                     )}
                   </div>

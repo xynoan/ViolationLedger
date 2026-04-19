@@ -37,8 +37,12 @@ interface CameraFeedProps {
   camera: Camera;
   /** Plates linked to residents (from vehicles with residentId). */
   residentPlates?: string[];
-  /** Registered visitor vehicles (vehicles without residentId). */
+  /** Guest visitors (no residentId; not delivery/drop-off). */
   visitorPlates?: string[];
+  /** Delivery-category visitor plates. */
+  deliveryPlates?: string[];
+  /** Drop-off visitor plates. */
+  dropoffPlates?: string[];
   onRefresh?: () => void;
   onDelete?: (id: string) => void;
   canDelete?: boolean;
@@ -48,6 +52,8 @@ export const CameraFeed = memo(function CameraFeed({
   camera,
   residentPlates = [],
   visitorPlates = [],
+  deliveryPlates = [],
+  dropoffPlates = [],
   onRefresh,
   onDelete,
   canDelete = true,
@@ -147,6 +153,8 @@ export const CameraFeed = memo(function CameraFeed({
             detections={detections}
             residentPlates={residentPlates}
             visitorPlates={visitorPlates}
+            deliveryPlates={deliveryPlates}
+            dropoffPlates={dropoffPlates}
             enablePlateRecognition={false}
           />
         </div>
@@ -201,6 +209,8 @@ export const CameraFeed = memo(function CameraFeed({
               detections={detections}
               residentPlates={residentPlates}
             visitorPlates={visitorPlates}
+            deliveryPlates={deliveryPlates}
+            dropoffPlates={dropoffPlates}
               fullscreen
               enablePlateRecognition={false}
             />

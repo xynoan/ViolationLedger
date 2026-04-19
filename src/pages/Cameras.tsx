@@ -24,6 +24,7 @@ import { camerasAPI, vehiclesAPI } from '@/lib/api';
 import type { Vehicle } from '@/types/parking';
 import { useAuth } from '@/hooks/useAuth';
 import { useFormOptions } from '@/hooks/useFormOptions';
+import { partitionCameraPlateLists } from '@/lib/cameraPlateRegistry';
 
 export default function Cameras() {
   usePageTracking();
@@ -47,17 +48,10 @@ export default function Cameras() {
 
   const onlineCameras = cameras.filter(c => c.status === 'online');
 
-  const { residentPlates, visitorPlates } = useMemo(() => {
-    const resident: string[] = [];
-    const visitor: string[] = [];
-    for (const v of vehicles) {
-      const linked =
-        v.residentId != null && String(v.residentId).trim() !== '';
-      if (linked) resident.push(v.plateNumber);
-      else visitor.push(v.plateNumber);
-    }
-    return { residentPlates: resident, visitorPlates: visitor };
-  }, [vehicles]);
+  const { residentPlates, visitorPlates, deliveryPlates, dropoffPlates } = useMemo(
+    () => partitionCameraPlateLists(vehicles),
+    [vehicles],
+  );
 
   // Load cameras from API on initial mount only
   useEffect(() => {
@@ -411,6 +405,8 @@ export default function Cameras() {
                 camera={camera}
                 residentPlates={residentPlates}
                 visitorPlates={visitorPlates}
+                deliveryPlates={deliveryPlates}
+                dropoffPlates={dropoffPlates}
                 onRefresh={() => loadCameras(true)}
                 onDelete={handleDeleteCamera}
                 canDelete={isAdmin}

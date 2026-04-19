@@ -38,6 +38,32 @@ export function normalizePlateForMatch(plateNumber) {
   return String(plateNumber).replace(/\s+/g, '').toUpperCase();
 }
 
+/**
+ * Visitor vehicles with purpose/category "delivery" or "drop-off" (Visitors registry) should not
+ * receive new automatic warnings from camera detection. Aligned with Visitors.tsx tab/category logic.
+ * Resident-linked vehicles are never exempt here.
+ */
+function isVisitorDeliveryExemptFromAutoViolation(vehicle) {
+  if (!vehicle) return false;
+  const linked =
+    vehicle.residentId != null && String(vehicle.residentId).trim() !== '';
+  if (linked) return false;
+
+  const cat = String(vehicle.visitorCategory || '').toLowerCase().trim();
+  if (cat === 'delivery') return true;
+
+  const raw = String(vehicle.purposeOfVisit || '').trim();
+  if (!raw) return false;
+  const lower = raw.toLowerCase();
+
+  const legacyDelivery = ['pickup', 'package delivery'];
+  if (legacyDelivery.some((p) => lower === p)) return true;
+  if (lower.includes('deliver')) return true;
+  if (/drop\s*-?\s*off|dropoff/i.test(raw)) return true;
+
+  return false;
+}
+
 /** Dev / explicit-flag only: POST /test-seed-active-warning, /detections/test-seed */
 export function isTestViolationSeedAllowed() {
   if (process.env.ALLOW_TEST_VIOLATION_SEED === 'true') return true;
@@ -109,6 +135,14 @@ export async function createViolationFromDetection(plateNumber, cameraLocationId
         messageSent: false,
         messageLogId: null
       };
+    }
+
+    if (isVisitorDeliveryExemptFromAutoViolation(vehicle)) {
+      console.log(
+        `ℹ️  Skipping automatic violation for ${canonicalPlateNumber} at ${cameraLocationId} — ` +
+          'visitor registered as delivery / drop-off (exempt from auto warnings).',
+      );
+      return null;
     }
 
     // No existing active violation at this location - create a new warning
