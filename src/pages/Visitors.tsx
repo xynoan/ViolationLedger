@@ -630,7 +630,10 @@ export default function Visitors() {
     };
 
     const plateKey = normPlate(plateTrimmed);
-    const duplicatePlate = vehicles.find(
+    const visitorVehicles = vehicles.filter(
+      (v) => !v.residentId || String(v.residentId).trim() === '',
+    );
+    const duplicatePlate = visitorVehicles.find(
       (v) => normPlate(v.plateNumber) === plateKey && v.id !== editingVehicle?.id,
     );
     if (duplicatePlate) {
@@ -641,10 +644,6 @@ export default function Visitors() {
       });
       return;
     }
-
-    const visitorVehicles = vehicles.filter(
-      (v) => !v.residentId || String(v.residentId).trim() === '',
-    );
     const duplicateVisitorOwner = visitorVehicles.find(
       (v) => digitsOnly(v.contactNumber) === contactClean && v.id !== editingVehicle?.id,
     );

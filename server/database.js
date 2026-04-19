@@ -18,6 +18,82 @@ const dbPath = rawDbPath
 let db = null;
 let SQL = null;
 
+/**
+ * Legacy DBs used UNIQUE(plateNumber) globally. Visitors and resident vehicles are separate domains:
+ * the same plate may exist once as a visitor row and once as a resident-linked row.
+ * Rebuilds the table when the old constraint is present, then adds partial unique indexes.
+ * @param {import('sql.js').Database} database
+ */
+function migrateVehiclesPlateUniqueScope(database) {
+  const master = database.exec(
+    "SELECT sql FROM sqlite_master WHERE type='table' AND name='vehicles'",
+  );
+  const createSql =
+    master.length && master[0].values?.length ? String(master[0].values[0][0] || '') : '';
+  if (!createSql) return;
+
+  const ti = database.exec('PRAGMA table_info(vehicles)');
+  if (!ti.length || !ti[0].values?.length) return;
+  const colNames = ti[0].columns;
+  const rows = ti[0].values.map((row) => {
+    const o = {};
+    colNames.forEach((c, i) => {
+      o[c] = row[i];
+    });
+    return o;
+  });
+
+  const needsRebuild = /plateNumber[^,)\n]*UNIQUE/i.test(createSql);
+
+  if (needsRebuild) {
+    const colDefs = rows.map((c) => {
+      const name = `"${c.name}"`;
+      if (c.name === 'plateNumber') {
+        return `${name} TEXT NOT NULL`;
+      }
+      const typ = (c.type && String(c.type).trim()) || 'TEXT';
+      let def = `${name} ${typ}`;
+      if (c.pk === 1) {
+        def += ' PRIMARY KEY';
+      } else if (c.notnull === 1) {
+        def += ' NOT NULL';
+      }
+      if (c.dflt_value != null && String(c.dflt_value) !== '') {
+        def += ` DEFAULT ${c.dflt_value}`;
+      }
+      return def;
+    });
+
+    const quotedCols = rows.map((c) => `"${c.name}"`).join(', ');
+
+    database.run('PRAGMA foreign_keys = OFF');
+    database.run('BEGIN');
+    database.run(
+      `CREATE TABLE "vehicles__plate_scope" (${colDefs.join(
+        ', ',
+      )}, FOREIGN KEY (residentId) REFERENCES residents(id) ON DELETE SET NULL)`,
+    );
+    database.run(
+      `INSERT INTO "vehicles__plate_scope" (${quotedCols}) SELECT ${quotedCols} FROM "vehicles"`,
+    );
+    database.run('DROP TABLE "vehicles"');
+    database.run('ALTER TABLE "vehicles__plate_scope" RENAME TO "vehicles"');
+    database.run('COMMIT');
+    database.run('PRAGMA foreign_keys = ON');
+  }
+
+  database.run(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_vehicles_plate_visitor
+    ON vehicles(plateNumber)
+    WHERE residentId IS NULL OR TRIM(COALESCE(residentId, '')) = ''
+  `);
+  database.run(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_vehicles_plate_resident
+    ON vehicles(plateNumber)
+    WHERE residentId IS NOT NULL AND TRIM(COALESCE(residentId, '')) != ''
+  `);
+}
+
 // Initialize database
 async function initDatabase() {
   SQL = await initSqlJs({
@@ -176,11 +252,11 @@ async function initDatabase() {
     /* ignore */
   }
 
-  // Create tables
+  // Create tables (plate uniqueness is enforced by partial indexes — see migrateVehiclesPlateUniqueScope)
   db.run(`
     CREATE TABLE IF NOT EXISTS vehicles (
       id TEXT PRIMARY KEY,
-      plateNumber TEXT NOT NULL UNIQUE,
+      plateNumber TEXT NOT NULL,
       ownerName TEXT NOT NULL,
       ownerFirstName TEXT,
       ownerMiddleName TEXT,
@@ -346,6 +422,13 @@ async function initDatabase() {
     if (!errorMsg.includes('no such column') && !errorMsg.includes('no such table')) {
       console.log('Note: visitorCategory backfill:', errorMsg);
     }
+  }
+
+  try {
+    migrateVehiclesPlateUniqueScope(db);
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    console.log('Note: vehicles plate uniqueness migration:', errorMsg);
   }
   
   db.run(`

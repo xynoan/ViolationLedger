@@ -499,7 +499,10 @@ export default function Vehicles() {
 
     const plateKey = normPlate(plateTrimmed);
     const duplicatePlate = vehicles.find(
-      (v) => normPlate(v.plateNumber) === plateKey && v.id !== editingVehicle?.id,
+      (v) =>
+        normPlate(v.plateNumber) === plateKey &&
+        v.id !== editingVehicle?.id &&
+        Boolean(v.residentId && String(v.residentId).trim() !== ''),
     );
     if (duplicatePlate) {
       toast({
