@@ -206,6 +206,19 @@ function residentVisitedStorageValue(r: Resident, allResidents: Resident[]): str
   return addr ? `${name} · ${addr}` : `${name} · ${digitsOnly(r.contactNumber)}`;
 }
 
+/** Human-readable name for the visit field (storage may include ` · ` disambiguation). */
+function residentVisitedStorageDisplayName(stored: string, residents: Resident[]): string {
+  const rented = stored.trim();
+  if (!rented) return '';
+  for (const r of residents) {
+    if (residentVisitedStorageValue(r, residents) === rented) return r.name.trim();
+  }
+  const sep = ' · ';
+  const i = rented.indexOf(sep);
+  if (i !== -1) return rented.slice(0, i).trim();
+  return rented;
+}
+
 /** For resident-visit purpose, show the resident name only (storage may append ` · ` disambiguation). Otherwise return `rented` as stored (e.g. facility). */
 function locationOrVisitedResidentLabel(
   vehicle: Vehicle,
@@ -232,6 +245,7 @@ function SearchableResidentSelect({
   residents,
   placeholder,
   requiredMark,
+  nameOnlyPrivacy,
 }: {
   id: string;
   label: ReactNode;
@@ -240,12 +254,17 @@ function SearchableResidentSelect({
   residents: Resident[];
   placeholder?: string;
   requiredMark?: boolean;
+  /** Encoder / security: show and search by resident name only (no address or phone in UI). */
+  nameOnlyPrivacy?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const sorted = useMemo(
     () => [...residents].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })),
     [residents],
   );
+  const triggerLabel = nameOnlyPrivacy
+    ? residentVisitedStorageDisplayName(value, residents) || placeholder || 'Select…'
+    : value || placeholder || 'Select…';
   return (
     <div className="space-y-2">
       <Label htmlFor={id}>
@@ -265,7 +284,7 @@ function SearchableResidentSelect({
               !value && 'text-muted-foreground',
             )}
           >
-            <span className="truncate text-left">{value || placeholder || 'Select…'}</span>
+            <span className="truncate text-left">{triggerLabel}</span>
             <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
           </Button>
         </PopoverTrigger>
@@ -274,11 +293,29 @@ function SearchableResidentSelect({
           align="start"
         >
           <Command>
-            <CommandInput placeholder="Search name, address, or phone…" className="h-9" />
+            <CommandInput
+              placeholder={nameOnlyPrivacy ? 'Search by name…' : 'Search name, address, or phone…'}
+              className="h-9"
+            />
             <CommandList>
               <CommandEmpty>{sorted.length === 0 ? 'No residents loaded.' : 'No match.'}</CommandEmpty>
               <CommandGroup>
                 {sorted.map((r) => {
+                  if (nameOnlyPrivacy) {
+                    const cmdValue = `${r.name} ${r.id}`;
+                    return (
+                      <CommandItem
+                        key={r.id}
+                        value={cmdValue}
+                        onSelect={() => {
+                          onChange(residentVisitedStorageValue(r, residents));
+                          setOpen(false);
+                        }}
+                      >
+                        <span className="font-medium truncate">{r.name}</span>
+                      </CommandItem>
+                    );
+                  }
                   const line = formatResidentAddressLine(r);
                   const searchBlob = `${r.name} ${line} ${r.contactNumber}`.trim();
                   return (
@@ -1025,6 +1062,7 @@ export default function Visitors() {
                     residents={residents}
                     value={formData.rented}
                     onChange={(v) => setFormData((prev) => ({ ...prev, rented: v }))}
+                    nameOnlyPrivacy={isEncoder}
                   />
                 ) : showRentedField ? (
                   <SearchableLocationSelect
