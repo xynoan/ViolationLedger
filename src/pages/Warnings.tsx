@@ -151,9 +151,13 @@ export default function Warnings() {
     setTestSeedLoading(true);
     try {
       const result = await violationsAPI.seedTestActiveWarning();
+      const graceEnd =
+        result.warningExpiresAt != null
+          ? new Date(result.warningExpiresAt as Date | string).toLocaleString()
+          : "—";
       toast({
         title: "Test warning added",
-        description: `Plate ${result.plateNumber} at ${result.cameraLocationId} (~${result.elapsedMinutesSinceDetection} min since detection).`,
+        description: `Plate ${result.plateNumber} at ${result.cameraLocationId}. Grace ends ${graceEnd}. Barangay SMS only after that if the same plate is detected again here.`,
       });
       await loadViolations();
     } catch (error: any) {

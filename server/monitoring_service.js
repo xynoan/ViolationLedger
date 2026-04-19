@@ -17,6 +17,46 @@ import { sendSmsMessage } from './utils/smsService.js';
 import { analyzeVideoStream, processVideoDetectionResults } from './ai_detection_service.js';
 
 /**
+ * True if this plate was read at this location at or after grace end (`warningExpiresAt`).
+ * Barangay SMS runs only when grace has expired and this is true — a fresh sighting after grace,
+ * not merely the pre-grace detection still visible in a rolling window.
+ */
+function hasPostGracePlatePresence(warning, graceEndsAtIso) {
+  if (!graceEndsAtIso || !warning?.plateNumber) return false;
+  const loc = warning.cameraLocationId;
+  if (!loc || String(loc).trim() === '') return false;
+
+  const normalizedPlate = normalizePlateForMatch(warning.plateNumber);
+
+  const cameraRow = db
+    .prepare(`
+    SELECT 1 AS ok FROM detections d
+    JOIN cameras c ON d.cameraId = c.id
+    WHERE REPLACE(UPPER(d.plateNumber), ' ', '') = ?
+      AND c.locationId = ?
+      AND d.timestamp >= ?
+      AND d.plateNumber NOT IN ('NONE', 'BLUR')
+      AND d.class_name != 'none'
+    LIMIT 1
+  `)
+    .get(normalizedPlate, loc, graceEndsAtIso);
+
+  if (cameraRow) return true;
+
+  const manualRow = db
+    .prepare(`
+    SELECT 1 FROM detections
+    WHERE cameraId = 'MANUAL-UPLOAD-CAM'
+      AND plateNumber = ?
+      AND timestamp >= ?
+      AND plateNumber NOT IN ('NONE', 'BLUR')
+  `)
+    .get(warning.plateNumber, graceEndsAtIso);
+
+  return Boolean(manualRow);
+}
+
+/**
  * Monitoring service that runs every 15 seconds to:
  * 1. Resolve Active Warnings when the vehicle is no longer detected at that location (short lookback)
  * 2. Check if warnings have expired and vehicle is still present (notify Barangay)
@@ -220,58 +260,18 @@ class MonitoringService {
         return;
       }
 
-      // Get all recent detections (last 15 minutes) with their camera locations
-      // Exclude 'NONE' (not visible) and 'BLUR' (blurry) - only count readable plates
-      const fifteenMinutesAgo = new Date();
-      fifteenMinutesAgo.setMinutes(fifteenMinutesAgo.getMinutes() - 15);
-      const recentDetections = db.prepare(`
-        SELECT DISTINCT d.plateNumber, d.cameraId, c.locationId
-        FROM detections d
-        JOIN cameras c ON d.cameraId = c.id
-        WHERE d.timestamp > ? 
-        AND d.plateNumber != 'NONE'
-        AND d.plateNumber != 'BLUR'
-        AND d.class_name != 'none'
-      `).all(fifteenMinutesAgo.toISOString());
-
-      // Create a map of recent detections by plate number and location
-      const detectionMap = new Map();
-      recentDetections.forEach(detection => {
-        if (detection.locationId) {
-          const key = `${normalizePlateForMatch(detection.plateNumber)}-${detection.locationId}`;
-          detectionMap.set(key, true);
-        }
-      });
-
-      // Include manual-upload detections: violations from image upload have
-      // detections with cameraId = 'MANUAL-UPLOAD-CAM' (no cameras row), so they
-      // were excluded above. Treat them as "still present" for the full grace period.
-      const gracePeriodAgo = new Date();
-      gracePeriodAgo.setMinutes(gracePeriodAgo.getMinutes() - getGracePeriodMinutes());
-      for (const warning of activeWarnings) {
-        const hasManualUploadDetection = db.prepare(`
-          SELECT 1 FROM detections
-          WHERE cameraId = 'MANUAL-UPLOAD-CAM'
-          AND plateNumber = ?
-          AND timestamp > ?
-          AND (plateNumber NOT IN ('NONE', 'BLUR'))
-        `).get(warning.plateNumber, gracePeriodAgo.toISOString());
-        if (hasManualUploadDetection) {
-          const key = `${normalizePlateForMatch(warning.plateNumber)}-${warning.cameraLocationId}`;
-          detectionMap.set(key, true);
-        }
-      }
-
       let notifiedCount = 0;
       let warningsTransitionedToPending = 0;
       let ownerSmsSentCount = 0;
 
       for (const warning of activeWarnings) {
-        const key = `${normalizePlateForMatch(warning.plateNumber)}-${warning.cameraLocationId}`;
-        const isStillPresent = detectionMap.has(key);
         const now = new Date();
         const expiresAt = warning.warningExpiresAt ? new Date(warning.warningExpiresAt) : null;
         const isExpired = expiresAt && now >= expiresAt;
+        const hasPostGraceDetection =
+          isExpired && warning.warningExpiresAt
+            ? hasPostGracePlatePresence(warning, warning.warningExpiresAt)
+            : false;
         const hasReadablePlate =
           warning.plateNumber &&
           warning.plateNumber !== 'NONE' &&
@@ -316,18 +316,18 @@ class MonitoringService {
 
         console.log(
           `🔍 Monitoring check for violation ${warning.id}: plate=${warning.plateNumber}, location=${warning.cameraLocationId}, ` +
-          `expiresAt=${expiresAt ? expiresAt.toISOString() : 'N/A'}, isExpired=${Boolean(isExpired)}, isStillPresent=${isStillPresent}`
+          `expiresAt=${expiresAt ? expiresAt.toISOString() : 'N/A'}, isExpired=${Boolean(isExpired)}, hasPostGraceDetection=${hasPostGraceDetection}`
         );
 
-        if (isExpired && !isStillPresent) {
+        if (isExpired && !hasPostGraceDetection) {
           console.log(
-            `ℹ️  Violation ${warning.id} is expired but vehicle is no longer detected at ${warning.cameraLocationId}. ` +
-            'No Barangay notification/SMS will be sent.'
+            `ℹ️  Violation ${warning.id}: grace ended but no readable plate detection at ${warning.cameraLocationId} ` +
+            'at or after grace end — no Barangay notification/SMS.'
           );
         }
 
-        // Vehicle still present after grace period - notify Barangay
-        if (isExpired && isStillPresent) {
+        // Same plate detected at this location after grace end — notify Barangay
+        if (isExpired && hasPostGraceDetection) {
           // Check if notification already exists for this violation
           const existingNotification = db.prepare(`
             SELECT * FROM notifications 

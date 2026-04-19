@@ -9,7 +9,7 @@ const router = express.Router();
 
 const OUT_OF_VIEW_NOTE = 'Vehicle is not in the camera view anymore.';
 
-/** Matches `monitoring_service.js` checkAndUpdate(): recent `detections` used for "still present" after grace. */
+/** Rolling lookback for listing API enrichment (thumbnails / out-of-view hints), not Barangay post-grace SMS. */
 const PLATE_PRESENCE_LOOKBACK_MINUTES = 15;
 
 function computeOwnerSmsScheduledAtIso() {
@@ -278,7 +278,7 @@ router.get('/', (req, res) => {
       });
     }
     
-    // Batch fetch recent plate detections (same lookback as grace-expiry "still present" in monitoring_service.js)
+    // Batch fetch recent plate detections for UI thumbnails / "out of view" hints (rolling lookback).
     const detectionsMap = new Map();
     if (locationIds.length > 0) {
       const presenceSince = new Date(

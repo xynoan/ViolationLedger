@@ -266,8 +266,14 @@ export const detectionsAPI = {
     return fetchAPI(`/detections/recent-plates${q ? `?${q}` : ''}`, { cache: false });
   },
   /** Dev / ALLOW_TEST_VIOLATION_SEED: inserts one synthetic detection row (no violation). */
-  seedTestRecentPlate: () =>
-    fetchAPI('/detections/test-seed', { method: 'POST' }),
+  seedTestRecentPlate: (opts?: { plateNumber?: string; locationId?: string }) =>
+    fetchAPI('/detections/test-seed', {
+      method: 'POST',
+      body:
+        opts?.plateNumber && opts?.locationId
+          ? JSON.stringify({ plateNumber: opts.plateNumber, locationId: opts.locationId })
+          : undefined,
+    }),
 };
 
 // Captures API

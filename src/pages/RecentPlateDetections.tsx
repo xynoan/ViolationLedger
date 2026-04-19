@@ -4,7 +4,7 @@ import { ScanLine, RefreshCw, FlaskConical } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
 import { useAuth } from '@/hooks/useAuth';
-import { detectionsAPI } from '@/lib/api';
+import { detectionsAPI, violationsAPI } from '@/lib/api';
 import type { RecentPlateEntry } from '@/lib/recentPlates';
 import { Button } from '@/components/ui/button';
 import {
@@ -89,13 +89,35 @@ export default function RecentPlateDetections() {
   const handleSeedTestDetection = async () => {
     setTestSeedLoading(true);
     try {
-      const result = (await detectionsAPI.seedTestRecentPlate()) as {
+      let target: { plateNumber: string; locationId: string } | undefined;
+      try {
+        const warnings = (await violationsAPI.getAll({ status: 'warning', limit: 50 })) as Array<{
+          plateNumber?: string;
+          cameraLocationId?: string;
+        }>;
+        const w = warnings.find(
+          (v) =>
+            v.plateNumber &&
+            v.plateNumber !== 'NONE' &&
+            v.plateNumber !== 'BLUR' &&
+            v.cameraLocationId,
+        );
+        if (w?.plateNumber && w.cameraLocationId) {
+          target = { plateNumber: w.plateNumber, locationId: w.cameraLocationId };
+        }
+      } catch {
+        /* fall back to random seed */
+      }
+
+      const result = (await detectionsAPI.seedTestRecentPlate(target)) as {
         plateNumber?: string;
         locationId?: string;
       };
       toast({
         title: 'Test detection added',
-        description: `Plate ${result.plateNumber} at ${result.locationId ?? 'location'}`,
+        description: target
+          ? `Plate ${result.plateNumber} at ${result.locationId ?? 'location'} (matched an active warning).`
+          : `Plate ${result.plateNumber} at ${result.locationId ?? 'location'}`,
       });
       setRefreshing(true);
       await load();
@@ -117,7 +139,7 @@ export default function RecentPlateDetections() {
         title="Recent plate detections"
         subtitle={
           meta
-            ? `Readable plates in the last ${meta.lookbackMinutes} minutes (newest per plate and location). Same window used for grace-expiry presence checks.`
+            ? `Readable plates in the last ${meta.lookbackMinutes} minutes (newest per plate and location). After a warning’s grace period ends, Barangay SMS is sent only if this plate is detected again here at or after that time.`
             : 'Readable plates in a rolling time window.'
         }
       />
@@ -156,7 +178,7 @@ export default function RecentPlateDetections() {
                 size="sm"
                 disabled={testSeedLoading || refreshing}
                 onClick={handleSeedTestDetection}
-                title="Insert one synthetic detection row (dev / test only; no violation)"
+                title="Insert one synthetic detection (dev / test). If any active warning exists, uses that plate and location so post-grace Barangay SMS can be tested."
               >
                 <FlaskConical className="h-4 w-4 mr-1 shrink-0" />
                 {testSeedLoading ? 'Adding…' : 'Add test detection'}

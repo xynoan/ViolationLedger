@@ -4,7 +4,7 @@ import { normalizePlateForMatch, isTestViolationSeedAllowed } from './violations
 
 const router = express.Router();
 
-/** Same default as `monitoring_service.js` grace-expiry presence lookback. */
+/** Default lookback for the Recent plate detections list (not the Barangay post-grace gate). */
 const DEFAULT_RECENT_PLATES_MINUTES = 15;
 
 function getStatements() {
@@ -104,25 +104,58 @@ router.post('/test-seed', (req, res) => {
       });
     }
 
-    const cameras = db
-      .prepare(
-        `SELECT id, locationId FROM cameras
-         WHERE locationId IS NOT NULL AND TRIM(locationId) != ''`,
-      )
-      .all();
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const bodyPlate = body.plateNumber != null ? String(body.plateNumber).trim() : '';
+    const bodyLoc = body.locationId != null ? String(body.locationId).trim() : '';
 
-    if (!cameras.length) {
-      return res.status(400).json({ error: 'No cameras with a location configured' });
-    }
-
-    const cam = cameras[Math.floor(Math.random() * cameras.length)];
-
-    const vehicles = db.prepare('SELECT plateNumber FROM vehicles WHERE plateNumber IS NOT NULL AND TRIM(plateNumber) != \'\'').all();
+    let cam;
     let plateNumber;
-    if (vehicles.length) {
-      plateNumber = vehicles[Math.floor(Math.random() * vehicles.length)].plateNumber;
+
+    if (bodyPlate || bodyLoc) {
+      if (!bodyPlate || !bodyLoc) {
+        return res.status(400).json({
+          error:
+            'Provide both plateNumber and locationId to match an active warning, or omit both for random test data.',
+        });
+      }
+      const row = db
+        .prepare(
+          `SELECT id, locationId FROM cameras
+           WHERE locationId = ?
+             AND locationId IS NOT NULL
+             AND TRIM(locationId) != ''
+           LIMIT 1`,
+        )
+        .get(bodyLoc);
+      if (!row) {
+        return res.status(400).json({ error: `No camera for location ${bodyLoc}` });
+      }
+      cam = row;
+      plateNumber = bodyPlate;
     } else {
-      plateNumber = `TST-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
+      const cameras = db
+        .prepare(
+          `SELECT id, locationId FROM cameras
+           WHERE locationId IS NOT NULL AND TRIM(locationId) != ''`,
+        )
+        .all();
+
+      if (!cameras.length) {
+        return res.status(400).json({ error: 'No cameras with a location configured' });
+      }
+
+      cam = cameras[Math.floor(Math.random() * cameras.length)];
+
+      const vehicles = db
+        .prepare(
+          `SELECT plateNumber FROM vehicles WHERE plateNumber IS NOT NULL AND TRIM(plateNumber) != ''`,
+        )
+        .all();
+      if (vehicles.length) {
+        plateNumber = vehicles[Math.floor(Math.random() * vehicles.length)].plateNumber;
+      } else {
+        plateNumber = `TST-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
+      }
     }
 
     const detectionId = `DET-TEST-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
