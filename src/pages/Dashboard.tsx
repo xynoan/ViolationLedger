@@ -1,483 +1,831 @@
-import { useState, useEffect, useCallback } from 'react';
-import { Car, AlertTriangle, CheckCircle, Camera, Plus, Pause, Play, FlaskConical, BarChart3 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect, useMemo } from 'react';
+import { 
+  BarChart3, 
+  Car, 
+  AlertTriangle, 
+  Camera, 
+  MessageSquare, 
+  FileText,
+  Calendar,
+  RefreshCw,
+  Clock3,
+  Repeat,
+  ArrowUpRight,
+  ArrowDownRight,
+  Minus
+} from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
-import { StatCard } from '@/components/dashboard/StatCard';
-import { CameraFeed } from '@/components/dashboard/CameraFeed';
-import { CaptureResults } from '@/components/dashboard/CaptureResults';
-import { WarningTimer } from '@/components/dashboard/WarningTimer';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { Vehicle, Camera as CameraType, Violation } from '@/types/parking';
-import { vehiclesAPI, camerasAPI, violationsAPI, detectionsAPI, detectionAPI } from '@/lib/api';
-import { mergeViolationsWithRecentPlates, type RecentPlateEntry } from '@/lib/recentPlates';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { analyticsAPI, camerasAPI, vehiclesAPI, violationsAPI, type AnalyticsResponse } from '@/lib/api';
 import { toast } from '@/hooks/use-toast';
-import { useAuth } from '@/hooks/useAuth';
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+} from '@/components/ui/chart';
+import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid } from 'recharts';
+import { Camera as CameraType, Vehicle, Violation } from '@/types/parking';
 
-export default function Dashboard() {
-  usePageTracking();
-  const { user } = useAuth();
-  const navigate = useNavigate();
-  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
-  const [cameras, setCameras] = useState<CameraType[]>([]);
-  const [violations, setViolations] = useState<Violation[]>([]);
-  const [allCaptures, setAllCaptures] = useState(0);
+const COLORS = ['#3b82f6', '#ef4444', '#f59e0b', '#10b981', '#8b5cf6', '#ec4899'];
+const VEHICLE_TYPE_COLORS: Record<string, string> = {
+  motorcycle: '#f59e0b',
+  car: '#3b82f6',
+  van: '#10b981',
+};
+const UNKNOWN_VEHICLE_COLOR = '#94a3b8';
+type TrendData = { currentTotal: number; previousTotal: number; delta: number; deltaPct: number };
+
+function getTrendMeta(trend?: TrendData | null) {
+  if (!trend) {
+    return {
+      Icon: Minus,
+      tone: 'text-muted-foreground',
+      label: 'No comparison available',
+    };
+  }
+
+  if (trend.delta > 0) {
+    return {
+      Icon: ArrowUpRight,
+      tone: 'text-destructive',
+      label: `+${trend.deltaPct}% vs previous 7-day period`,
+    };
+  }
+
+  if (trend.delta < 0) {
+    return {
+      Icon: ArrowDownRight,
+      tone: 'text-green-600',
+      label: `${trend.deltaPct}% vs previous 7-day period`,
+    };
+  }
+
+  return {
+    Icon: Minus,
+    tone: 'text-muted-foreground',
+    label: '0% vs previous 7-day period',
+  };
+}
+
+function escapeCsvValue(value: unknown): string {
+  const str = String(value ?? '');
+  if (str.includes('"') || str.includes(',') || str.includes('\n')) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+type DashboardProps = {
+  embedded?: boolean;
+};
+
+export default function Dashboard({ embedded = false }: DashboardProps) {
+  usePageTracking(!embedded);
+  const [analytics, setAnalytics] = useState<AnalyticsResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [detectionEnabled, setDetectionEnabled] = useState(true);
-  const [detectionToggleLoading, setDetectionToggleLoading] = useState(false);
-  const [testSeedLoading, setTestSeedLoading] = useState(false);
-  const [testSeedUnregLoading, setTestSeedUnregLoading] = useState(false);
-  const [assigningViolationId, setAssigningViolationId] = useState<string | null>(null);
+  const [cameras, setCameras] = useState<CameraType[]>([]);
+  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
+  const [violations, setViolations] = useState<Violation[]>([]);
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [locationFilter, setLocationFilter] = useState('all');
 
-  const showTestWarningSeed =
-    import.meta.env.DEV === true || import.meta.env.VITE_SHOW_TEST_WARNING_BUTTON === 'true';
-
-  // Load detection enabled state on mount
   useEffect(() => {
-    detectionAPI.getEnabled().then((r) => setDetectionEnabled(r?.enabled ?? true)).catch(() => {});
+    loadCameras();
+    loadViolatorData();
+    loadAnalytics();
   }, []);
 
-  const handleToggleDetection = useCallback(async () => {
-    setDetectionToggleLoading(true);
-    try {
-      const next = !detectionEnabled;
-      await detectionAPI.setEnabled(next);
-      setDetectionEnabled(next);
-      toast({
-        title: next ? 'Detection resumed' : 'Detection paused',
-        description: next ? 'YOLO workers are running.' : 'YOLO workers stopped.',
-      });
-    } catch (e) {
-      toast({
-        title: 'Failed to toggle detection',
-        description: e instanceof Error ? e.message : 'Unknown error',
-        variant: 'destructive',
-      });
-    } finally {
-      setDetectionToggleLoading(false);
-    }
-  }, [detectionEnabled]);
+  useEffect(() => {
+    loadAnalytics();
+  }, [startDate, endDate, locationFilter]);
 
-  // Load data from API (used on mount and by manual refresh)
-  const loadData = useCallback(async () => {
+  const loadCameras = async () => {
+    try {
+      const data = await camerasAPI.getAll();
+      setCameras(data);
+    } catch (error) {
+      console.error('Error loading cameras:', error);
+    }
+  };
+
+  const loadAnalytics = async () => {
     try {
       setIsLoading(true);
-      const [vehiclesData, camerasData, violationsData, detectionsData, recentPlates] = await Promise.all([
-        vehiclesAPI.getAll().catch(() => []),
-        camerasAPI.getAll().catch(() => []),
-        violationsAPI.getAll().catch(() => []),
-        detectionsAPI.getAll().catch(() => []),
-        detectionsAPI.getRecentPlates({ minutes: 15 }).catch((): { entries: RecentPlateEntry[] } => ({ entries: [] })),
-      ]);
-      
-      // Ensure deviceId is properly set for cameras
-      const camerasWithDeviceId = camerasData.map((camera: any) => {
-        const deviceIdValue = camera.deviceId && typeof camera.deviceId === 'string' && camera.deviceId.trim() 
-          ? camera.deviceId.trim() 
-          : undefined;
-        return {
-          ...camera,
-          deviceId: deviceIdValue
-        };
-      });
-      
-      setVehicles(vehiclesData);
-      setCameras(camerasWithDeviceId);
-      const processedViolations = (violationsData || []).map((v: any) => ({
-        ...v,
-        timeDetected: new Date(v.timeDetected),
-        timeIssued: v.timeIssued ? new Date(v.timeIssued) : undefined,
-        warningExpiresAt: v.warningExpiresAt ? new Date(v.warningExpiresAt) : undefined,
-        smsSentAt: v.smsSentAt ? new Date(v.smsSentAt) : undefined,
-        ownerSmsScheduledAt: v.ownerSmsScheduledAt ? new Date(v.ownerSmsScheduledAt) : undefined,
-        assignedAt: v.assignedAt ? new Date(v.assignedAt) : undefined,
-      }));
-      setViolations(mergeViolationsWithRecentPlates(processedViolations, recentPlates.entries || []));
-      // Count all detections (captures) - filter out "none" detections
-      const validDetections = Array.isArray(detectionsData) 
-        ? detectionsData.filter((d: any) => d.class_name && d.class_name.toLowerCase() !== 'none')
-        : [];
-      setAllCaptures(validDetections.length);
+      const filters: any = {};
+      if (startDate) filters.startDate = new Date(startDate).toISOString();
+      if (endDate) filters.endDate = new Date(endDate).toISOString();
+      if (locationFilter !== 'all') filters.locationId = locationFilter;
+
+      const data = await analyticsAPI.getAll(filters);
+      setAnalytics(data);
     } catch (error) {
-      console.error('Error loading dashboard data:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Failed to load dashboard data';
+      console.error('Error loading analytics:', error);
       toast({
-        title: "Connection Error",
-        description: errorMessage,
+        title: "Error",
+        description: "Failed to load dashboard data",
         variant: "destructive",
       });
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  };
 
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
-
-  const handleMarkTicketed = useCallback(
-    async (violationId: string) => {
-      try {
-        const ticketId = `TICKET-${Date.now()}`;
-        await violationsAPI.update(violationId, {
-          status: 'issued',
-          timeIssued: new Date().toISOString(),
-          ticketId,
-        });
-        toast({
-          title: 'Ticket issued',
-          description: `Ticket ${ticketId} has been recorded.`,
-        });
-        await loadData();
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Failed to update violation status';
-        toast({
-          title: 'Failed to issue ticket',
-          description: message,
-          variant: 'destructive',
-        });
-      }
-    },
-    [loadData],
-  );
-
-  const handleClearWarning = useCallback(
-    async (violationId: string) => {
-      try {
-        await violationsAPI.update(violationId, { status: 'cleared' });
-        toast({ title: 'Warning cleared', description: 'The warning has been cleared.' });
-        await loadData();
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Failed to clear warning';
-        toast({ title: 'Error', description: message, variant: 'destructive' });
-      }
-    },
-    [loadData],
-  );
-
-  const handleSendSms = useCallback(
-    async (violationId: string) => {
-      try {
-        await violationsAPI.sendSms(violationId);
-        toast({
-          title: 'SMS sent',
-          description: 'Reminder sent to the registered vehicle owner.',
-        });
-        await loadData();
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Failed to send SMS';
-        toast({ title: 'SMS failed', description: message, variant: 'destructive' });
-      }
-    },
-    [loadData],
-  );
-
-  const handleAssignToMe = useCallback(
-    async (violationId: string) => {
-      setAssigningViolationId(violationId);
-      try {
-        await violationsAPI.assignToMe(violationId);
-        toast({
-          title: 'Assigned',
-          description: 'This warning is now assigned to you.',
-        });
-        await loadData();
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Failed to assign warning';
-        toast({ title: 'Assign failed', description: message, variant: 'destructive' });
-      } finally {
-        setAssigningViolationId(null);
-      }
-    },
-    [loadData],
-  );
-
-  const handleSeedTestWarning = useCallback(async () => {
-    setTestSeedLoading(true);
+  const loadViolatorData = async () => {
     try {
-      const result = await violationsAPI.seedTestActiveWarning();
-      toast({
-        title: 'Test warning added',
-        description: `Plate ${result.plateNumber} at ${result.cameraLocationId} (~${result.elapsedMinutesSinceDetection} min since detection).`,
-      });
-      await loadData();
+      const [vehiclesData, violationsData] = await Promise.all([
+        vehiclesAPI.getAll().catch(() => []),
+        violationsAPI.getAll().catch(() => []),
+      ]);
+      setVehicles(vehiclesData);
+      setViolations(
+        (violationsData || []).map((v: any) => ({
+          ...v,
+          timeDetected: new Date(v.timeDetected),
+          timeIssued: v.timeIssued ? new Date(v.timeIssued) : undefined,
+          warningExpiresAt: v.warningExpiresAt ? new Date(v.warningExpiresAt) : undefined,
+          smsSentAt: v.smsSentAt ? new Date(v.smsSentAt) : undefined,
+          ownerSmsScheduledAt: v.ownerSmsScheduledAt ? new Date(v.ownerSmsScheduledAt) : undefined,
+          assignedAt: v.assignedAt ? new Date(v.assignedAt) : undefined,
+        })),
+      );
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to add test warning';
-      toast({ title: 'Test warning failed', description: message, variant: 'destructive' });
-    } finally {
-      setTestSeedLoading(false);
+      console.error('Error loading violator data:', error);
     }
-  }, [loadData]);
+  };
 
-  const handleSeedUnregisteredWarning = useCallback(async () => {
-    setTestSeedUnregLoading(true);
+  const clearFilters = () => {
+    setStartDate('');
+    setEndDate('');
+    setLocationFilter('all');
+  };
+
+  const handleExportReport = () => {
+    if (!analytics) {
+      toast({
+        title: 'Export failed',
+        description: 'No data available to export.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     try {
-      const result = await violationsAPI.seedTestUnregisteredWarning();
-      toast({
-        title: 'Test unregistered warning added',
-        description: `Plate ${result.plateNumber} at ${result.cameraLocationId} (urgent).`,
-      });
-      await loadData();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to add unregistered warning';
-      toast({ title: 'Test unregistered warning failed', description: message, variant: 'destructive' });
-    } finally {
-      setTestSeedUnregLoading(false);
-    }
-  }, [loadData]);
+      const generatedAt = new Date();
+      const formattedDate = generatedAt.toISOString().slice(0, 10);
+      const rows: string[] = [];
+      const selectedLocation = locationFilter === 'all' ? 'All Locations' : locationFilter;
 
-  const activeWarnings = violations
-    .filter(v => v.status === 'warning' || v.status === 'for_ticket')
-    .sort((a, b) => {
-      const aUrgent = a.unregisteredUrgent ? 1 : 0;
-      const bUrgent = b.unregisteredUrgent ? 1 : 0;
-      if (aUrgent !== bUrgent) return bUrgent - aUrgent;
-      return new Date(b.timeDetected).getTime() - new Date(a.timeDetected).getTime();
-    });
-  const issuedTickets = violations.filter(v => v.status === 'issued');
-  const clearedToday = violations.filter(v => v.status === 'cleared');
-  const onlineCameras = cameras.filter((c) => c.status === 'online');
-  const firstOnlineCamera = onlineCameras[0];
-  const registeredPlates = vehicles.map((vehicle) => vehicle.plateNumber);
-  const hasData = vehicles.length > 0 || cameras.length > 0 || violations.length > 0;
-  const goToCaptureResults = useCallback(() => {
-    const section = document.getElementById('capture-results-section');
-    if (section) {
-      section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      rows.push('Dashboard Report');
+      rows.push(`Date Range Start,${escapeCsvValue(startDate || 'All')}`);
+      rows.push(`Date Range End,${escapeCsvValue(endDate || 'All')}`);
+      rows.push(`Location,${escapeCsvValue(selectedLocation)}`);
+      rows.push(`Generated At,${escapeCsvValue(generatedAt.toISOString())}`);
+      rows.push('');
+
+      rows.push('Violations Over Time');
+      rows.push('Date,Violations');
+      if (violationsOverTimeData.length > 0) {
+        for (const item of violationsOverTimeData) {
+          rows.push(`${escapeCsvValue(item.date)},${escapeCsvValue(item.violations)}`);
+        }
+      } else {
+        rows.push('No data,0');
+      }
+      rows.push('');
+
+      rows.push('Top Violation Locations');
+      rows.push('Location,Violations');
+      if (violationsByLocationData.length > 0) {
+        for (const item of violationsByLocationData) {
+          rows.push(`${escapeCsvValue(item.cameraLocationId)},${escapeCsvValue(item.count)}`);
+        }
+      } else {
+        rows.push('No data,0');
+      }
+
+      const csvContent = rows.join('\n');
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `dashboard-report-${formattedDate}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      toast({
+        title: 'Export successful',
+        description: `Saved dashboard-report-${formattedDate}.csv`,
+      });
+    } catch (error) {
+      toast({
+        title: 'Export failed',
+        description: error instanceof Error ? error.message : 'Unable to export CSV report',
+        variant: 'destructive',
+      });
     }
-  }, []);
+  };
+
+  const uniqueLocations = Array.from(new Set(cameras.map(c => c.locationId))).sort();
+
+  // Prepare chart data - only essential charts
+  const violationsOverTimeData = analytics?.violations.overTime
+    .map(item => ({
+      date: new Date(item.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+      violations: item.count
+    }))
+    .reverse() || [];
+
+  const violationsByLocationData = analytics?.violations.byLocation.slice(0, 10) || [];
+
+  const violationsByStatusData = Object.entries(analytics?.violations.byStatus || {}).map(([status, count]) => ({
+    name: status.charAt(0).toUpperCase() + status.slice(1),
+    value: count
+  }));
+  const descriptive = analytics?.violations.descriptive;
+  const byHourMap = new Map((analytics?.violations.byHour || []).map((item) => [item.hour, item.count]));
+  const peakHoursData = Array.from({ length: 24 }, (_, hour) => ({
+    hourLabel: `${hour.toString().padStart(2, '0')}:00`,
+    count: byHourMap.get(hour) || 0,
+  }));
+  const hasPeakHoursData = peakHoursData.some((item) => item.count > 0);
+  const byVehicleTypeData = descriptive?.byVehicleType || [];
+  const hasVehicleTypeData = byVehicleTypeData.some((item) => item.count > 0);
+  const topVehicleTypeLabel = descriptive?.topVehicleType
+    ? `${descriptive.topVehicleType.vehicleType} (${descriptive.topVehicleType.count})`
+    : 'No data';
+
+  const violationTrendMeta = getTrendMeta(descriptive?.sevenDayComparison);
+  const warningTrendMeta = getTrendMeta(analytics?.warnings.sevenDayComparison);
+  const activeAlertStatuses = new Set<Violation['status']>(['warning', 'for_ticket', 'pending', 'issued']);
+  const activeAlerts = violations.filter((v) => activeAlertStatuses.has(v.status));
+
+  const topViolators = useMemo(() => {
+    const vehicleByPlate = new Map(vehicles.map((v) => [v.plateNumber.toUpperCase(), v]));
+    const grouped = new Map<string, { name: string; count: number; resident: boolean }>();
+
+    for (const violation of activeAlerts) {
+      const plateKey = violation.plateNumber.toUpperCase();
+      const linkedVehicle = vehicleByPlate.get(plateKey);
+      const name = linkedVehicle?.ownerName?.trim() || `Unknown (${violation.plateNumber})`;
+      const key = linkedVehicle?.residentId ? `resident:${linkedVehicle.residentId}` : `name:${name.toLowerCase()}`;
+      const existing = grouped.get(key);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        grouped.set(key, { name, count: 1, resident: Boolean(linkedVehicle?.residentId) });
+      }
+    }
+
+    return [...grouped.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)).slice(0, 8);
+  }, [activeAlerts, vehicles]);
+
+  const frequentViolators = useMemo(() => {
+    const residents = topViolators.filter((entry) => entry.resident).slice(0, 5);
+    const nonResidents = topViolators.filter((entry) => !entry.resident).slice(0, 5);
+    return { residents, nonResidents };
+  }, [topViolators]);
 
   if (isLoading) {
+    if (embedded) {
+      return (
+        <div className="py-4 flex items-center justify-center">
+          <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      );
+    }
     return (
       <div className="min-h-screen">
-        <Header title="Dashboard" subtitle="Monitor parking violations in real-time" />
-        <div className="p-4 sm:p-6 flex items-center justify-center min-h-[50vh]">
-          <div className="h-8 w-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+        <Header title="Dashboard" subtitle="Key system statistics and insights" />
+        <div className="p-6 flex items-center justify-center">
+          <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      </div>
+    );
+  }
+
+  if (!analytics) {
+    if (embedded) {
+      return (
+        <Card>
+          <CardContent className="pt-6">
+            <div className="text-center py-6">
+              <BarChart3 className="h-8 w-8 text-muted-foreground mx-auto mb-3" />
+              <p className="text-muted-foreground">Failed to load dashboard data</p>
+              <Button onClick={loadAnalytics} className="mt-4" variant="outline" size="sm">
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Retry
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      );
+    }
+    return (
+      <div className="min-h-screen">
+        <Header title="Dashboard" subtitle="Key system statistics and insights" />
+        <div className="p-6">
+          <Card>
+            <CardContent className="pt-6">
+              <div className="text-center py-8">
+                <BarChart3 className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                <p className="text-muted-foreground">Failed to load dashboard data</p>
+                <Button onClick={loadAnalytics} className="mt-4" variant="outline">
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                  Retry
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen">
-      <Header 
-        title="Dashboard" 
-        subtitle="Monitor parking violations in real-time"
-        action={
-          <Button variant="outline" size="sm" onClick={() => navigate('/analytics')}>
-            <BarChart3 className="h-4 w-4 mr-2" />
-            View Analytics
-          </Button>
-        }
-        autoRefreshNotifications={false}
-      />
-
-      <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
-        <div className="flex justify-end items-center gap-2">
-          {!detectionEnabled && (
-            <Badge variant="secondary">Detection Paused</Badge>
-          )}
-          <Button
-            variant="outline"
-            size="sm"
-            className="hidden devtools-unhide-detection-toggle"
-            onClick={handleToggleDetection}
-            disabled={detectionToggleLoading}
-          >
-            {detectionEnabled ? (
-              <>
-                <Pause className="h-4 w-4 mr-2" />
-                Pause Detection
-              </>
-            ) : (
-              <>
-                <Play className="h-4 w-4 mr-2" />
-                Resume Detection
-              </>
-            )}
-          </Button>
-        </div>
-
-        {/* Stats Grid */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-          <StatCard
-            title="Registered Vehicles"
-            value={vehicles.length}
-            icon={Car}
-            ctaLabel="Go to Vehicles"
-            onClick={() => navigate('/vehicles')}
-          />
-          <StatCard
-            title="Active Warnings"
-            value={activeWarnings.length}
-            icon={AlertTriangle}
-            variant="warning"
-            ctaLabel="Go to Warnings"
-            onClick={() => navigate('/warnings')}
-          />
-          <StatCard
-            title="All Vehicle Captures"
-            value={allCaptures}
-            icon={Camera}
-            variant="default"
-            ctaLabel="Go to Capture Results"
-            onClick={goToCaptureResults}
-          />
-          <StatCard
-            title="Cleared Today"
-            value={clearedToday.length}
-            icon={CheckCircle}
-            variant="success"
-            ctaLabel="Go to Violations History"
-            onClick={() => navigate('/violations')}
-          />
-        </div>
-
-        {!hasData ? (
-          <div className="glass-card rounded-xl p-8 sm:p-12 text-center">
-            <div className="max-w-md mx-auto">
-              <Camera className="h-12 w-12 sm:h-16 sm:w-16 text-muted-foreground mx-auto mb-4" />
-              <h3 className="text-lg font-semibold text-foreground mb-2">Welcome to ViolationLedger</h3>
-              <p className="text-muted-foreground mb-6">
-                Get started by adding cameras and registering vehicles to begin monitoring parking violations
-              </p>
-              <div className="flex flex-col sm:flex-row gap-3 justify-center">
-                <Button onClick={() => navigate('/cameras')}>
-                  <Plus className="h-4 w-4 mr-2" />
-                  Add Camera
-                </Button>
-                <Button variant="outline" onClick={() => navigate('/vehicles')}>
-                  <Plus className="h-4 w-4 mr-2" />
-                  Add Vehicle
-                </Button>
-              </div>
+    <div className={embedded ? "space-y-6" : "min-h-screen"}>
+      {!embedded && (
+        <Header 
+          title="Dashboard" 
+          subtitle="Comprehensive system statistics and insights"
+          action={
+            <div className="flex items-center gap-2">
+              <Button onClick={handleExportReport} variant="outline" size="sm">
+                Export Report
+              </Button>
+              <Button onClick={loadAnalytics} disabled={isLoading} variant="outline" size="sm">
+                <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+                Refresh
+              </Button>
             </div>
-          </div>
-        ) : (
-          <div className="space-y-6">
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
-              {/* Active Warnings */}
-              <div className="lg:col-span-2 space-y-4 sm:space-y-6">
-              <div className="space-y-4">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h2 className="text-base sm:text-lg font-semibold text-foreground flex items-center gap-2">
-                    <AlertTriangle className="h-4 w-4 sm:h-5 sm:w-5 text-warning" />
-                    Active Warnings
-                    <span className="ml-2 px-2 py-0.5 rounded-full bg-warning/10 text-warning text-xs sm:text-sm">
-                      {activeWarnings.length}
-                    </span>
-                  </h2>
-                  {showTestWarningSeed && (
-                    <div className="flex gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="text-xs sm:text-sm"
-                        onClick={handleSeedTestWarning}
-                        disabled={testSeedLoading}
-                        title="Inserts a random registered vehicle as an active warning with a random elapsed time (dev / test only)"
-                      >
-                        <FlaskConical className="h-4 w-4 mr-1 shrink-0" />
-                        {testSeedLoading ? 'Adding…' : 'Add test warning'}
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="text-xs sm:text-sm"
-                        onClick={handleSeedUnregisteredWarning}
-                        disabled={testSeedUnregLoading}
-                        title="Inserts a random unregistered urgent warning (dev / test only)"
-                      >
-                        <FlaskConical className="h-4 w-4 mr-1 shrink-0" />
-                        {testSeedUnregLoading ? 'Adding…' : 'Add test unregistered'}
-                      </Button>
-                    </div>
-                  )}
-                </div>
+          }
+        />
+      )}
 
-                {activeWarnings.length === 0 ? (
-                  <div className="glass-card rounded-xl p-6 sm:p-8 text-center">
-                    <CheckCircle className="h-10 w-10 sm:h-12 sm:w-12 text-success mx-auto mb-3" />
-                    <p className="text-muted-foreground text-sm sm:text-base">No active warnings</p>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {activeWarnings.slice(0, 5).map((warning) => (
-                      <WarningTimer
-                        key={warning.id}
-                        violation={warning}
-                        onCancel={handleClearWarning}
-                        onIssueTicket={handleMarkTicketed}
-                        onSendSms={handleSendSms}
-                        onAssignToMe={handleAssignToMe}
-                        assigning={assigningViolationId === warning.id}
-                        currentUserId={user?.id || null}
-                        showThumbnail={false}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Capture Results */}
-              <div className="space-y-4" id="capture-results-section">
-                <h2 className="text-base sm:text-lg font-semibold text-foreground flex items-center gap-2">
-                  <Camera className="h-4 w-4 sm:h-5 sm:w-5 text-primary" />
-                  Capture Results
-                </h2>
-                <CaptureResults />
-              </div>
-              </div>
-
-              {/* Camera feed (tunneled stream.html when online + stream name) */}
-              <div className="space-y-4">
-                <h2 className="text-base sm:text-lg font-semibold text-foreground">Camera Feed</h2>
-                {firstOnlineCamera ? (
-                  <CameraFeed
-                    camera={firstOnlineCamera}
-                    registeredPlates={registeredPlates}
-                    onRefresh={() => {
-                      camerasAPI
-                        .getAll()
-                        .then((data) => {
-                          const camerasWithDeviceId = data.map((camera: any) => {
-                            const deviceIdValue =
-                              camera.deviceId &&
-                              typeof camera.deviceId === 'string' &&
-                              camera.deviceId.trim()
-                                ? camera.deviceId.trim()
-                                : undefined;
-                            return {
-                              ...camera,
-                              deviceId: deviceIdValue,
-                            };
-                          });
-                          setCameras(camerasWithDeviceId);
-                        })
-                        .catch(console.error);
-                    }}
-                  />
-                ) : (
-                  <div className="glass-card rounded-xl p-6 text-center">
-                    <Camera className="h-10 w-10 sm:h-12 sm:w-12 text-muted-foreground mx-auto mb-3" />
-                    <p className="text-muted-foreground text-sm mb-4">
-                      {cameras.length > 0 ? 'No online cameras' : 'No cameras configured'}
-                    </p>
-                    <Button size="sm" onClick={() => navigate('/cameras')}>
-                      <Plus className="h-4 w-4 mr-2" />
-                      {cameras.length > 0 ? 'View Cameras' : 'Add Camera'}
-                    </Button>
-                  </div>
-                )}
-              </div>
-            </div>
-
+      <div className={embedded ? "space-y-6" : "p-4 sm:p-6 space-y-6"}>
+        {embedded && (
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-base sm:text-lg font-semibold text-foreground">Dashboard</h2>
+            <Button onClick={handleExportReport} variant="outline" size="sm">
+              Export Report
+            </Button>
           </div>
         )}
+        {/* Filters */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Calendar className="h-5 w-5" />
+              Filters
+            </CardTitle>
+            <CardDescription>Filter by date range and location</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="space-y-2">
+                <Label>Start Date</Label>
+                <Input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>End Date</Label>
+                <Input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Location</Label>
+                <Select value={locationFilter} onValueChange={setLocationFilter}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="All Locations" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Locations</SelectItem>
+                    {uniqueLocations.map(location => (
+                      <SelectItem key={location} value={location}>
+                        {location}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>&nbsp;</Label>
+                <Button onClick={clearFilters} variant="outline" className="w-full">
+                  Clear Filters
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Overview Stats */}
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-muted-foreground">Violations</p>
+                  <p className="text-2xl font-bold">{analytics.violations.total}</p>
+                  <div className={`mt-1 flex items-center gap-1 text-xs ${violationTrendMeta.tone}`}>
+                    {(() => {
+                      const TrendIcon = violationTrendMeta.Icon;
+                      return <TrendIcon className="h-3 w-3" />;
+                    })()}
+                    <span>{violationTrendMeta.label}</span>
+                  </div>
+                </div>
+                <FileText className="h-8 w-8 text-destructive" />
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-muted-foreground">Warnings</p>
+                  <p className="text-2xl font-bold">{analytics.warnings.total}</p>
+                  <div className={`mt-1 flex items-center gap-1 text-xs ${warningTrendMeta.tone}`}>
+                    {(() => {
+                      const TrendIcon = warningTrendMeta.Icon;
+                      return <TrendIcon className="h-3 w-3" />;
+                    })()}
+                    <span>{warningTrendMeta.label}</span>
+                  </div>
+                </div>
+                <AlertTriangle className="h-8 w-8 text-yellow-500" />
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-muted-foreground">Vehicles</p>
+                  <p className="text-2xl font-bold">{analytics.vehicles.total}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Filter-scoped total</p>
+                </div>
+                <Car className="h-8 w-8 text-primary" />
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-muted-foreground">Detections</p>
+                  <p className="text-2xl font-bold">{analytics.detections.total}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Filter-scoped total</p>
+                </div>
+                <Camera className="h-8 w-8 text-primary" />
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-muted-foreground">SMS Sent</p>
+                  <p className="text-2xl font-bold">{analytics.sms.total}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Filter-scoped total</p>
+                </div>
+                <MessageSquare className="h-8 w-8 text-primary" />
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-muted-foreground">Cameras</p>
+                  <p className="text-2xl font-bold">{analytics.cameras.total}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">System inventory</p>
+                </div>
+                <Camera className="h-8 w-8 text-primary" />
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Descriptive Insights */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Clock3 className="h-5 w-5" />
+                Average Duration of Infraction
+              </CardTitle>
+              <CardDescription>{descriptive?.avgInfractionToActionLabel || 'Average time from first detection to action in minutes'}</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="text-3xl font-bold">
+                {descriptive?.avgInfractionToActionMinutes != null
+                  ? `${Math.round(descriptive.avgInfractionToActionMinutes)} min`
+                  : 'No data'}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Repeat className="h-5 w-5" />
+                Repeat Offenders
+              </CardTitle>
+              <CardDescription>
+                Vehicles with {descriptive?.repeatOffenders.threshold || 3}+ violations in selected period
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">Unique Vehicles</span>
+                <Badge variant="secondary">{descriptive?.repeatOffenders.uniqueVehicles || 0}</Badge>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">Recurring Vehicles</span>
+                <Badge variant="destructive">{descriptive?.repeatOffenders.recurringVehicles || 0}</Badge>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">Recurring Share</span>
+                <span className="font-semibold">{descriptive?.repeatOffenders.recurringPct?.toFixed(2) || '0.00'}%</span>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Period Comparison</CardTitle>
+              <CardDescription>Compared to same span in previous month</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <div className="text-sm flex items-center justify-between">
+                <span className="text-muted-foreground">Current Period</span>
+                <span className="font-medium">{descriptive?.periodComparison?.currentTotal ?? 0}</span>
+              </div>
+              <div className="text-sm flex items-center justify-between">
+                <span className="text-muted-foreground">Previous Period</span>
+                <span className="font-medium">{descriptive?.periodComparison?.previousTotal ?? 0}</span>
+              </div>
+              <div className={`text-sm flex items-center justify-between ${getTrendMeta(descriptive?.periodComparison).tone}`}>
+                <span>Delta</span>
+                <span className="font-semibold">{descriptive?.periodComparison?.delta ?? 0}</span>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Car className="h-5 w-5" />
+              Violations by Vehicle Type
+            </CardTitle>
+            <CardDescription>
+              Most frequent violator type: <span className="font-medium">{topVehicleTypeLabel}</span>
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {hasVehicleTypeData ? (
+              <ChartContainer config={{ count: { label: 'Violations', color: '#f97316' } }}>
+                <BarChart data={byVehicleTypeData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="vehicleType" />
+                  <YAxis />
+                  <ChartTooltip content={<ChartTooltipContent />} />
+                  <Bar dataKey="count">
+                    {byVehicleTypeData.map((entry, index) => {
+                      const key = String(entry.vehicleType || '').toLowerCase();
+                      const fill = VEHICLE_TYPE_COLORS[key] || UNKNOWN_VEHICLE_COLOR;
+                      return <Cell key={`vehicle-type-cell-${index}`} fill={fill} />;
+                    })}
+                  </Bar>
+                </BarChart>
+              </ChartContainer>
+            ) : (
+              <div className="h-[240px] flex items-center justify-center text-muted-foreground">
+                No vehicle-type violation data in selected filters
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Top Violators</CardTitle>
+              <CardDescription>Most frequent active violators across warning and pending records</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {topViolators.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No active violator records yet.</p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Name</TableHead>
+                      <TableHead className="text-right">Violations</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {topViolators.map((entry) => (
+                      <TableRow key={`${entry.name}-${entry.resident ? 'r' : 'n'}`}>
+                        <TableCell className="font-medium">{entry.name}</TableCell>
+                        <TableCell className="text-right">{entry.count}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Frequent Violators</CardTitle>
+              <CardDescription>Breakdown of recurring violators by resident status</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <p className="text-xs font-semibold uppercase text-muted-foreground">Residents</p>
+                {frequentViolators.residents.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No resident violators in active records.</p>
+                ) : (
+                  frequentViolators.residents.map((entry) => (
+                    <div key={`resident-${entry.name}`} className="flex items-center justify-between text-sm">
+                      <span>{entry.name}</span>
+                      <Badge variant="secondary">{entry.count}</Badge>
+                    </div>
+                  ))
+                )}
+              </div>
+              <div className="space-y-2">
+                <p className="text-xs font-semibold uppercase text-muted-foreground">Non-residents</p>
+                {frequentViolators.nonResidents.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No non-resident violators in active records.</p>
+                ) : (
+                  frequentViolators.nonResidents.map((entry) => (
+                    <div key={`nonresident-${entry.name}`} className="flex items-center justify-between text-sm">
+                      <span>{entry.name}</span>
+                      <Badge variant="secondary">{entry.count}</Badge>
+                    </div>
+                  ))
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Descriptive insights</CardTitle>
+            <CardDescription>
+              Auto-generated summary from live metrics
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {descriptive?.aiNarrative ? (
+              <div className="text-sm whitespace-pre-wrap text-muted-foreground">
+                {descriptive.aiNarrative}
+              </div>
+            ) : (
+              <div className="text-sm text-muted-foreground">
+                Narrative unavailable for the selected filter range.
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Peak Violation Hours */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Peak Violation Hours</CardTitle>
+            <CardDescription>Violation volume by hour (00:00-23:00) for selected filters</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {hasPeakHoursData ? (
+              <ChartContainer config={{ count: { label: 'Violations', color: '#ef4444' } }}>
+                <BarChart data={peakHoursData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="hourLabel" interval={2} />
+                  <YAxis />
+                  <ChartTooltip content={<ChartTooltipContent />} />
+                  <Bar dataKey="count" fill="#ef4444" />
+                </BarChart>
+              </ChartContainer>
+            ) : (
+              <div className="h-[240px] flex items-center justify-center text-muted-foreground">
+                No peak-hour data in selected filters
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Key Charts */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Violations Over Time */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Violations Over Time</CardTitle>
+              <CardDescription>Daily violation count for the last 30 days</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {violationsOverTimeData.length > 0 ? (
+                <ChartContainer config={{ violations: { label: 'Violations', color: '#ef4444' } }}>
+                  <LineChart data={violationsOverTimeData}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="date" />
+                    <YAxis />
+                    <ChartTooltip content={<ChartTooltipContent />} />
+                    <Line type="monotone" dataKey="violations" stroke="#ef4444" strokeWidth={2} />
+                  </LineChart>
+                </ChartContainer>
+              ) : (
+                <div className="h-[300px] flex items-center justify-center text-muted-foreground">
+                  No data available
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Violations by Status */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Violations by Status</CardTitle>
+              <CardDescription>Distribution of violations by status</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {violationsByStatusData.length > 0 ? (
+                <ChartContainer config={violationsByStatusData.reduce((acc, item) => {
+                  acc[item.name.toLowerCase()] = { label: item.name, color: COLORS[violationsByStatusData.indexOf(item) % COLORS.length] };
+                  return acc;
+                }, {} as Record<string, { label: string; color: string }>)}>
+                  <PieChart>
+                    <Pie
+                      data={violationsByStatusData}
+                      cx="50%"
+                      cy="50%"
+                      labelLine={false}
+                      label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                      outerRadius={80}
+                      fill="#8884d8"
+                      dataKey="value"
+                    >
+                      {violationsByStatusData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <ChartTooltip content={<ChartTooltipContent />} />
+                  </PieChart>
+                </ChartContainer>
+              ) : (
+                <div className="h-[300px] flex items-center justify-center text-muted-foreground">
+                  No data available
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Top Violation Locations */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Top Violation Locations</CardTitle>
+            <CardDescription>Violations by location (Top 10)</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {violationsByLocationData.length > 0 ? (
+              <ChartContainer config={{ count: { label: 'Violations', color: '#8b5cf6' } }}>
+                <BarChart data={violationsByLocationData} layout="vertical">
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis type="number" />
+                  <YAxis dataKey="cameraLocationId" type="category" width={100} />
+                  <ChartTooltip content={<ChartTooltipContent />} />
+                  <Bar dataKey="count" fill="#8b5cf6" />
+                </BarChart>
+              </ChartContainer>
+            ) : (
+              <div className="h-[300px] flex items-center justify-center text-muted-foreground">
+                No data available
+              </div>
+            )}
+          </CardContent>
+        </Card>
       </div>
     </div>
   );
 }
+
