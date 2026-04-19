@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, type ReactNode } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from 'react';
 import { Plus, Edit, Trash2, Phone, Info, UserPlus, ChevronsUpDown, MapPin } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
@@ -159,6 +159,19 @@ function normalizePurposeForForm(raw: string): { purposeOfVisit: string; purpose
   const hit = PRESET_PURPOSE_TABS.find((x) => x.toLowerCase() === t.toLowerCase());
   if (hit) return { purposeOfVisit: hit, purposeOfVisitOther: '' };
   return { purposeOfVisit: PURPOSE_OTHER, purposeOfVisitOther: t };
+}
+
+/** Owner, contact, type, and location fields — shared by edit dialog and plate autofill (not purpose). */
+function vehicleProfileFieldsForForm(vehicle: Vehicle) {
+  const normalizedVehicleType = (vehicle.vehicleType || '').toLowerCase();
+  const hasPresetVehicleType = VEHICLE_TYPE_OPTIONS.some((opt) => opt.value === normalizedVehicleType);
+  return {
+    ownerName: vehicle.ownerName,
+    contactNumber: digitsOnly(vehicle.contactNumber),
+    vehicleType: hasPresetVehicleType ? normalizedVehicleType : VEHICLE_TYPE_OTHER,
+    vehicleTypeOther: hasPresetVehicleType ? '' : vehicle.vehicleType || '',
+    rented: vehicle.rented || '',
+  };
 }
 
 function apiVisitorCategory(purposeValue: string, rented: string): 'guest' | 'delivery' | 'rental' {
@@ -387,6 +400,12 @@ export default function Visitors() {
     purposeOfVisitOther: '',
     rented: '',
   });
+  const [ownerNameLockedByPlate, setOwnerNameLockedByPlate] = useState(false);
+  const plateInputRef = useRef('');
+  const plateLookupSeqRef = useRef(0);
+  plateInputRef.current = formData.plateNumber;
+
+  const ownerNameReadOnly = Boolean(editingVehicle) || ownerNameLockedByPlate;
 
   const loadVehicles = useCallback(async (initial = false) => {
     try {
@@ -491,6 +510,7 @@ export default function Visitors() {
       rented: '',
     });
     setEditingVehicle(null);
+    setOwnerNameLockedByPlate(false);
   };
 
   const handleOpenDialog = (vehicle?: Vehicle) => {
@@ -512,19 +532,15 @@ export default function Visitors() {
     }
 
     if (vehicle) {
-      const normalizedVehicleType = (vehicle.vehicleType || '').toLowerCase();
-      const hasPresetVehicleType = VEHICLE_TYPE_OPTIONS.some((opt) => opt.value === normalizedVehicleType);
+      setOwnerNameLockedByPlate(false);
       const { purposeOfVisit, purposeOfVisitOther } = normalizePurposeForForm(vehicle.purposeOfVisit || '');
+      const profile = vehicleProfileFieldsForForm(vehicle);
       setEditingVehicle(vehicle);
       setFormData({
         plateNumber: vehicle.plateNumber.toUpperCase(),
-        ownerName: vehicle.ownerName,
-        contactNumber: digitsOnly(vehicle.contactNumber),
-        vehicleType: hasPresetVehicleType ? normalizedVehicleType : VEHICLE_TYPE_OTHER,
-        vehicleTypeOther: hasPresetVehicleType ? '' : vehicle.vehicleType || '',
+        ...profile,
         purposeOfVisit,
         purposeOfVisitOther,
-        rented: vehicle.rented || '',
       });
     } else {
       resetForm(activeTab);
@@ -728,6 +744,42 @@ export default function Visitors() {
     return Boolean(editingVehicle?.rented?.trim());
   }, [formData.purposeOfVisit, formData.purposeOfVisitOther, editingVehicle?.rented]);
 
+  useEffect(() => {
+    if (editingVehicle || isBarangayUser) return;
+    const trimmed = formData.plateNumber.trim();
+    const key = normPlate(trimmed);
+    if (key.length < 3) {
+      setOwnerNameLockedByPlate(false);
+      return;
+    }
+
+    const seq = ++plateLookupSeqRef.current;
+    const debounceMs = 400;
+    const t = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const list: Vehicle[] = await vehiclesAPI.getAll(trimmed);
+          if (seq !== plateLookupSeqRef.current) return;
+          if (normPlate(plateInputRef.current.trim()) !== key) return;
+          const match = list.find((v) => normPlate(v.plateNumber) === key);
+          if (!match) {
+            setOwnerNameLockedByPlate(false);
+            return;
+          }
+          if (seq !== plateLookupSeqRef.current) return;
+          setFormData((prev) => {
+            if (normPlate(prev.plateNumber.trim()) !== key) return prev;
+            setOwnerNameLockedByPlate(true);
+            return { ...prev, ...vehicleProfileFieldsForForm(match) };
+          });
+        } catch {
+          setOwnerNameLockedByPlate(false);
+        }
+      })();
+    }, debounceMs);
+    return () => window.clearTimeout(t);
+  }, [formData.plateNumber, editingVehicle, isBarangayUser]);
+
   if (isInitialLoading) {
     return (
       <div className="min-h-screen">
@@ -825,10 +877,21 @@ export default function Visitors() {
                     id="v-owner"
                     placeholder="Juan dela Cruz"
                     value={formData.ownerName}
+                    readOnly={ownerNameReadOnly}
                     onChange={(e) =>
                       setFormData({ ...formData, ownerName: lettersAndSpacesOnly(e.target.value) })
                     }
-                    className="bg-secondary"
+                    className={cn(
+                      'bg-secondary',
+                      ownerNameReadOnly && 'cursor-not-allowed opacity-90',
+                    )}
+                    title={
+                      ownerNameReadOnly
+                        ? editingVehicle
+                          ? 'Owner name cannot be changed for an existing record.'
+                          : 'Owner name comes from the vehicle registry for this plate.'
+                        : undefined
+                    }
                   />
                 </div>
                 <div className="space-y-2">
