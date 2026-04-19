@@ -243,7 +243,7 @@ export const violationsAPI = {
       cache: false,
     }),
   /**
-   * Dev / ALLOW_TEST_VIOLATION_SEED: inserts a random warning with random elapsed time since detection.
+   * Dev / ALLOW_TEST_VIOLATION_SEED: inserts a random warning with the same timer fields as live detections (runtime config).
    */
   seedTestActiveWarning: () =>
     fetchAPI('/violations/test-seed-active-warning', { method: 'POST' }),

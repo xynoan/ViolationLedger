@@ -23,6 +23,10 @@ interface WarningTimerProps {
   assigning?: boolean;
   currentUserId?: string | null;
   showThumbnail?: boolean;
+  /** full: scheduled time / demo / no-text badges; sentOnly: green "Text sent" badge only. */
+  smsStatusBadge?: 'full' | 'sentOnly';
+  /** full: owner SMS countdown + line; graceOnly: grace timer only (Warnings page). */
+  ownerSmsUi?: 'full' | 'graceOnly';
 }
 
 /** Seconds until expiry; negative = overdue by that many seconds. */
@@ -61,6 +65,8 @@ export function WarningTimer({
   assigning = false,
   currentUserId = null,
   showThumbnail = true,
+  smsStatusBadge = 'full',
+  ownerSmsUi = 'full',
 }: WarningTimerProps) {
   const [deltaSec, setDeltaSec] = useState<number | null>(() => computeDeltaSec(violation.warningExpiresAt));
   const [sendingSms, setSendingSms] = useState(false);
@@ -76,6 +82,7 @@ export function WarningTimer({
   }, [violation.warningExpiresAt]);
 
   useEffect(() => {
+    if (ownerSmsUi === 'graceOnly' && smsStatusBadge === 'sentOnly') return;
     let mounted = true;
     healthAPI
       .getOwnerSmsDelayConfig()
@@ -90,7 +97,7 @@ export function WarningTimer({
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [ownerSmsUi, smsStatusBadge]);
 
   const tier = tierFromDelta(deltaSec);
   const isOverdue = deltaSec !== null && deltaSec <= 0;
@@ -138,6 +145,7 @@ export function WarningTimer({
     violation.plateNumber !== 'BLUR' &&
     Boolean(violation.plateNumber);
   const showOwnerSmsPrimaryTimer =
+    ownerSmsUi !== 'graceOnly' &&
     !smsSentAt &&
     canSendSms &&
     !ownerSmsDelayDisabledForDemo &&
@@ -241,24 +249,26 @@ export function WarningTimer({
                     >
                       Text sent · {smsSentAt.toLocaleString()}
                     </Badge>
-                  ) : ownerSmsDelayDisabledForDemo ? (
-                    <Badge
-                      variant="secondary"
-                      className="text-xs border-amber-500/30 bg-amber-500/10 text-amber-900 dark:text-amber-300"
-                    >
-                      SMS immediate · demo mode
-                    </Badge>
-                  ) : (
-                    <Badge variant="secondary" className="text-xs text-muted-foreground font-normal">
-                      {smsScheduledAt ? `SMS scheduled · ${smsScheduledAt.toLocaleTimeString()}` : 'No text sent'}
-                    </Badge>
-                  )}
+                  ) : smsStatusBadge === 'full' ? (
+                    ownerSmsDelayDisabledForDemo ? (
+                      <Badge
+                        variant="secondary"
+                        className="text-xs border-amber-500/30 bg-amber-500/10 text-amber-900 dark:text-amber-300"
+                      >
+                        SMS immediate · demo mode
+                      </Badge>
+                    ) : (
+                      <Badge variant="secondary" className="text-xs text-muted-foreground font-normal">
+                        {smsScheduledAt ? `SMS scheduled · ${smsScheduledAt.toLocaleTimeString()}` : 'No text sent'}
+                      </Badge>
+                    )
+                  ) : null}
                 </div>
                 <p className="text-sm text-foreground">{displayMessage}</p>
                 <p className="text-xs text-muted-foreground">
                   Detected at {new Date(violation.timeDetected).toLocaleString()}
                 </p>
-                {!smsSentAt && canSendSms && (
+                {ownerSmsUi !== 'graceOnly' && !smsSentAt && canSendSms && (
                   <p className="text-xs text-muted-foreground">
                     Owner SMS timer:{' '}
                     {ownerSmsDelayDisabledForDemo

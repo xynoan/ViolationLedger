@@ -462,7 +462,9 @@ router.get('/stats', (req, res) => {
 });
 
 /**
- * Insert a random active warning with timeDetected in the past (random elapsed time since detection).
+ * Insert a random active warning that mirrors automatic violations: detection time ≈ now,
+ * ownerSmsScheduledAt from runtime SMS delay config, warningExpiresAt = detection + grace.
+ * Timers on the Warnings page then match Settings (SMS countdown first when delay is enabled, then grace).
  * Adds a recent synthetic detection when a camera exists so auto-departure does not clear it immediately.
  * Disabled in production unless ALLOW_TEST_VIOLATION_SEED=true.
  */
@@ -528,24 +530,23 @@ router.post('/test-seed-active-warning', (req, res) => {
       });
     }
 
-    const elapsedMinutes = Math.floor(Math.random() * 88) + 3;
+    const graceMinutes = getGracePeriodMinutes();
     const now = Date.now();
-    const timeDetected = new Date(now - elapsedMinutes * 60 * 1000).toISOString();
-    const warningExpiresAt = new Date(
-      new Date(timeDetected).getTime() + getGracePeriodMinutes() * 60 * 1000,
-    ).toISOString();
+    const timeDetected = new Date(now).toISOString();
+    const ownerSmsScheduledAt = computeOwnerSmsScheduledAtIso();
+    const warningExpiresAt = new Date(now + graceMinutes * 60 * 1000).toISOString();
 
     const violationId = `VIOL-TEST-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
     db.prepare(`
-      INSERT INTO violations (id, ticketId, plateNumber, cameraLocationId, timeDetected, status, warningExpiresAt)
-      VALUES (?, NULL, ?, ?, ?, 'warning', ?)
-    `).run(violationId, plateNumber, cameraLocationId, timeDetected, warningExpiresAt);
+      INSERT INTO violations (id, ticketId, plateNumber, cameraLocationId, timeDetected, status, warningExpiresAt, ownerSmsScheduledAt)
+      VALUES (?, NULL, ?, ?, ?, 'warning', ?, ?)
+    `).run(violationId, plateNumber, cameraLocationId, timeDetected, warningExpiresAt, ownerSmsScheduledAt);
 
     let detectionId = null;
     if (cameraId) {
       detectionId = `DET-TEST-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      const detTs = new Date(now - 60 * 1000).toISOString();
+      const detTs = timeDetected;
       try {
         db.prepare(`
           INSERT INTO detections (id, cameraId, plateNumber, timestamp, confidence, imageUrl, bbox, class_name, imageBase64)
@@ -563,7 +564,8 @@ router.post('/test-seed-active-warning', (req, res) => {
       ...violation,
       timeDetected: new Date(violation.timeDetected),
       warningExpiresAt: violation.warningExpiresAt ? new Date(violation.warningExpiresAt) : null,
-      elapsedMinutesSinceDetection: elapsedMinutes,
+      ownerSmsScheduledAt: violation.ownerSmsScheduledAt ? new Date(violation.ownerSmsScheduledAt) : null,
+      elapsedMinutesSinceDetection: 0,
       syntheticDetectionId: detectionId,
       note: 'Test data — no owner SMS sent from this endpoint',
     });

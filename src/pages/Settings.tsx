@@ -291,6 +291,10 @@ export default function Settings() {
                 {savingRuntimeConfig ? 'Saving…' : 'Save demo timers'}
               </Button>
             </div>
+            <p className="text-xs text-muted-foreground">
+              On active warnings, the large countdown uses that order: SMS delay first (unless demo mode is on), then time
+              left until the grace period ends. It is not two separate full-length timers added together.
+            </p>
           </CardContent>
         </Card>
       </div>

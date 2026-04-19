@@ -217,7 +217,7 @@ export default function Warnings() {
                     size="sm"
                     onClick={handleSeedTestWarning}
                     disabled={testSeedLoading}
-                    title="Random registered vehicle, random elapsed time since detection (dev / test only)"
+                    title="Random registered vehicle; timers match Settings (SMS delay first when enabled, then grace) (dev / test only)"
                   >
                     <FlaskConical className="h-4 w-4 mr-1 shrink-0" />
                     {testSeedLoading ? "Adding…" : "Add test warning"}
@@ -247,6 +247,9 @@ export default function Warnings() {
                   onAssignToMe={handleAssignToMe}
                   assigning={assigningViolationId === violation.id}
                   currentUserId={user?.id || null}
+                  showThumbnail={false}
+                  smsStatusBadge="sentOnly"
+                  ownerSmsUi="graceOnly"
                 />
               ))}
             </div>
