@@ -350,27 +350,6 @@ export function CaptureResults({ autoRefresh = true }: CaptureResultsProps) {
                     <p className="font-medium">{formatDuration(dwellStatus.minutes)} ({getDwellToneLabel(dwellStatus.tone)})</p>
                   </div>
                 </div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      navigate(`/warnings?cameraId=${encodeURIComponent(result.cameraId)}&locationId=${encodeURIComponent(result.locationId)}`);
-                    }}
-                  >
-                    Issue Warning
-                  </Button>
-                  <Button
-                    size="sm"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      navigate(`/violations?cameraId=${encodeURIComponent(result.cameraId)}&locationId=${encodeURIComponent(result.locationId)}`);
-                    }}
-                  >
-                    File Violation
-                  </Button>
-                </div>
               </div>
               {hasImage ? (
                 <div 
