@@ -98,20 +98,19 @@ export async function sendViolationSms(plateNumber, locationId, violationId) {
       return { success: false, error: `Vehicle ${vehicle.plateNumber} has no contact number registered` };
     }
 
-    const currentTime = new Date().toLocaleString('en-US', {
+    const shortWhen = new Date().toLocaleString('en-US', {
       timeZone: 'Asia/Manila',
       month: 'short',
       day: 'numeric',
-      year: 'numeric',
       hour: 'numeric',
       minute: '2-digit',
-      hour12: true
+      hour12: true,
     });
 
+    const graceMin = getGracePeriodMinutes();
     const message =
-      `Hi ${vehicle.ownerName}, ` +
-      `your vehicle ${vehicle.plateNumber} was detected illegally parked at ${locationId} on ${currentTime}. ` +
-      `Please move it within ${getGracePeriodMinutes()} minutes to avoid ticket. - ViolationLedger`;
+      `Hi ${vehicle.ownerName}, your vehicle ${vehicle.plateNumber} is illegally parked at ${locationId} ` +
+      `(${shortWhen}). Please move it within ${graceMin} min to avoid ticket.`;
 
     const smsResult = await sendSmsMessage(vehicle.contactNumber, message);
 
