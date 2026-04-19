@@ -135,7 +135,7 @@ function countUnpaidViolationsForResident(
   violationRows: Violation[],
 ): number {
   return violationsForResidentLinkedPlates(residentId, vehicleRows, violationRows).filter(
-    (vi) => vi.status === 'issued' || vi.status === 'pending',
+    (vi) => vi.status === 'issued' || vi.status === 'pending' || vi.status === 'for_ticket',
   ).length;
 }
 

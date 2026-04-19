@@ -4,6 +4,7 @@ import { sendViolationSms } from '../utils/smsService.js';
 import { authenticateToken, requireRole } from '../middleware/auth.js';
 import { auditLog } from '../middleware/audit.js';
 import { getGracePeriodMinutes, getOwnerSmsDelayConfig } from '../runtime_config.js';
+import { escalateWarningToForTicketIfEligible } from '../violation_escalation.js';
 
 const router = express.Router();
 
@@ -45,6 +46,9 @@ export function isTestViolationSeedAllowed() {
 
 /** Warnings never extend beyond grace after detection (fixes legacy / bad seed rows without mutating DB). */
 function clampWarningExpiresAtForResponse(violation) {
+  if (violation.status === 'for_ticket') {
+    return violation.warningExpiresAt ? new Date(violation.warningExpiresAt) : null;
+  }
   if (violation.status !== 'warning' || !violation.warningExpiresAt) {
     return violation.warningExpiresAt ? new Date(violation.warningExpiresAt) : null;
   }
@@ -85,7 +89,7 @@ export async function createViolationFromDetection(plateNumber, cameraLocationId
       SELECT * FROM violations 
       WHERE plateNumber = ? 
       AND cameraLocationId = ?
-      AND status IN ('warning', 'pending')
+      AND status IN ('warning', 'pending', 'for_ticket')
     `).get(canonicalPlateNumber, cameraLocationId);
 
     if (existingViolation) {
@@ -347,7 +351,7 @@ router.get('/', (req, res) => {
       } else {
         message = `Vehicle with plate ${violation.plateNumber} detected illegally parked at ${violation.cameraLocationId}. Vehicle is not registered in the system. Immediate Barangay attention required.`;
       }
-      if (violation.status === 'warning' && !detection) {
+      if ((violation.status === 'warning' || violation.status === 'for_ticket') && !detection) {
         message = `${message} ${OUT_OF_VIEW_NOTE}`;
       }
       
@@ -381,7 +385,7 @@ router.put('/:id/assign', authenticateToken, auditLog, requireRole('barangay_use
     if (!violation) {
       return res.status(404).json({ error: 'Violation not found' });
     }
-    if (violation.status !== 'warning') {
+    if (violation.status !== 'warning' && violation.status !== 'for_ticket') {
       return res.status(400).json({ error: 'Only active warnings can be assigned' });
     }
 
@@ -514,7 +518,7 @@ router.post('/test-seed-active-warning', (req, res) => {
 
     const hasActiveConflict = db.prepare(`
       SELECT 1 FROM violations 
-      WHERE plateNumber = ? AND cameraLocationId = ? AND status IN ('warning', 'pending')
+      WHERE plateNumber = ? AND cameraLocationId = ? AND status IN ('warning', 'pending', 'for_ticket')
     `);
 
     /** One entry per distinct location (first camera wins) so we try every vehicle × location pair. */
@@ -663,7 +667,7 @@ router.post('/test-seed-unregistered-warning', (req, res) => {
 
     const hasActiveConflict = db.prepare(`
       SELECT 1 FROM violations
-      WHERE plateNumber = ? AND cameraLocationId = ? AND status IN ('warning', 'pending')
+      WHERE plateNumber = ? AND cameraLocationId = ? AND status IN ('warning', 'pending', 'for_ticket')
     `).get(plateNumber, cameraLocationId);
 
     if (hasActiveConflict) {
@@ -781,6 +785,62 @@ router.post('/:id/send-sms', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+/**
+ * Final verification / Recent plate path: escalate warning → for_ticket, notify, SMS Barangay
+ * (same rules as monitoring when grace ended + plate seen at/after grace).
+ */
+router.post(
+  '/:id/escalate-for-ticket',
+  authenticateToken,
+  auditLog,
+  requireRole('barangay_user', 'admin'),
+  async (req, res) => {
+    try {
+      const violation = db.prepare('SELECT * FROM violations WHERE id = ?').get(req.params.id);
+      if (!violation) {
+        return res.status(404).json({ error: 'Violation not found' });
+      }
+      if (violation.status === 'for_ticket') {
+        return res.json({
+          escalated: false,
+          alreadyForTicket: true,
+        });
+      }
+      const result = await escalateWarningToForTicketIfEligible(violation);
+      if (result.status === 'upgraded') {
+        const updated = db.prepare('SELECT * FROM violations WHERE id = ?').get(req.params.id);
+        return res.json({
+          escalated: true,
+          notificationCreated: Boolean(result.notificationCreated),
+          violation: {
+            ...updated,
+            timeDetected: new Date(updated.timeDetected),
+            timeIssued: updated.timeIssued ? new Date(updated.timeIssued) : null,
+            warningExpiresAt: clampWarningExpiresAtForResponse(updated),
+          },
+        });
+      }
+      const reason = result.reason || 'unknown';
+      const messages = {
+        not_warning: 'Only active warnings can be escalated',
+        grace_not_ended: 'Grace period has not ended yet',
+        no_presence:
+          'No matching plate detection at this location after grace (same check as Recent plate detections)',
+        already_for_ticket: 'Already escalated',
+        not_upgraded: 'Could not escalate (try again)',
+        invalid: 'Invalid violation',
+      };
+      const statusCode = reason === 'grace_not_ended' || reason === 'no_presence' ? 400 : 409;
+      return res.status(statusCode).json({
+        error: messages[reason] || 'Escalation not available',
+        reason,
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  },
+);
 
 router.get('/:id', (req, res) => {
   try {

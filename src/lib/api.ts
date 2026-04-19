@@ -71,7 +71,13 @@ async function fetchAPI(
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({ error: 'Network error' }));
-      throw new Error(error.error || `HTTP error! status: ${response.status}`);
+      const err = new Error(error.error || `HTTP error! status: ${response.status}`) as Error & {
+        reason?: string;
+        status?: number;
+      };
+      if (error.reason != null) err.reason = String(error.reason);
+      err.status = response.status;
+      throw err;
     }
 
     // Handle 204 No Content (empty response) for DELETE requests
@@ -236,6 +242,13 @@ export const violationsAPI = {
     fetchAPI(`/violations/${encodeURIComponent(id)}/send-sms`, {
       method: 'POST',
       timeout: 35000,
+    }),
+  /** After grace + final verification: same gate as Recent plate detections; notifies and SMS Barangay. */
+  escalateForTicket: (id: string) =>
+    fetchAPI(`/violations/${encodeURIComponent(id)}/escalate-for-ticket`, {
+      method: 'POST',
+      timeout: 60000,
+      cache: false,
     }),
   assignToMe: (id: string) =>
     fetchAPI(`/violations/${encodeURIComponent(id)}/assign`, {

@@ -16,6 +16,8 @@ export function RecentTickets({ violations }: RecentTicketsProps) {
     switch (status) {
       case 'warning':
         return { label: 'Warning', variant: 'warning' as const, indicator: 'status-warning' };
+      case 'for_ticket':
+        return { label: 'For ticket', variant: 'destructive' as const, indicator: 'status-violation' };
       case 'pending':
         return { label: 'Pending', variant: 'secondary' as const, indicator: 'status-active' };
       case 'issued':

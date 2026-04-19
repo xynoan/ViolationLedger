@@ -19,7 +19,7 @@ export default function Warnings() {
   const [testSeedUnregLoading, setTestSeedUnregLoading] = useState(false);
   const [assigningViolationId, setAssigningViolationId] = useState<string | null>(null);
   const activeWarnings = violations
-    .filter(v => v.status === 'warning')
+    .filter(v => v.status === 'warning' || v.status === 'for_ticket')
     .sort((a, b) => {
       const aUrgent = a.unregisteredUrgent ? 1 : 0;
       const bUrgent = b.unregisteredUrgent ? 1 : 0;
@@ -127,6 +127,51 @@ export default function Warnings() {
         description: error.message || "Failed to issue ticket",
         variant: "destructive",
       });
+    }
+  };
+
+  const handleEscalateForTicket = async (
+    violationId: string,
+    opts?: { fromAutoPoll?: boolean },
+  ) => {
+    try {
+      const result = await violationsAPI.escalateForTicket(violationId);
+      if (result?.alreadyForTicket) {
+        await loadViolations();
+        return;
+      }
+      toast({
+        title: 'Status: FOR TICKET',
+        description:
+          'Recent plate match at this location. Barangay users were notified by SMS when possible.',
+      });
+      await loadViolations();
+    } catch (error: any) {
+      const reason = error?.reason as string | undefined;
+      const msg = String(error?.message || '');
+      if (
+        opts?.fromAutoPoll &&
+        (reason === 'no_presence' ||
+          reason === 'grace_not_ended' ||
+          reason === 'not_upgraded')
+      ) {
+        return;
+      }
+      if (opts?.fromAutoPoll && /CHECK constraint/i.test(msg)) {
+        toast({
+          title: 'Escalation failed',
+          description:
+            'Database schema is out of date. Restart the backend once so migrations can add the FOR TICKET status.',
+          variant: 'destructive',
+        });
+        return;
+      }
+      toast({
+        title: 'Escalation failed',
+        description: msg || 'Could not escalate this warning',
+        variant: 'destructive',
+      });
+      if (!opts?.fromAutoPoll) throw error;
     }
   };
 
@@ -257,6 +302,8 @@ export default function Warnings() {
                   currentUserId={user?.id || null}
                   showThumbnail={false}
                   smsStatusBadge="sentOnly"
+                  finalVerificationPollEscalation
+                  onEscalateForTicket={handleEscalateForTicket}
                 />
               ))}
             </div>

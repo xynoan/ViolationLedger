@@ -1,10 +1,11 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Clock, AlertTriangle, Check, Camera, Ticket, ImageOff, MessageSquare } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Violation } from '@/types/parking';
 import { cn } from '@/lib/utils';
-import { healthAPI } from '@/lib/api';
+import { detectionsAPI, healthAPI } from '@/lib/api';
+import { recentPlateEntriesMatchViolation } from '@/lib/recentPlates';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 const SERVER_BASE_URL = API_BASE_URL.replace('/api', '');
@@ -27,6 +28,12 @@ interface WarningTimerProps {
   smsStatusBadge?: 'full' | 'sentOnly';
   /** full: owner SMS countdown + line; graceOnly: grace timer only (Warnings page). */
   ownerSmsUi?: 'full' | 'graceOnly';
+  /**
+   * Warnings page: during final verification, poll Recent plate detections (same API as Recent plate page);
+   * when plate+location matches, escalate to FOR TICKET (server notifies + SMS Barangay).
+   */
+  finalVerificationPollEscalation?: boolean;
+  onEscalateForTicket?: (id: string, opts?: { fromAutoPoll?: boolean }) => void | Promise<void>;
 }
 
 /** Seconds until a wall-clock instant. */
@@ -88,6 +95,8 @@ export function WarningTimer({
   showThumbnail = true,
   smsStatusBadge = 'full',
   ownerSmsUi = 'full',
+  finalVerificationPollEscalation = false,
+  onEscalateForTicket,
 }: WarningTimerProps) {
   const [gracePeriodMinutes, setGracePeriodMinutes] = useState(30);
   const [ownerSmsDelayMinutes, setOwnerSmsDelayMinutes] = useState(5);
@@ -96,31 +105,72 @@ export function WarningTimer({
   const [verificationDeltaSec, setVerificationDeltaSec] = useState<number | null>(null);
   const [sendingSms, setSendingSms] = useState(false);
   const [ownerSmsDelayDisabledForDemo, setOwnerSmsDelayDisabledForDemo] = useState(false);
-  const [autoClearFailed, setAutoClearFailed] = useState(false);
-  const onCancelRef = useRef(onCancel);
-  onCancelRef.current = onCancel;
-  const autoClearInvokedRef = useRef(false);
+  const onEscalateForTicketRef = useRef(onEscalateForTicket);
+  onEscalateForTicketRef.current = onEscalateForTicket;
+  const escalationAttemptedRef = useRef(false);
 
   useEffect(() => {
-    autoClearInvokedRef.current = false;
-    setAutoClearFailed(false);
+    escalationAttemptedRef.current = false;
   }, [violation.id]);
 
-  /** After grace + verification window (client clock), call clear (same as Clear button) instead of waiting on monitoring poll. */
+  /** Final verification: match Recent plate detections (15m window), then server validates post-grace presence + SMS. */
   useEffect(() => {
-    if (autoClearInvokedRef.current) return;
+    if (!finalVerificationPollEscalation || !onEscalateForTicketRef.current) return;
     if (violation.status !== 'warning') return;
-    const clear = onCancelRef.current;
-    if (!clear) return;
-    if (graceDeltaSec === null || verificationDeltaSec === null) return;
-    if (graceDeltaSec > 0 || verificationDeltaSec > 0) return;
+    if (
+      graceDeltaSec === null ||
+      graceDeltaSec > 0 ||
+      verificationDeltaSec === null ||
+      verificationDeltaSec <= 0
+    ) {
+      return;
+    }
 
-    autoClearInvokedRef.current = true;
-    void Promise.resolve(clear(violation.id)).catch(() => {
-      autoClearInvokedRef.current = false;
-      setAutoClearFailed(true);
-    });
-  }, [violation.id, violation.status, graceDeltaSec, verificationDeltaSec]);
+    const tick = async () => {
+      if (escalationAttemptedRef.current) return;
+      try {
+        const graceEndMs = computeSequentialGraceEndMs(
+          violation,
+          gracePeriodMinutes,
+          ownerSmsDelayMinutes,
+          ownerSmsDelayDisabledForDemo,
+        );
+        const data = await detectionsAPI.getRecentPlates({ minutes: 15 });
+        const entries = data?.entries ?? [];
+        if (
+          !recentPlateEntriesMatchViolation(
+            entries,
+            violation.plateNumber,
+            violation.cameraLocationId,
+            graceEndMs,
+          )
+        ) {
+          return;
+        }
+        escalationAttemptedRef.current = true;
+        await onEscalateForTicketRef.current?.(violation.id, { fromAutoPoll: true });
+      } catch {
+        /* next poll (e.g. recent-plates fetch failed) */
+      }
+    };
+
+    void tick();
+    const interval = setInterval(() => void tick(), 4000);
+    return () => clearInterval(interval);
+  }, [
+    finalVerificationPollEscalation,
+    violation.id,
+    violation.status,
+    violation.plateNumber,
+    violation.cameraLocationId,
+    graceDeltaSec,
+    verificationDeltaSec,
+    gracePeriodMinutes,
+    ownerSmsDelayMinutes,
+    ownerSmsDelayDisabledForDemo,
+    violation.timeDetected,
+    violation.ownerSmsScheduledAt,
+  ]);
 
   useEffect(() => {
     const tick = () => {
@@ -188,15 +238,22 @@ export function WarningTimer({
     };
   }, []);
 
+  const isForTicket = violation.status === 'for_ticket';
   const isInPostGraceVerificationWindow =
+    !isForTicket &&
     graceDeltaSec !== null &&
     graceDeltaSec <= 0 &&
     verificationDeltaSec !== null &&
     verificationDeltaSec > 0;
-  const tier = isInPostGraceVerificationWindow ? 'urgent' : tierFromDelta(graceDeltaSec);
-  const isOverdue = graceDeltaSec !== null && graceDeltaSec <= 0;
+  const tier = isForTicket
+    ? 'urgent'
+    : isInPostGraceVerificationWindow
+      ? 'urgent'
+      : tierFromDelta(graceDeltaSec);
+  const isOverdue = !isForTicket && graceDeltaSec !== null && graceDeltaSec <= 0;
   const overdueSeconds = isOverdue && graceDeltaSec !== null ? Math.abs(graceDeltaSec) : 0;
-  const canIssueTicket = graceDeltaSec !== null && graceDeltaSec <= 0;
+  const canIssueTicket =
+    isForTicket || (graceDeltaSec !== null && graceDeltaSec <= 0);
 
   const borderClass = {
     overdue: 'border-l-red-600',
@@ -331,6 +388,11 @@ export function WarningTimer({
                       {violation.vehicleType}
                     </Badge>
                   )}
+                  {isForTicket && (
+                    <Badge className="text-xs bg-amber-600 text-white border-amber-700">
+                      FOR TICKET
+                    </Badge>
+                  )}
                   {violation.unregisteredUrgent && (
                     <Badge className="text-xs bg-red-600 text-white border-red-700">
                       URGENT · UNREGISTERED
@@ -382,10 +444,18 @@ export function WarningTimer({
               </div>
             </div>
 
-            <div className="flex shrink-0 flex-col items-stretch gap-2 sm:items-end lg:ml-4 lg:min-w-[11rem]">
+              <div className="flex shrink-0 flex-col items-stretch gap-2 sm:items-end lg:ml-4 lg:min-w-[11rem]">
               <div className="flex items-center justify-end gap-2 text-muted-foreground">
                 <Clock className="h-4 w-4 shrink-0" />
-                {showOwnerSmsPrimaryTimer ? (
+                {isForTicket ? (
+                  <div className="text-right space-y-1 max-w-[14rem]">
+                    <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Grace &amp; verification</div>
+                    <div className="font-mono text-lg font-bold text-amber-600">—</div>
+                    <div className="text-[10px] text-muted-foreground leading-snug">
+                      Plate matched recent detections at this spot. Issue a ticket when ready.
+                    </div>
+                  </div>
+                ) : showOwnerSmsPrimaryTimer ? (
                   <div className="text-right">
                     <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Owner SMS in</div>
                     <div className="font-mono text-xl font-bold tabular-nums text-blue-600">
@@ -409,26 +479,15 @@ export function WarningTimer({
                       </div>
                     ) : isOverdue ? (
                       <div className="text-right">
-                        {verificationDeltaSec !== null && verificationDeltaSec <= 0 ? (
-                          autoClearFailed ? (
-                            <p className="text-xs text-destructive text-right max-w-[12rem] ml-auto leading-snug">
-                              Could not clear automatically. Use Clear below.
-                            </p>
-                          ) : onCancel ? (
-                            <div className="text-sm font-medium text-muted-foreground tabular-nums">
-                              Clearing…
-                            </div>
-                          ) : (
-                            <span className="text-sm text-muted-foreground">—</span>
-                          )
-                        ) : (
-                          <>
-                            <div className="font-mono text-lg font-bold text-red-600">OVERDUE</div>
-                            <div className="font-mono text-sm font-semibold text-red-600 tabular-nums">
-                              +{formatHms(overdueSeconds)}
-                            </div>
-                            <div className="text-[10px] text-muted-foreground">since grace ended</div>
-                          </>
+                        <div className="font-mono text-lg font-bold text-red-600">OVERDUE</div>
+                        <div className="font-mono text-sm font-semibold text-red-600 tabular-nums">
+                          +{formatHms(overdueSeconds)}
+                        </div>
+                        <div className="text-[10px] text-muted-foreground">since grace ended</div>
+                        {verificationDeltaSec !== null && verificationDeltaSec <= 0 && (
+                          <div className="text-[10px] text-muted-foreground mt-1 max-w-[14rem] ml-auto leading-snug">
+                            Stays active until you issue a ticket, or it auto-clears if no plate is seen at this spot.
+                          </div>
                         )}
                       </div>
                     ) : graceDeltaSec !== null ? (

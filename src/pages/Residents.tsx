@@ -156,7 +156,8 @@ function violationsForResidentLinkedPlates(
 
 function hasActiveViolationsStanding(residentId: string, vehicles: Vehicle[], violations: Violation[]): boolean {
   return violationsForResidentLinkedPlates(residentId, vehicles, violations).some(
-    (vi) => vi.status === 'issued' || vi.status === 'pending',
+    (vi) =>
+      vi.status === 'issued' || vi.status === 'pending' || vi.status === 'for_ticket',
   );
 }
 
@@ -193,7 +194,8 @@ function countUnpaidViolationsForResident(
   violations: Violation[],
 ): number {
   return violationsForResidentLinkedPlates(residentId, vehicles, violations).filter(
-    (vi) => vi.status === 'issued' || vi.status === 'pending',
+    (vi) =>
+      vi.status === 'issued' || vi.status === 'pending' || vi.status === 'for_ticket',
   ).length;
 }
 
@@ -226,6 +228,8 @@ function violationAccentClass(status: Violation['status']): string {
   switch (status) {
     case 'warning':
       return 'bg-amber-500';
+    case 'for_ticket':
+      return 'bg-orange-600';
     case 'pending':
       return 'bg-blue-500';
     case 'issued':
@@ -920,7 +924,9 @@ export default function Residents() {
   const profileOpenViolationCount = useMemo(() => {
     if (!profileResident) return 0;
     if (useApiViolationsForProfile && !residentViolationsLoading) {
-      return residentViolationsFromApi.filter((v) => v.status === 'issued' || v.status === 'pending').length;
+      return residentViolationsFromApi.filter(
+        (v) => v.status === 'issued' || v.status === 'pending' || v.status === 'for_ticket',
+      ).length;
     }
     return countUnpaidViolationsForResident(profileResident.id, vehicles, violations);
   }, [

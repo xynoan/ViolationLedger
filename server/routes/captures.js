@@ -304,7 +304,7 @@ router.post('/:cameraId', async (req, res) => {
                 SELECT * FROM violations 
                 WHERE plateNumber = ? 
                 AND cameraLocationId = ?
-                AND status IN ('warning', 'pending')
+                AND status IN ('warning', 'pending', 'for_ticket')
                 ORDER BY timeDetected DESC
                 LIMIT 1
               `).get(detection.plateNumber, locationId);
@@ -462,7 +462,7 @@ router.post('/:cameraId', async (req, res) => {
               SELECT * FROM violations 
               WHERE cameraLocationId = ? 
               AND plateNumber = ?
-              AND status IN ('warning', 'pending')
+              AND status IN ('warning', 'pending', 'for_ticket')
               ORDER BY timeDetected DESC
               LIMIT 1
             `).get(locationId, plateStatus);

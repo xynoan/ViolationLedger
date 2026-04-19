@@ -266,7 +266,7 @@ export default function Analytics({ embedded = false }: AnalyticsProps) {
 
   const violationTrendMeta = getTrendMeta(descriptive?.sevenDayComparison);
   const warningTrendMeta = getTrendMeta(analytics?.warnings.sevenDayComparison);
-  const activeAlertStatuses = new Set<Violation['status']>(['warning', 'pending', 'issued']);
+  const activeAlertStatuses = new Set<Violation['status']>(['warning', 'for_ticket', 'pending', 'issued']);
   const activeAlerts = violations.filter((v) => activeAlertStatuses.has(v.status));
 
   const topViolators = useMemo(() => {

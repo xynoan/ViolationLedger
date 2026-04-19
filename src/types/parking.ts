@@ -72,7 +72,7 @@ export interface Violation {
   cameraLocationId: string;
   timeDetected: Date;
   timeIssued?: Date;
-  status: 'warning' | 'pending' | 'issued' | 'cancelled' | 'cleared' | 'resolved';
+  status: 'warning' | 'for_ticket' | 'pending' | 'issued' | 'cancelled' | 'cleared' | 'resolved';
   warningExpiresAt?: Date;
   imageUrl?: string;
   imageBase64?: string;

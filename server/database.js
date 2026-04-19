@@ -488,7 +488,7 @@ async function initDatabase() {
       cameraLocationId TEXT NOT NULL,
       timeDetected TEXT NOT NULL,
       timeIssued TEXT,
-      status TEXT NOT NULL CHECK(status IN ('warning', 'pending', 'issued', 'cancelled', 'cleared', 'resolved')),
+      status TEXT NOT NULL CHECK(status IN ('warning', 'pending', 'issued', 'cancelled', 'cleared', 'resolved', 'for_ticket')),
       warningExpiresAt TEXT,
       ownerSmsScheduledAt TEXT,
       assignedToUserId TEXT,
@@ -534,6 +534,79 @@ async function initDatabase() {
     const errorMsg = error?.message || String(error);
     if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
       console.log('Note: violations.assignedAt migration:', errorMsg);
+    }
+  }
+
+  // Allow status 'for_ticket' (SQLite cannot ALTER CHECK — rebuild from PRAGMA so column layouts always match)
+  // sql.js statements do not support better-sqlite3's .get() / .all(); use db.exec().
+  try {
+    let createSql = '';
+    const masterRes = db.exec(`SELECT sql FROM sqlite_master WHERE type='table' AND name='violations'`);
+    if (masterRes?.[0]?.values?.length) {
+      const sqlIdx = masterRes[0].columns.indexOf('sql');
+      if (sqlIdx >= 0) {
+        createSql = String(masterRes[0].values[0][sqlIdx] ?? '');
+      }
+    }
+    const hasForTicketInSchema = /\bfor_ticket\b/i.test(createSql);
+    if (createSql && !hasForTicketInSchema) {
+      const pragmaRes = db.exec('PRAGMA table_info(violations)');
+      if (!pragmaRes?.[0]?.values?.length) {
+        throw new Error('PRAGMA table_info(violations) returned no columns');
+      }
+      const colNames = pragmaRes[0].columns;
+      const pragmaRows = pragmaRes[0].values.map((row) => {
+        const o = {};
+        colNames.forEach((c, i) => {
+          o[c] = row[i];
+        });
+        return o;
+      });
+      const colDefs = pragmaRows.map((c) => {
+        const colName = String(c.name);
+        const quoted = `"${colName.replace(/"/g, '""')}"`;
+        if (colName === 'status') {
+          return `${quoted} TEXT NOT NULL CHECK(status IN ('warning', 'pending', 'issued', 'cancelled', 'cleared', 'resolved', 'for_ticket'))`;
+        }
+        const typ = (c.type && String(c.type).trim()) || 'TEXT';
+        let def = `${quoted} ${typ}`;
+        if (Number(c.pk) === 1) def += ' PRIMARY KEY';
+        else if (Number(c.notnull) === 1) def += ' NOT NULL';
+        if (c.dflt_value != null && String(c.dflt_value) !== '') {
+          def += ` DEFAULT ${c.dflt_value}`;
+        }
+        return def;
+      });
+      db.run('DROP TABLE IF EXISTS violations__for_ticket_migrate');
+      db.run('BEGIN IMMEDIATE');
+      try {
+        db.run(`CREATE TABLE violations__for_ticket_migrate (${colDefs.join(', ')})`);
+        db.run(`INSERT INTO violations__for_ticket_migrate SELECT * FROM violations`);
+        db.run('DROP TABLE violations');
+        db.run('ALTER TABLE violations__for_ticket_migrate RENAME TO violations');
+        db.run('COMMIT');
+        console.log('Migrated violations table: added for_ticket to status CHECK constraint');
+        try {
+          const data = db.export();
+          fs.ensureDirSync(dirname(dbPath));
+          fs.writeFileSync(dbPath, Buffer.from(data));
+        } catch (saveErr) {
+          console.error('Failed to persist DB after violations migration:', saveErr);
+        }
+      } catch (inner) {
+        try {
+          db.run('ROLLBACK');
+        } catch (_) {
+          /* ignore */
+        }
+        throw inner;
+      }
+    }
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    console.error('violations for_ticket migration failed:', errorMsg);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: violations for_ticket migration:', errorMsg);
     }
   }
   

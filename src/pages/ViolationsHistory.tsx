@@ -42,6 +42,7 @@ import { Camera } from '@/types/parking';
 const STATUS_OPTIONS: { value: ViolationStatus | 'all'; label: string }[] = [
   { value: 'all', label: 'All Statuses' },
   { value: 'warning', label: 'Warning' },
+  { value: 'for_ticket', label: 'For ticket' },
   { value: 'issued', label: 'Issued' },
   { value: 'cleared', label: 'Cleared' },
 ];
@@ -92,7 +93,12 @@ export default function ViolationsHistory() {
     () =>
       violations.filter((v) => {
         if (statusFilter === 'all') {
-          return v.status === 'warning' || v.status === 'issued' || v.status === 'cleared';
+          return (
+            v.status === 'warning' ||
+            v.status === 'for_ticket' ||
+            v.status === 'issued' ||
+            v.status === 'cleared'
+          );
         }
         return v.status === statusFilter;
       }),
@@ -261,7 +267,11 @@ export default function ViolationsHistory() {
     if (broadest) {
       setRegistryHasViolations(
         violations.some(
-          (v) => v.status === 'warning' || v.status === 'issued' || v.status === 'cleared',
+          (v) =>
+            v.status === 'warning' ||
+            v.status === 'for_ticket' ||
+            v.status === 'issued' ||
+            v.status === 'cleared',
         ),
       );
     }
@@ -307,6 +317,7 @@ export default function ViolationsHistory() {
   const getStatusBadge = (status: ViolationStatus) => {
     const configs: Record<ViolationStatus, { variant: 'default' | 'secondary' | 'destructive' | 'warning' | 'success'; label: string }> = {
       warning: { variant: 'warning', label: 'Warning' },
+      for_ticket: { variant: 'destructive', label: 'For ticket' },
       issued: { variant: 'destructive', label: 'Issued' },
       resolved: { variant: 'success', label: 'Resolved' },
       cleared: { variant: 'secondary', label: 'Cleared' },
@@ -579,7 +590,7 @@ export default function ViolationsHistory() {
                         {violation.ticketId || '-'}
                       </TableCell>
                       <TableCell className="text-right">
-                        {violation.status === 'warning' && (
+                        {(violation.status === 'warning' || violation.status === 'for_ticket') && (
                           <Button
                             variant="outline"
                             size="sm"

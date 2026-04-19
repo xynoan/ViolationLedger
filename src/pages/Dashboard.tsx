@@ -228,7 +228,7 @@ export default function Dashboard() {
   }, [loadData]);
 
   const activeWarnings = violations
-    .filter(v => v.status === 'warning')
+    .filter(v => v.status === 'warning' || v.status === 'for_ticket')
     .sort((a, b) => {
       const aUrgent = a.unregisteredUrgent ? 1 : 0;
       const bUrgent = b.unregisteredUrgent ? 1 : 0;
