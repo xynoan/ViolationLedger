@@ -761,7 +761,11 @@ export default function Visitors() {
           const list: Vehicle[] = await vehiclesAPI.getAll(trimmed);
           if (seq !== plateLookupSeqRef.current) return;
           if (normPlate(plateInputRef.current.trim()) !== key) return;
-          const match = list.find((v) => normPlate(v.plateNumber) === key);
+          const match = list.find(
+            (v) =>
+              (!v.residentId || String(v.residentId).trim() === '') &&
+              normPlate(v.plateNumber) === key,
+          );
           if (!match) {
             setOwnerNameLockedByPlate(false);
             return;
