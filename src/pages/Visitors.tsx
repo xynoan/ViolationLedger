@@ -619,6 +619,7 @@ export default function Visitors() {
     }
 
     if (vehicle) {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
       setOwnerNameLockedByPlate(false);
       const { purposeOfVisit, purposeOfVisitOther } = normalizePurposeForForm(
         vehicle.purposeOfVisit || '',

@@ -425,6 +425,7 @@ export default function Vehicles() {
     }
     
     if (vehicle) {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
       const normalizedVehicleType = (vehicle.vehicleType || '').toLowerCase();
       const hasPresetVehicleType = vehicleTypeOptions.some((opt) => opt.value === normalizedVehicleType);
       setEditingVehicle(vehicle);
