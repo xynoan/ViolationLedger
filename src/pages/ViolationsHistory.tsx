@@ -6,7 +6,6 @@ import {
   FileText,
   Search,
   Filter,
-  Download,
   Calendar,
   MapPin,
   BarChart3,
@@ -17,7 +16,6 @@ import {
 } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
-import { trackAction } from '@/lib/auditTracking';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -45,10 +43,6 @@ const STATUS_OPTIONS: { value: ViolationStatus | 'all'; label: string }[] = [
   { value: 'all', label: 'All Statuses' },
   { value: 'warning', label: 'Warning' },
   { value: 'issued', label: 'Issued' },
-  { value: 'resolved', label: 'Resolved' },
-  { value: 'cleared', label: 'Cleared' },
-  { value: 'pending', label: 'Pending' },
-  { value: 'cancelled', label: 'Cancelled' },
 ];
 
 interface ViolationStats {
@@ -93,6 +87,11 @@ export default function ViolationsHistory() {
   const [registryHasViolations, setRegistryHasViolations] = useState(false);
   const [clearingId, setClearingId] = useState<string | null>(null);
 
+  const visibleViolations = useMemo(
+    () => violations.filter((v) => v.status === 'warning' || v.status === 'issued'),
+    [violations],
+  );
+
   const multiPlateContext = useMemo(() => {
     const plates = (location.state as { relatedPlates?: string[] } | null)?.relatedPlates;
     if (!Array.isArray(plates) || plates.length < 2) return null;
@@ -134,7 +133,7 @@ export default function ViolationsHistory() {
   }, [searchParams, location.state]);
 
   useEffect(() => {
-    if (!highlightViolationId || violations.length === 0 || isRefreshing) return;
+    if (!highlightViolationId || visibleViolations.length === 0 || isRefreshing) return;
     const t = window.setTimeout(() => {
       document.getElementById(`violation-row-${highlightViolationId}`)?.scrollIntoView({
         block: 'center',
@@ -142,7 +141,7 @@ export default function ViolationsHistory() {
       });
     }, 120);
     return () => clearTimeout(t);
-  }, [highlightViolationId, violations, isRefreshing]);
+  }, [highlightViolationId, visibleViolations, isRefreshing]);
 
   const loadCameras = async () => {
     try {
@@ -253,7 +252,9 @@ export default function ViolationsHistory() {
       debouncedSearchTerm.trim() === '' &&
       !residentFilterId;
     if (broadest) {
-      setRegistryHasViolations(violations.length > 0);
+      setRegistryHasViolations(
+        violations.some((v) => v.status === 'warning' || v.status === 'issued'),
+      );
     }
   }, [violations, statusFilter, locationFilter, startDate, endDate, debouncedSearchTerm, residentFilterId]);
 
@@ -305,43 +306,6 @@ export default function ViolationsHistory() {
     };
     const config = configs[status] || { variant: 'default', label: status };
     return <Badge variant={config.variant}>{config.label}</Badge>;
-  };
-
-  const exportToCSV = async () => {
-    // Track export action
-    await trackAction('export', 'violations', null, { format: 'csv', count: violations.length });
-    
-    const headers = ['ID', 'Ticket ID', 'Plate Number', 'Location', 'Status', 'Time Detected', 'Time Issued', 'Warning Expires At'];
-    const rows = violations.map(v => [
-      v.id,
-      v.ticketId || '',
-      v.plateNumber,
-      v.cameraLocationId,
-      v.status,
-      v.timeDetected.toISOString(),
-      v.timeIssued?.toISOString() || '',
-      v.warningExpiresAt?.toISOString() || '',
-    ]);
-
-    const csvContent = [
-      headers.join(','),
-      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
-    ].join('\n');
-
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', `violations_${new Date().toISOString().split('T')[0]}.csv`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-
-    toast({
-      title: "Export Successful",
-      description: "Violations data exported to CSV",
-    });
   };
 
   const clearFilters = () => {
@@ -429,7 +393,7 @@ export default function ViolationsHistory() {
         )}
         {/* Statistics Cards */}
         {stats && !isLoadingStats && !residentFilterId && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             <div className="glass-card rounded-xl p-4">
               <div className="flex items-center justify-between">
                 <div>
@@ -455,15 +419,6 @@ export default function ViolationsHistory() {
                   <p className="text-2xl font-bold text-destructive mt-1">{stats.byStatus.issued || 0}</p>
                 </div>
                 <FileText className="h-8 w-8 text-destructive" />
-              </div>
-            </div>
-            <div className="glass-card rounded-xl p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">Resolved</p>
-                  <p className="text-2xl font-bold text-success mt-1">{stats.byStatus.resolved || 0}</p>
-                </div>
-                <TrendingUp className="h-8 w-8 text-success" />
               </div>
             </div>
           </div>
@@ -542,10 +497,6 @@ export default function ViolationsHistory() {
             <Button variant="outline" onClick={clearFilters} size="sm">
               Clear Filters
             </Button>
-            <Button onClick={exportToCSV} size="sm" className="ml-auto">
-              <Download className="h-4 w-4 mr-2" />
-              Export CSV
-            </Button>
           </div>
         </div>
 
@@ -554,12 +505,12 @@ export default function ViolationsHistory() {
           <div className="glass-card rounded-xl p-8 sm:p-12 text-center">
             <p className="text-muted-foreground">Refreshing violations...</p>
           </div>
-        ) : violations.length > 0 ? (
+        ) : visibleViolations.length > 0 ? (
           <div className="glass-card rounded-xl overflow-hidden">
             <div className="p-4 border-b border-border">
               <div className="flex items-center justify-between">
                 <h3 className="font-semibold text-foreground">
-                  {violations.length} violation{violations.length !== 1 ? 's' : ''} found
+                  {visibleViolations.length} violation{visibleViolations.length !== 1 ? 's' : ''} found
                 </h3>
               </div>
             </div>
@@ -577,7 +528,7 @@ export default function ViolationsHistory() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {violations.map((violation) => (
+                  {visibleViolations.map((violation) => (
                     <TableRow
                       key={violation.id}
                       id={`violation-row-${violation.id}`}
@@ -607,7 +558,7 @@ export default function ViolationsHistory() {
                         {violation.ticketId || '-'}
                       </TableCell>
                       <TableCell className="text-right">
-                        {(violation.status === 'warning' || violation.status === 'pending') && (
+                        {violation.status === 'warning' && (
                           <Button
                             variant="outline"
                             size="sm"
@@ -630,6 +581,16 @@ export default function ViolationsHistory() {
                 </TableBody>
               </Table>
             </div>
+          </div>
+        ) : violations.length > 0 ? (
+          <div className="glass-card rounded-xl p-8 sm:p-12 text-center">
+            <FileText className="h-12 w-12 sm:h-16 sm:w-16 text-muted-foreground mx-auto mb-4" />
+            <h3 className="text-lg font-semibold text-foreground mb-2">No active violations</h3>
+            <p className="text-muted-foreground">
+              {debouncedSearchTerm.trim()
+                ? 'No warnings or issued tickets match your search or filters.'
+                : 'There are no warnings or issued tickets in this view. Other statuses are hidden.'}
+            </p>
           </div>
         ) : registryHasViolations && debouncedSearchTerm.trim() ? (
           <SearchNoMatchesEmpty
