@@ -82,7 +82,7 @@ function formatVehicleTypeLabel(value?: string): string {
 
 const normPlate = (p: string) => String(p || '').replace(/\s+/g, '').toUpperCase();
 
-const VEHICLE_TYPE_PRESET_SLUGS = new Set(
+const VEHICLE_TYPE_PRESET_SLUGS = new Set<string>(
   VEHICLE_TYPE_OPTIONS.filter((o) => o.value !== VEHICLE_TYPE_OTHER).map((o) => o.value),
 );
 
