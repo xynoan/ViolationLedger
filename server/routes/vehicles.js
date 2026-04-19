@@ -162,6 +162,17 @@ router.post('/', (req, res) => {
       if (visitorCategory === 'rental' && (!rented || String(rented).trim() === '')) {
         return res.status(400).json({ error: 'Rental location is required for short-term rentals' });
       }
+
+      const dupVisitorContact = db
+        .prepare(
+          `SELECT id FROM vehicles WHERE contactNumber = ? AND (residentId IS NULL OR TRIM(COALESCE(residentId, '')) = '')`,
+        )
+        .get(cleanedContact);
+      if (dupVisitorContact) {
+        return res.status(409).json({
+          error: 'A visitor with this contact number is already registered.',
+        });
+      }
     }
 
     db.prepare(`
@@ -196,7 +207,7 @@ router.post('/', (req, res) => {
     });
   } catch (error) {
     if (isUniquePlateConstraintError(error)) {
-      res.status(409).json({ error: 'Plate number already exists' });
+      res.status(409).json({ error: 'This plate number already exists.' });
     } else {
       res.status(500).json({ error: error.message });
     }
@@ -310,6 +321,19 @@ router.put('/:id', requireRole('admin', 'barangay_user'), (req, res) => {
     const nextCity =
       city !== undefined ? String(city || '').trim() : String(vehicle.city || '').trim();
 
+    if (!nextResidentId) {
+      const dupVisitorContact = db
+        .prepare(
+          `SELECT id FROM vehicles WHERE contactNumber = ? AND (residentId IS NULL OR TRIM(COALESCE(residentId, '')) = '') AND id != ?`,
+        )
+        .get(cleanedContact, req.params.id);
+      if (dupVisitorContact) {
+        return res.status(409).json({
+          error: 'A visitor with this contact number is already registered.',
+        });
+      }
+    }
+
     db.prepare(`
       UPDATE vehicles 
       SET plateNumber = ?, ownerName = ?, ownerFirstName = ?, ownerMiddleName = ?, ownerLastName = ?, ownerSuffix = ?, contactNumber = ?, houseNumber = ?, streetName = ?, barangay = ?, city = ?, residentId = ?, rented = ?, purposeOfVisit = ?, vehicleType = ?, visitorCategory = ?
@@ -340,7 +364,11 @@ router.put('/:id', requireRole('admin', 'barangay_user'), (req, res) => {
       registeredAt: new Date(updated.registeredAt)
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    if (isUniquePlateConstraintError(error)) {
+      res.status(409).json({ error: 'This plate number already exists.' });
+    } else {
+      res.status(500).json({ error: error.message });
+    }
   }
 });
 

@@ -19,6 +19,13 @@ function normalizeResidentType(value) {
   return 'homeowner';
 }
 
+function normalizeResidentNameForDedupe(name) {
+  return String(name || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
 router.get('/', (req, res) => {
   try {
     const { search } = req.query;
@@ -92,6 +99,17 @@ router.post('/', (req, res) => {
       });
     }
 
+    const duplicateContact = db.prepare('SELECT id FROM residents WHERE contactNumber = ?').get(cleanedContact);
+    if (duplicateContact) {
+      return res.status(409).json({ error: 'This contact number is already registered.' });
+    }
+
+    const nameKey = normalizeResidentNameForDedupe(name);
+    const existingForName = db.prepare('SELECT id, name FROM residents').all();
+    if (existingForName.some((r) => normalizeResidentNameForDedupe(r.name) === nameKey)) {
+      return res.status(409).json({ error: 'A resident with this name is already registered.' });
+    }
+
     db.prepare(`
       INSERT INTO residents (id, name, contactNumber, address, houseNumber, streetName, barangay, city, createdAt, residentStatus, residentType)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -130,6 +148,21 @@ router.put('/:id', (req, res) => {
           error: 'Contact number cannot be empty'
         });
       }
+    }
+
+    const contactConflict = db
+      .prepare('SELECT id FROM residents WHERE contactNumber = ? AND id != ?')
+      .get(cleanedContact, req.params.id);
+    if (contactConflict) {
+      return res.status(409).json({ error: 'This contact number is already registered.' });
+    }
+
+    const nextName =
+      name !== undefined ? String(name || '').trim() : String(resident.name || '').trim();
+    const nameKey = normalizeResidentNameForDedupe(nextName);
+    const othersNamed = db.prepare('SELECT id, name FROM residents WHERE id != ?').all(req.params.id);
+    if (othersNamed.some((r) => normalizeResidentNameForDedupe(r.name) === nameKey)) {
+      return res.status(409).json({ error: 'A resident with this name is already registered.' });
     }
 
     const nextH =

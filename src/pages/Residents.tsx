@@ -292,6 +292,16 @@ function errMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
+/** Matches server-side cleaning in `server/routes/residents.js`. */
+function normalizeResidentContactForDedupe(c: string) {
+  return c.trim().replace(/[\s\-\(\)]/g, '');
+}
+
+/** Case-insensitive, collapsed whitespace — matches `normalizeResidentNameForDedupe` in `server/routes/residents.js`. */
+function normalizeResidentNameForDedupe(name: string) {
+  return name.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
 function splitResidentName(fullName: string) {
   const parts = fullName.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) {
@@ -758,6 +768,34 @@ export default function Residents() {
       streetName: street,
       residentType: formData.residentType,
     };
+
+    const nameKey = normalizeResidentNameForDedupe(fullName);
+    const duplicateName = residents.find(
+      (r) => normalizeResidentNameForDedupe(r.name) === nameKey && r.id !== editingResident?.id,
+    );
+    if (duplicateName) {
+      toast({
+        title: 'Validation Error',
+        description: 'A resident with this name is already registered.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    const contactDedupe = normalizeResidentContactForDedupe(formData.contactNumber);
+    const duplicateContact = residents.find(
+      (r) =>
+        normalizeResidentContactForDedupe(r.contactNumber) === contactDedupe &&
+        r.id !== editingResident?.id,
+    );
+    if (duplicateContact) {
+      toast({
+        title: 'Validation Error',
+        description: 'This contact number is already registered.',
+        variant: 'destructive',
+      });
+      return;
+    }
 
     try {
       let saved: Resident;

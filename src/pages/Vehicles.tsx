@@ -68,6 +68,20 @@ function errMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
+/** Avoid surfacing raw DB errors if the API ever returns them for duplicate plates. */
+function vehiclePlateSaveErrorMessage(error: unknown, fallback: string) {
+  const raw = errMessage(error, fallback);
+  const lower = raw.toLowerCase();
+  if (
+    lower.includes('unique constraint') ||
+    lower.includes('sqlite_constraint_unique') ||
+    lower.includes('vehicles.platenumber')
+  ) {
+    return 'This plate number already exists.';
+  }
+  return raw;
+}
+
 const digitsOnly = (value: string) => value.replace(/\D/g, '');
 const lettersAndSpacesOnly = (value: string) => value.replace(/[^a-zA-Z\s]/g, '');
 const ownerNameValid = (value: string) => /^[a-zA-Z\s]+$/.test(value.trim());
@@ -483,6 +497,19 @@ export default function Vehicles() {
       vehicleType: vehicleTypeValue,
     };
 
+    const plateKey = normPlate(plateTrimmed);
+    const duplicatePlate = vehicles.find(
+      (v) => normPlate(v.plateNumber) === plateKey && v.id !== editingVehicle?.id,
+    );
+    if (duplicatePlate) {
+      toast({
+        title: 'Validation Error',
+        description: 'This plate number already exists.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     try {
       if (editingVehicle) {
         await vehiclesAPI.update(editingVehicle.id, {
@@ -516,7 +543,7 @@ export default function Vehicles() {
     } catch (error: unknown) {
       toast({
         title: "Error",
-        description: errMessage(error, "Failed to save vehicle"),
+        description: vehiclePlateSaveErrorMessage(error, "Failed to save vehicle"),
         variant: "destructive",
       });
     }
