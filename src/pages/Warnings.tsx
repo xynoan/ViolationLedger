@@ -257,7 +257,6 @@ export default function Warnings() {
                   currentUserId={user?.id || null}
                   showThumbnail={false}
                   smsStatusBadge="sentOnly"
-                  ownerSmsUi="graceOnly"
                 />
               ))}
             </div>
