@@ -8,16 +8,15 @@ import {
   AlertTriangle, 
   FileText,
   History,
-  Upload,
   Settings,
   Users,
   ClipboardList,
   ChevronLeft,
   ChevronRight,
   Menu,
-  X,
   Home,
   UserPlus,
+  ScanLine,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -30,7 +29,7 @@ const navItems = [
   { path: '/visitors', icon: UserPlus, label: 'Visitors', adminOnly: false },
   { path: '/residents', icon: Home, label: 'Residents', adminOnly: false },
   { path: '/cameras', icon: Camera, label: 'Cameras', adminOnly: false },
-  // { path: '/upload', icon: Upload, label: 'Upload Image', adminOnly: false },
+  { path: '/recent-plates', icon: ScanLine, label: 'Recent plate detections', adminOnly: false },
   { path: '/warnings', icon: AlertTriangle, label: 'Warnings', adminOnly: false },
   { path: '/tickets', icon: FileText, label: 'Capture Results', adminOnly: false },
   { path: '/violations', icon: History, label: 'Violations History', adminOnly: false },
@@ -60,7 +59,7 @@ function NavContent({ collapsed, onNavigate }: { collapsed?: boolean; onNavigate
   });
 
   return (
-    <nav className="flex-1 space-y-1 p-3">
+    <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto p-3">
       {filteredItems.map((item) => {
         const isActive = location.pathname === item.path;
         return (
@@ -102,7 +101,7 @@ export function MobileSidebar() {
         </SheetDescription>
         <div className="flex h-full flex-col">
           {/* Logo */}
-          <div className="flex h-16 items-center justify-between border-b border-border px-4">
+          <div className="flex h-16 shrink-0 items-center justify-between border-b border-border px-4">
             <div className="flex items-center gap-2">
               <img src="/logo.png" alt="ViolationLedger" className="h-8 w-8" />
               <span className="font-semibold text-lg">ViolationLedger</span>
@@ -132,9 +131,9 @@ export function Sidebar() {
           collapsed ? "w-16" : "w-64"
         )}
       >
-        <div className="flex h-full flex-col">
+        <div className="flex h-full min-h-0 flex-col">
           {/* Logo */}
-          <div className="flex h-16 items-center justify-between border-b border-border px-4">
+          <div className="flex h-16 shrink-0 items-center justify-between border-b border-border px-4">
             {!collapsed && (
               <div className="flex items-center gap-2">
                 <img src="/logo.png" alt="ViolationLedger" className="h-8 w-8" />

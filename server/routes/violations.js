@@ -9,6 +9,9 @@ const router = express.Router();
 
 const OUT_OF_VIEW_NOTE = 'Vehicle is not in the camera view anymore.';
 
+/** Matches `monitoring_service.js` checkAndUpdate(): recent `detections` used for "still present" after grace. */
+const PLATE_PRESENCE_LOOKBACK_MINUTES = 15;
+
 function computeOwnerSmsScheduledAtIso() {
   const smsDelayConfig = getOwnerSmsDelayConfig();
   const delayMinutes = Number(smsDelayConfig?.effectiveDelayMinutes ?? 5);
@@ -275,10 +278,12 @@ router.get('/', (req, res) => {
       });
     }
     
-    // Batch fetch recent detections (last grace period for all violations)
+    // Batch fetch recent plate detections (same lookback as grace-expiry "still present" in monitoring_service.js)
     const detectionsMap = new Map();
     if (locationIds.length > 0) {
-      const gracePeriodAgo = new Date(Date.now() - getGracePeriodMinutes() * 60 * 1000).toISOString();
+      const presenceSince = new Date(
+        Date.now() - PLATE_PRESENCE_LOOKBACK_MINUTES * 60 * 1000,
+      ).toISOString();
       const cameraIds = Array.from(camerasMap.values());
       if (cameraIds.length > 0) {
         const placeholders = cameraIds.map(() => '?').join(',');
@@ -288,8 +293,11 @@ router.get('/', (req, res) => {
           JOIN cameras c ON d.cameraId = c.id
           WHERE d.cameraId IN (${placeholders})
           AND d.timestamp >= ?
+          AND d.plateNumber != 'NONE'
+          AND d.plateNumber != 'BLUR'
+          AND d.class_name != 'none'
           ORDER BY d.timestamp DESC
-        `).all(...cameraIds, gracePeriodAgo);
+        `).all(...cameraIds, presenceSince);
         
         // Group detections by violation key (plateNumber-locationId)
         detections.forEach(detection => {

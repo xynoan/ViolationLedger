@@ -20,6 +20,7 @@ import ViolationsHistory from "./pages/ViolationsHistory";
 import UploadImage from "./pages/UploadImage";
 import Settings from "./pages/Settings";
 import Analytics from "./pages/Analytics";
+import RecentPlateDetections from "./pages/RecentPlateDetections";
 import UserManagement from "./pages/UserManagement";
 import AuditLogs from "./pages/AuditLogs";
 import NotFound from "./pages/NotFound";
@@ -69,6 +70,7 @@ const App = () => (
                       <Route path="/hosts" element={<Navigate to="/residents" replace />} />
                       <Route path="/residents" element={<Residents />} />
                       <Route path="/cameras" element={<Cameras />} />
+                      <Route path="/recent-plates" element={<RecentPlateDetections />} />
                       <Route path="/warnings" element={<Warnings />} />
                       <Route path="/tickets" element={<Tickets />} />
                       <Route path="/violations" element={<ViolationsHistory />} />

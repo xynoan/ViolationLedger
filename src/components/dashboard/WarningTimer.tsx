@@ -268,6 +268,11 @@ export function WarningTimer({
                 <p className="text-xs text-muted-foreground">
                   Detected at {new Date(violation.timeDetected).toLocaleString()}
                 </p>
+                {violation.lastPlateDetectionAt && (
+                  <p className="text-xs text-muted-foreground">
+                    Most recent plate capture at {violation.lastPlateDetectionAt.toLocaleString()}
+                  </p>
+                )}
                 {ownerSmsUi !== 'graceOnly' && !smsSentAt && canSendSms && (
                   <p className="text-xs text-muted-foreground">
                     Owner SMS timer:{' '}

@@ -78,6 +78,8 @@ export interface Violation {
   imageBase64?: string;
   message?: string;
   detectionId?: string;
+  /** Latest readable plate capture at this location; use `GET /detections/recent-plates` (e.g. merged client-side). */
+  lastPlateDetectionAt?: Date;
   vehicleType?: string;
   /** True when plate has no registered vehicle and should be treated as immediate priority. */
   unregisteredUrgent?: boolean;

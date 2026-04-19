@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Vehicle, Camera as CameraType, Violation } from '@/types/parking';
 import { vehiclesAPI, camerasAPI, violationsAPI, detectionsAPI, detectionAPI } from '@/lib/api';
+import { mergeViolationsWithRecentPlates, type RecentPlateEntry } from '@/lib/recentPlates';
 import { toast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 
@@ -62,11 +63,12 @@ export default function Dashboard() {
   const loadData = useCallback(async () => {
     try {
       setIsLoading(true);
-      const [vehiclesData, camerasData, violationsData, detectionsData] = await Promise.all([
+      const [vehiclesData, camerasData, violationsData, detectionsData, recentPlates] = await Promise.all([
         vehiclesAPI.getAll().catch(() => []),
         camerasAPI.getAll().catch(() => []),
         violationsAPI.getAll().catch(() => []),
         detectionsAPI.getAll().catch(() => []),
+        detectionsAPI.getRecentPlates({ minutes: 15 }).catch((): { entries: RecentPlateEntry[] } => ({ entries: [] })),
       ]);
       
       // Ensure deviceId is properly set for cameras
@@ -82,17 +84,16 @@ export default function Dashboard() {
       
       setVehicles(vehiclesData);
       setCameras(camerasWithDeviceId);
-      setViolations(
-        (violationsData || []).map((v: any) => ({
-          ...v,
-          timeDetected: new Date(v.timeDetected),
-          timeIssued: v.timeIssued ? new Date(v.timeIssued) : undefined,
-          warningExpiresAt: v.warningExpiresAt ? new Date(v.warningExpiresAt) : undefined,
-          smsSentAt: v.smsSentAt ? new Date(v.smsSentAt) : undefined,
-          ownerSmsScheduledAt: v.ownerSmsScheduledAt ? new Date(v.ownerSmsScheduledAt) : undefined,
-          assignedAt: v.assignedAt ? new Date(v.assignedAt) : undefined,
-        })),
-      );
+      const processedViolations = (violationsData || []).map((v: any) => ({
+        ...v,
+        timeDetected: new Date(v.timeDetected),
+        timeIssued: v.timeIssued ? new Date(v.timeIssued) : undefined,
+        warningExpiresAt: v.warningExpiresAt ? new Date(v.warningExpiresAt) : undefined,
+        smsSentAt: v.smsSentAt ? new Date(v.smsSentAt) : undefined,
+        ownerSmsScheduledAt: v.ownerSmsScheduledAt ? new Date(v.ownerSmsScheduledAt) : undefined,
+        assignedAt: v.assignedAt ? new Date(v.assignedAt) : undefined,
+      }));
+      setViolations(mergeViolationsWithRecentPlates(processedViolations, recentPlates.entries || []));
       // Count all detections (captures) - filter out "none" detections
       const validDetections = Array.isArray(detectionsData) 
         ? detectionsData.filter((d: any) => d.class_name && d.class_name.toLowerCase() !== 'none')

@@ -4,7 +4,8 @@ import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
 import { WarningTimer } from '@/components/dashboard/WarningTimer';
 import { Violation } from '@/types/parking';
-import { violationsAPI } from '@/lib/api';
+import { violationsAPI, detectionsAPI } from '@/lib/api';
+import { mergeViolationsWithRecentPlates, type RecentPlateEntry } from '@/lib/recentPlates';
 import { toast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/hooks/useAuth';
@@ -39,7 +40,10 @@ export default function Warnings() {
   const loadViolations = async () => {
     try {
       setIsLoading(true);
-      const data = await violationsAPI.getAll();
+      const [data, recentPlates] = await Promise.all([
+        violationsAPI.getAll(),
+        detectionsAPI.getRecentPlates({ minutes: 15 }).catch((): { entries: RecentPlateEntry[] } => ({ entries: [] })),
+      ]);
       // Convert date strings to Date objects
       const processedViolations = data.map((v: any) => ({
         ...v,
@@ -50,7 +54,7 @@ export default function Warnings() {
         ownerSmsScheduledAt: v.ownerSmsScheduledAt ? new Date(v.ownerSmsScheduledAt) : undefined,
         assignedAt: v.assignedAt ? new Date(v.assignedAt) : undefined,
       }));
-      setViolations(processedViolations);
+      setViolations(mergeViolationsWithRecentPlates(processedViolations, recentPlates.entries || []));
     } catch (error) {
       console.error('Error loading violations:', error);
       toast({

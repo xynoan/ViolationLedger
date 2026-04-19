@@ -256,6 +256,15 @@ export const detectionsAPI = {
   getByCamera: (cameraId: string) => fetchAPI(`/detections/camera/${cameraId}`, { cache: true }),
   getLatest: (cameraId: string) => fetchAPI(`/detections/camera/${cameraId}/latest`, { cache: true, timeout: 5000 }),
   getAll: () => fetchAPI('/detections/all', { cache: true }),
+  /** Readable plates in a time window (default 15m); one newest row per plate+location. */
+  getRecentPlates: (params?: { minutes?: number; locationId?: string; plateNumber?: string }) => {
+    const sp = new URLSearchParams();
+    if (params?.minutes != null) sp.set('minutes', String(params.minutes));
+    if (params?.locationId) sp.set('locationId', params.locationId);
+    if (params?.plateNumber) sp.set('plateNumber', params.plateNumber);
+    const q = sp.toString();
+    return fetchAPI(`/detections/recent-plates${q ? `?${q}` : ''}`, { cache: false });
+  },
 };
 
 // Captures API
