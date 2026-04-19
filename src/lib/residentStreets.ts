@@ -1,24 +1,16 @@
-/** Allowed street names for resident address (house number is separate). */
-export const RESIDENT_STREET_OPTIONS = [
-  'Twin Peaks Drive',
-  'Milky Way Drive',
-  'Moonlight Loop',
-  "Comet's Loop",
-  'Hillside Loop',
-  'Starline Road',
-  'Evening Glow Road',
-  'Milky Way Lane',
-  'Hillside Lane',
-  'Starline Road Alley',
-  'Promenade Lane',
-  'Riverside Drive',
-  'Riverview Drive',
-  'Union Lane',
-] as const;
+import { DEFAULT_RESIDENT_STREETS } from '@/lib/formOptionsDefaults';
 
-export type ResidentStreetName = (typeof RESIDENT_STREET_OPTIONS)[number];
+/** Default street catalog (overridden by Settings → Form options when runtime config loads). */
+export const RESIDENT_STREET_OPTIONS = DEFAULT_RESIDENT_STREETS as readonly string[];
 
-export const RESIDENT_STREET_SET = new Set<string>(RESIDENT_STREET_OPTIONS);
+export type ResidentStreetName = string;
+
+export function buildResidentStreetSet(streets: string[]) {
+  return new Set(streets);
+}
+
+/** @deprecated Use buildResidentStreetSet with runtime `residentStreets` from settings. */
+export const RESIDENT_STREET_SET = new Set<string>(DEFAULT_RESIDENT_STREETS);
 
 export function formatResidentAddressLine(r: {
   houseNumber?: string;

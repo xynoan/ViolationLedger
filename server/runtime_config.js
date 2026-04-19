@@ -1,6 +1,13 @@
 import fs from 'fs-extra';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import {
+  DEFAULT_VEHICLE_TYPE_OPTIONS,
+  DEFAULT_VISITOR_PURPOSES,
+  DEFAULT_RESIDENT_VISIT_PURPOSE_LABEL,
+  DEFAULT_RENTED_LOCATION_OPTIONS,
+  DEFAULT_RESIDENT_STREETS,
+} from './form_options_defaults.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -11,12 +18,7 @@ export const DEFAULT_GRACE_PERIOD_MINUTES = 30;
 /** After grace ends, wait this long with no post-grace plate detection before auto-clearing the warning. */
 export const DEFAULT_POST_GRACE_VERIFICATION_MINUTES = 5;
 
-const DEFAULT_CONFIG = Object.freeze({
-  ownerSmsDelayMinutes: DEFAULT_OWNER_SMS_DELAY_MINUTES,
-  ownerSmsDelayDisabledForDemo: false,
-  gracePeriodMinutes: DEFAULT_GRACE_PERIOD_MINUTES,
-  postGraceVerificationMinutes: DEFAULT_POST_GRACE_VERIFICATION_MINUTES,
-});
+const ALLOWED_VISITOR_CATEGORIES = new Set(['guest', 'delivery', 'rental']);
 
 function clampPositiveInteger(value, fallback) {
   const parsed = Number.parseInt(String(value), 10);
@@ -24,21 +26,124 @@ function clampPositiveInteger(value, fallback) {
   return parsed;
 }
 
+function sanitizeVehicleTypeOptions(raw) {
+  const arr = Array.isArray(raw) ? raw : null;
+  const fallback = [...DEFAULT_VEHICLE_TYPE_OPTIONS];
+  if (!arr || arr.length === 0) return fallback;
+  const out = [];
+  const seen = new Set();
+  for (const item of arr) {
+    let value;
+    let label;
+    if (typeof item === 'string') {
+      label = item.trim();
+      if (!label) continue;
+      value = label
+        .toLowerCase()
+        .replace(/\s+/g, '_')
+        .replace(/[^a-z0-9_]/g, '');
+      if (!value) value = `type_${seen.size}`;
+    } else if (item && typeof item === 'object') {
+      label = String(item.label ?? '').trim();
+      const rawVal = String(item.value ?? '').trim();
+      value = rawVal
+        ? rawVal.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '')
+        : '';
+      if (!label) continue;
+      if (!value) {
+        value = label
+          .toLowerCase()
+          .replace(/\s+/g, '_')
+          .replace(/[^a-z0-9_]/g, '');
+      }
+      if (!value) value = `type_${seen.size}`;
+    } else {
+      continue;
+    }
+    if (seen.has(value)) continue;
+    seen.add(value);
+    out.push({ value, label });
+  }
+  if (out.length === 0) return fallback;
+  if (!out.some((x) => x.value === 'other')) {
+    out.push({ value: 'other', label: 'Other' });
+  }
+  return out;
+}
+
+function sanitizeVisitorPurposes(raw) {
+  const arr = Array.isArray(raw) ? raw : null;
+  const fallback = [...DEFAULT_VISITOR_PURPOSES];
+  if (!arr || arr.length === 0) return fallback;
+  const out = [];
+  const seen = new Set();
+  for (const item of arr) {
+    if (!item || typeof item !== 'object') continue;
+    const label = String(item.label ?? '').trim();
+    const category = String(item.category ?? '').toLowerCase().trim();
+    if (!label || !ALLOWED_VISITOR_CATEGORIES.has(category)) continue;
+    const key = label.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ label, category });
+  }
+  return out.length > 0 ? out : fallback;
+}
+
+function sanitizeResidentVisitPurposeLabel(raw, purposes) {
+  const labels = purposes.map((p) => p.label);
+  const t = typeof raw === 'string' ? raw.trim() : '';
+  if (t && labels.includes(t)) return t;
+  const guest = purposes.find((p) => p.category === 'guest');
+  if (guest) return guest.label;
+  return DEFAULT_RESIDENT_VISIT_PURPOSE_LABEL;
+}
+
+function sanitizeStringList(raw, fallback) {
+  const arr = Array.isArray(raw) ? raw : null;
+  const fb = [...fallback];
+  if (!arr || arr.length === 0) return fb;
+  const out = [];
+  const seen = new Set();
+  for (const item of arr) {
+    const s = typeof item === 'string' ? item.trim() : String(item ?? '').trim();
+    if (!s) continue;
+    const key = s.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(s);
+  }
+  return out.length > 0 ? out : fb;
+}
+
 function sanitizeConfig(raw) {
+  const base = raw && typeof raw === 'object' ? raw : {};
+  const purposes = sanitizeVisitorPurposes(base.visitorPurposes);
   return {
     ownerSmsDelayMinutes: clampPositiveInteger(
-      raw?.ownerSmsDelayMinutes,
+      base.ownerSmsDelayMinutes,
       DEFAULT_OWNER_SMS_DELAY_MINUTES,
     ),
-    ownerSmsDelayDisabledForDemo: Boolean(raw?.ownerSmsDelayDisabledForDemo),
+    ownerSmsDelayDisabledForDemo: Boolean(base.ownerSmsDelayDisabledForDemo),
     gracePeriodMinutes: clampPositiveInteger(
-      raw?.gracePeriodMinutes,
+      base.gracePeriodMinutes,
       DEFAULT_GRACE_PERIOD_MINUTES,
     ),
     postGraceVerificationMinutes: clampPositiveInteger(
-      raw?.postGraceVerificationMinutes,
+      base.postGraceVerificationMinutes,
       DEFAULT_POST_GRACE_VERIFICATION_MINUTES,
     ),
+    vehicleTypeOptions: sanitizeVehicleTypeOptions(base.vehicleTypeOptions),
+    visitorPurposes: purposes,
+    residentVisitPurposeLabel: sanitizeResidentVisitPurposeLabel(
+      base.residentVisitPurposeLabel,
+      purposes,
+    ),
+    rentedLocationOptions: sanitizeStringList(
+      base.rentedLocationOptions,
+      [...DEFAULT_RENTED_LOCATION_OPTIONS],
+    ),
+    residentStreets: sanitizeStringList(base.residentStreets, [...DEFAULT_RESIDENT_STREETS]),
   };
 }
 
@@ -55,7 +160,7 @@ function loadRuntimeConfig() {
   } catch (error) {
     console.warn('⚠️  Failed to load runtime config, using defaults:', error?.message || error);
   }
-  runtimeConfigCache = { ...DEFAULT_CONFIG };
+  runtimeConfigCache = sanitizeConfig({});
   return runtimeConfigCache;
 }
 
@@ -66,13 +171,7 @@ function persistRuntimeConfig(nextConfig) {
 }
 
 export function getRuntimeConfig() {
-  const config = loadRuntimeConfig();
-  return {
-    ownerSmsDelayMinutes: config.ownerSmsDelayMinutes,
-    ownerSmsDelayDisabledForDemo: config.ownerSmsDelayDisabledForDemo,
-    gracePeriodMinutes: config.gracePeriodMinutes,
-    postGraceVerificationMinutes: config.postGraceVerificationMinutes,
-  };
+  return loadRuntimeConfig();
 }
 
 export function updateRuntimeConfig(partial = {}) {
@@ -82,6 +181,10 @@ export function updateRuntimeConfig(partial = {}) {
     ...partial,
   };
   return persistRuntimeConfig(next);
+}
+
+export function getResidentStreetOptions() {
+  return getRuntimeConfig().residentStreets;
 }
 
 export function getOwnerSmsDelayConfig() {

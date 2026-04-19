@@ -35,6 +35,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from '@/hooks/use-toast';
 import { vehiclesAPI, residentsAPI } from '@/lib/api';
 import { useAuth } from '@/hooks/useAuth';
+import { useFormOptions } from '@/hooks/useFormOptions';
 import { cn } from '@/lib/utils';
 import { formatResidentAddressLine } from '@/lib/residentStreets';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -46,36 +47,11 @@ import {
   CommandItem,
   CommandList,
 } from '@/components/ui/command';
-const VEHICLE_TYPE_OPTIONS = [
-  { value: 'car', label: 'Car' },
-  { value: 'motorcycle', label: 'Motorcycle' },
-  { value: 'truck', label: 'Truck' },
-  { value: 'van', label: 'Van' },
-  { value: 'suv', label: 'SUV' },
-  { value: 'tricycle', label: 'Tricycle' },
-  { value: 'other', label: 'Other' },
-] as const;
-const VEHICLE_TYPE_OTHER = 'other';
 const PURPOSE_OTHER = 'Other';
-
-const RENTED_OPTIONS = ['Court', 'Community Center', 'Barangay Hall'] as const;
-
-/** Tabs and Purpose of visit dropdown — single source (includes Other). */
-const VISITOR_PURPOSE_TABS = [
-  'Visit resident',
-  'Barangay hall',
-  'Reservation',
-  'Drop-off',
-  'Delivery',
-  PURPOSE_OTHER,
-] as const;
-type VisitorPurposeTab = (typeof VISITOR_PURPOSE_TABS)[number];
 
 /** First tab only: all non-resident vehicles (not a purpose value). */
 const VISITOR_LIST_TAB_ALL = 'All' as const;
-type VisitorListTab = typeof VISITOR_LIST_TAB_ALL | VisitorPurposeTab;
-
-const PRESET_PURPOSE_TABS = VISITOR_PURPOSE_TABS.filter((t) => t !== PURPOSE_OTHER);
+type VisitorListTab = typeof VISITOR_LIST_TAB_ALL | string;
 
 /** Legacy purposes still routed to Delivery / Reservation tabs and API categories. */
 const PURPOSE_DELIVERY_LEGACY = ['Pickup', 'Package delivery'] as const;
@@ -102,23 +78,30 @@ const digitsOnly = (value: string) => value.replace(/\D/g, '');
 const lettersAndSpacesOnly = (value: string) => value.replace(/[^a-zA-Z\s]/g, '');
 const ownerNameValid = (value: string) => /^[a-zA-Z\s]+$/.test(value.trim());
 
-function formatVehicleTypeLabel(value?: string): string {
+function formatVehicleTypeLabel(
+  value: string | undefined,
+  vehicleTypeOptions: { value: string; label: string }[],
+): string {
   if (!value?.trim()) return '—';
   const v = value.trim().toLowerCase();
-  const found = VEHICLE_TYPE_OPTIONS.find((o) => o.value === v);
+  const found = vehicleTypeOptions.find((o) => o.value === v);
   return found?.label ?? value;
 }
 
 const normPlate = (p: string) => String(p || '').replace(/\s+/g, '').toUpperCase();
 
-const VEHICLE_TYPE_PRESET_SLUGS = new Set<string>(
-  VEHICLE_TYPE_OPTIONS.filter((o) => o.value !== VEHICLE_TYPE_OTHER).map((o) => o.value),
-);
-
-function vehicleMatchesTypeFilter(vehicle: Vehicle, filterSlug: string): boolean {
+function vehicleMatchesTypeFilter(
+  vehicle: Vehicle,
+  filterSlug: string,
+  vehicleTypeOptions: { value: string; label: string }[],
+  vehicleTypeOtherSlug: string,
+): boolean {
+  const preset = new Set(
+    vehicleTypeOptions.filter((o) => o.value !== vehicleTypeOtherSlug).map((o) => o.value),
+  );
   if (!filterSlug) return true;
   const t = (vehicle.vehicleType || '').trim().toLowerCase();
-  if (filterSlug === VEHICLE_TYPE_OTHER) return !VEHICLE_TYPE_PRESET_SLUGS.has(t);
+  if (filterSlug === vehicleTypeOtherSlug) return !preset.has(t);
   return t === filterSlug;
 }
 
@@ -133,59 +116,82 @@ function registeredAtMatchesDay(registeredAt: Date | string, isoDay: string): bo
   return ts >= start && ts <= end;
 }
 
-function deriveVisitorPurposeTab(v: Vehicle): VisitorPurposeTab {
+function deriveVisitorPurposeTab(
+  v: Vehicle,
+  presetPurposeLabels: string[],
+  defaultFirstLabel: string,
+): string {
   const raw = (v.purposeOfVisit || '').trim();
   const lower = raw.toLowerCase();
 
-  for (const label of PRESET_PURPOSE_TABS) {
+  for (const label of presetPurposeLabels) {
     if (lower === label.toLowerCase()) return label;
   }
-  if (PURPOSE_DELIVERY_LEGACY.some((p) => p.toLowerCase() === lower)) return 'Delivery';
-  if (PURPOSE_RENTAL_LEGACY.some((p) => p.toLowerCase() === lower)) return 'Reservation';
+  const deliveryTab =
+    presetPurposeLabels.find((l) => l.toLowerCase() === 'delivery') ?? 'Delivery';
+  const reservationTab =
+    presetPurposeLabels.find((l) => l.toLowerCase() === 'reservation') ?? 'Reservation';
+
+  if (PURPOSE_DELIVERY_LEGACY.some((p) => p.toLowerCase() === lower)) return deliveryTab;
+  if (PURPOSE_RENTAL_LEGACY.some((p) => p.toLowerCase() === lower)) return reservationTab;
 
   if (v.visitorCategory?.toLowerCase() === 'rental' || (v.rented && String(v.rented).trim())) {
-    return 'Reservation';
+    return reservationTab;
   }
-  if (v.visitorCategory?.toLowerCase() === 'delivery') return 'Delivery';
-  if (lower.includes('deliver')) return 'Delivery';
+  if (v.visitorCategory?.toLowerCase() === 'delivery') return deliveryTab;
+  if (lower.includes('deliver')) return deliveryTab;
 
   if (raw) return PURPOSE_OTHER;
-  return 'Visit resident';
+  return defaultFirstLabel;
 }
 
-function normalizePurposeForForm(raw: string): { purposeOfVisit: string; purposeOfVisitOther: string } {
+function normalizePurposeForForm(
+  raw: string,
+  presetPurposeLabels: string[],
+  defaultFirstLabel: string,
+): { purposeOfVisit: string; purposeOfVisitOther: string } {
   const t = raw.trim();
-  if (!t) return { purposeOfVisit: PRESET_PURPOSE_TABS[0] ?? 'Visit resident', purposeOfVisitOther: '' };
-  const hit = PRESET_PURPOSE_TABS.find((x) => x.toLowerCase() === t.toLowerCase());
+  if (!t) return { purposeOfVisit: defaultFirstLabel, purposeOfVisitOther: '' };
+  const hit = presetPurposeLabels.find((x) => x.toLowerCase() === t.toLowerCase());
   if (hit) return { purposeOfVisit: hit, purposeOfVisitOther: '' };
   return { purposeOfVisit: PURPOSE_OTHER, purposeOfVisitOther: t };
 }
 
 /** Owner, contact, type, and location fields — shared by edit dialog and plate autofill (not purpose). */
-function vehicleProfileFieldsForForm(vehicle: Vehicle) {
+function vehicleProfileFieldsForForm(
+  vehicle: Vehicle,
+  vehicleTypeOptions: { value: string; label: string }[],
+  vehicleTypeOtherSlug: string,
+) {
   const normalizedVehicleType = (vehicle.vehicleType || '').toLowerCase();
-  const hasPresetVehicleType = VEHICLE_TYPE_OPTIONS.some((opt) => opt.value === normalizedVehicleType);
+  const hasPresetVehicleType = vehicleTypeOptions.some((opt) => opt.value === normalizedVehicleType);
   return {
     ownerName: vehicle.ownerName,
     contactNumber: digitsOnly(vehicle.contactNumber),
-    vehicleType: hasPresetVehicleType ? normalizedVehicleType : VEHICLE_TYPE_OTHER,
+    vehicleType: hasPresetVehicleType ? normalizedVehicleType : vehicleTypeOtherSlug,
     vehicleTypeOther: hasPresetVehicleType ? '' : vehicle.vehicleType || '',
     rented: vehicle.rented || '',
   };
 }
 
-function apiVisitorCategory(purposeValue: string, rented: string): 'guest' | 'delivery' | 'rental' {
+function apiVisitorCategory(
+  purposeValue: string,
+  rented: string,
+  visitorPurposes: { label: string; category: string }[],
+): 'guest' | 'delivery' | 'rental' {
   const r = rented.trim();
   const p = purposeValue.trim();
   const pl = p.toLowerCase();
 
-  if (p === 'Visit resident') return 'guest';
+  const hit = visitorPurposes.find((x) => x.label.toLowerCase() === pl);
+  if (hit) {
+    return hit.category as 'guest' | 'delivery' | 'rental';
+  }
 
-  if (p === 'Delivery' || p === 'Drop-off') return 'delivery';
   if (PURPOSE_DELIVERY_LEGACY.some((x) => x.toLowerCase() === pl)) return 'delivery';
   if (pl.includes('deliver')) return 'delivery';
 
-  if (p === 'Reservation' || PURPOSE_RENTAL_LEGACY.some((x) => x.toLowerCase() === pl)) return 'rental';
+  if (PURPOSE_RENTAL_LEGACY.some((x) => x.toLowerCase() === pl)) return 'rental';
   if (r) return 'rental';
 
   return 'guest';
@@ -200,11 +206,15 @@ function residentVisitedStorageValue(r: Resident, allResidents: Resident[]): str
   return addr ? `${name} · ${addr}` : `${name} · ${digitsOnly(r.contactNumber)}`;
 }
 
-/** For Visit resident, show the resident name only (storage may append ` · ` disambiguation). Otherwise return `rented` as stored (e.g. facility). */
-function locationOrVisitedResidentLabel(vehicle: Vehicle, allResidents: Resident[]): string {
+/** For resident-visit purpose, show the resident name only (storage may append ` · ` disambiguation). Otherwise return `rented` as stored (e.g. facility). */
+function locationOrVisitedResidentLabel(
+  vehicle: Vehicle,
+  allResidents: Resident[],
+  residentVisitPurposeLabel: string,
+): string {
   const rented = (vehicle.rented || '').trim();
   if (!rented) return '';
-  if ((vehicle.purposeOfVisit || '').trim() !== 'Visit resident') return rented;
+  if ((vehicle.purposeOfVisit || '').trim() !== residentVisitPurposeLabel) return rented;
   for (const r of allResidents) {
     if (residentVisitedStorageValue(r, allResidents) === rented) return r.name.trim();
   }
@@ -376,6 +386,29 @@ export default function Visitors() {
   const isBarangayUser = user?.role === 'barangay_user';
   const isAdmin = user?.role === 'admin';
 
+  const { config: formOptions } = useFormOptions();
+  const vehicleTypeOptions = formOptions.vehicleTypeOptions;
+  const visitorPurposes = formOptions.visitorPurposes;
+  const residentVisitPurposeLabel = formOptions.residentVisitPurposeLabel;
+  const rentedLocationOptions = formOptions.rentedLocationOptions;
+
+  const vehicleTypeOtherSlug = useMemo(
+    () => vehicleTypeOptions.find((o) => o.value === 'other')?.value ?? 'other',
+    [vehicleTypeOptions],
+  );
+
+  const presetPurposeLabels = useMemo(
+    () => visitorPurposes.map((p) => p.label),
+    [visitorPurposes],
+  );
+
+  const visitorPurposeTabsFull = useMemo(
+    () => [...presetPurposeLabels, PURPOSE_OTHER],
+    [presetPurposeLabels],
+  );
+
+  const defaultFirstPurposeLabel = presetPurposeLabels[0] ?? 'Visit resident';
+
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [residents, setResidents] = useState<Resident[]>([]);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
@@ -396,7 +429,7 @@ export default function Visitors() {
     contactNumber: '',
     vehicleType: 'car' as string,
     vehicleTypeOther: '',
-    purposeOfVisit: 'Visit resident',
+    purposeOfVisit: defaultFirstPurposeLabel,
     purposeOfVisitOther: '',
     rented: '',
   });
@@ -450,30 +483,47 @@ export default function Visitors() {
 
   const tabFiltered = useMemo(() => {
     if (activeTab === VISITOR_LIST_TAB_ALL) return nonResidentVehicles;
-    return nonResidentVehicles.filter((v) => deriveVisitorPurposeTab(v) === activeTab);
-  }, [nonResidentVehicles, activeTab]);
+    return nonResidentVehicles.filter(
+      (v) =>
+        deriveVisitorPurposeTab(v, presetPurposeLabels, defaultFirstPurposeLabel) === activeTab,
+    );
+  }, [nonResidentVehicles, activeTab, presetPurposeLabels, defaultFirstPurposeLabel]);
+
   const categoryCounts = useMemo(() => {
-    const counts = Object.fromEntries(VISITOR_PURPOSE_TABS.map((t) => [t, 0])) as Record<
-      VisitorPurposeTab,
-      number
-    >;
+    const counts = Object.fromEntries(visitorPurposeTabsFull.map((t) => [t, 0])) as Record<string, number>;
     for (const v of nonResidentVehicles) {
-      counts[deriveVisitorPurposeTab(v)] += 1;
+      const tab = deriveVisitorPurposeTab(v, presetPurposeLabels, defaultFirstPurposeLabel);
+      counts[tab] = (counts[tab] ?? 0) + 1;
     }
     return counts;
-  }, [nonResidentVehicles]);
+  }, [nonResidentVehicles, visitorPurposeTabsFull, presetPurposeLabels, defaultFirstPurposeLabel]);
+
+  useEffect(() => {
+    const valid = new Set<string>([VISITOR_LIST_TAB_ALL, ...visitorPurposeTabsFull]);
+    setActiveTab((prev) => (valid.has(prev) ? prev : VISITOR_LIST_TAB_ALL));
+  }, [visitorPurposeTabsFull]);
 
   const displayedRows = useMemo(() => {
     const plateQ = normPlate(filterPlate);
     const ownerQ = filterOwner.trim().toLowerCase();
     return tabFiltered.filter((v) => {
       if (plateQ && !normPlate(v.plateNumber).includes(plateQ)) return false;
-      if (!vehicleMatchesTypeFilter(v, filterVehicleType)) return false;
+      if (!vehicleMatchesTypeFilter(v, filterVehicleType, vehicleTypeOptions, vehicleTypeOtherSlug)) {
+        return false;
+      }
       if (ownerQ && !v.ownerName.toLowerCase().includes(ownerQ)) return false;
       if (!registeredAtMatchesDay(v.registeredAt, filterRegisteredOn)) return false;
       return true;
     });
-  }, [tabFiltered, filterPlate, filterVehicleType, filterOwner, filterRegisteredOn]);
+  }, [
+    tabFiltered,
+    filterPlate,
+    filterVehicleType,
+    filterOwner,
+    filterRegisteredOn,
+    vehicleTypeOptions,
+    vehicleTypeOtherSlug,
+  ]);
 
   const hasActiveVisitorFilters = useMemo(
     () =>
@@ -497,13 +547,13 @@ export default function Visitors() {
   const activeCategoryLabel = activeTab === VISITOR_LIST_TAB_ALL ? VISITOR_LIST_TAB_ALL : activeTab;
 
   const resetForm = (listTab: VisitorListTab) => {
-    const purposeSeed: VisitorPurposeTab =
-      listTab === VISITOR_LIST_TAB_ALL ? (PRESET_PURPOSE_TABS[0] ?? 'Visit resident') : listTab;
+    const purposeSeed: string =
+      listTab === VISITOR_LIST_TAB_ALL ? (presetPurposeLabels[0] ?? 'Visit resident') : listTab;
     setFormData({
       plateNumber: '',
       ownerName: '',
       contactNumber: '',
-      vehicleType: 'car',
+      vehicleType: vehicleTypeOptions[0]?.value ?? 'car',
       vehicleTypeOther: '',
       purposeOfVisit: purposeSeed === PURPOSE_OTHER ? PURPOSE_OTHER : purposeSeed,
       purposeOfVisitOther: '',
@@ -533,8 +583,12 @@ export default function Visitors() {
 
     if (vehicle) {
       setOwnerNameLockedByPlate(false);
-      const { purposeOfVisit, purposeOfVisitOther } = normalizePurposeForForm(vehicle.purposeOfVisit || '');
-      const profile = vehicleProfileFieldsForForm(vehicle);
+      const { purposeOfVisit, purposeOfVisitOther } = normalizePurposeForForm(
+        vehicle.purposeOfVisit || '',
+        presetPurposeLabels,
+        defaultFirstPurposeLabel,
+      );
+      const profile = vehicleProfileFieldsForForm(vehicle, vehicleTypeOptions, vehicleTypeOtherSlug);
       setEditingVehicle(vehicle);
       setFormData({
         plateNumber: vehicle.plateNumber.toUpperCase(),
@@ -561,10 +615,10 @@ export default function Visitors() {
     const contactClean = digitsOnly(formData.contactNumber);
     const customVehicleType = formData.vehicleTypeOther.trim();
     const vehicleTypeValue =
-      formData.vehicleType === VEHICLE_TYPE_OTHER ? customVehicleType : formData.vehicleType;
+      formData.vehicleType === vehicleTypeOtherSlug ? customVehicleType : formData.vehicleType;
     const customPurpose = formData.purposeOfVisitOther.trim();
     const purposeValue = formData.purposeOfVisit === PURPOSE_OTHER ? customPurpose : formData.purposeOfVisit;
-    const apiCat = apiVisitorCategory(purposeValue, formData.rented);
+    const apiCat = apiVisitorCategory(purposeValue, formData.rented, visitorPurposes);
 
     if (!plateTrimmed || !ownerTrimmed || !purposeValue) {
       toast({
@@ -598,7 +652,7 @@ export default function Visitors() {
       });
       return;
     }
-    if (formData.purposeOfVisit === 'Visit resident' && !formData.rented?.trim()) {
+    if (formData.purposeOfVisit === residentVisitPurposeLabel && !formData.rented?.trim()) {
       toast({
         title: 'Validation Error',
         description: 'Select the resident being visited',
@@ -617,7 +671,7 @@ export default function Visitors() {
     const rentedTrim = formData.rented.trim();
     const persistRented =
       (apiCat === 'rental' && rentedTrim) ||
-      (formData.purposeOfVisit === 'Visit resident' && rentedTrim);
+      (formData.purposeOfVisit === residentVisitPurposeLabel && rentedTrim);
     const payload = {
       plateNumber: plateTrimmed.toUpperCase(),
       ownerName: ownerTrimmed,
@@ -726,13 +780,16 @@ export default function Visitors() {
 
   const purposeSelectValue = useMemo(() => {
     if (formData.purposeOfVisit === PURPOSE_OTHER) return PURPOSE_OTHER;
-    if (PRESET_PURPOSE_TABS.some((x) => x === formData.purposeOfVisit)) return formData.purposeOfVisit;
+    if (presetPurposeLabels.some((x) => x === formData.purposeOfVisit)) return formData.purposeOfVisit;
     return PURPOSE_OTHER;
-  }, [formData.purposeOfVisit]);
+  }, [formData.purposeOfVisit, presetPurposeLabels]);
 
   const showRentedField = useMemo(() => {
-    if (formData.purposeOfVisit === 'Visit resident') return true;
-    if (formData.purposeOfVisit === 'Reservation') return true;
+    if (formData.purposeOfVisit === residentVisitPurposeLabel) return true;
+    const purposeHit = visitorPurposes.find(
+      (x) => x.label.toLowerCase() === formData.purposeOfVisit.toLowerCase(),
+    );
+    if (purposeHit?.category === 'rental') return true;
     if (PURPOSE_RENTAL_LEGACY.some((x) => x === formData.purposeOfVisit)) return true;
     if (
       formData.purposeOfVisit === PURPOSE_OTHER &&
@@ -741,7 +798,13 @@ export default function Visitors() {
       return true;
     }
     return Boolean(editingVehicle?.rented?.trim());
-  }, [formData.purposeOfVisit, formData.purposeOfVisitOther, editingVehicle?.rented]);
+  }, [
+    formData.purposeOfVisit,
+    formData.purposeOfVisitOther,
+    editingVehicle?.rented,
+    residentVisitPurposeLabel,
+    visitorPurposes,
+  ]);
 
   useEffect(() => {
     if (editingVehicle || isBarangayUser) return;
@@ -773,7 +836,10 @@ export default function Visitors() {
           setFormData((prev) => {
             if (normPlate(prev.plateNumber.trim()) !== key) return prev;
             setOwnerNameLockedByPlate(true);
-            return { ...prev, ...vehicleProfileFieldsForForm(match) };
+            return {
+              ...prev,
+              ...vehicleProfileFieldsForForm(match, vehicleTypeOptions, vehicleTypeOtherSlug),
+            };
           });
         } catch {
           setOwnerNameLockedByPlate(false);
@@ -781,7 +847,7 @@ export default function Visitors() {
       })();
     }, debounceMs);
     return () => window.clearTimeout(t);
-  }, [formData.plateNumber, editingVehicle, isBarangayUser]);
+  }, [formData.plateNumber, editingVehicle, isBarangayUser, vehicleTypeOptions, vehicleTypeOtherSlug]);
 
   if (isInitialLoading) {
     return (
@@ -846,7 +912,7 @@ export default function Visitors() {
                       setFormData((prev) => ({
                         ...prev,
                         vehicleType: v,
-                        vehicleTypeOther: v === VEHICLE_TYPE_OTHER ? prev.vehicleTypeOther : '',
+                        vehicleTypeOther: v === vehicleTypeOtherSlug ? prev.vehicleTypeOther : '',
                       }))
                     }
                   >
@@ -854,14 +920,14 @@ export default function Visitors() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {VEHICLE_TYPE_OPTIONS.map((opt) => (
+                      {vehicleTypeOptions.map((opt) => (
                         <SelectItem key={opt.value} value={opt.value}>
                           {opt.label}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
-                  {formData.vehicleType === VEHICLE_TYPE_OTHER ? (
+                  {formData.vehicleType === vehicleTypeOtherSlug ? (
                     <Input
                       placeholder="Enter vehicle type"
                       value={formData.vehicleTypeOther}
@@ -932,7 +998,7 @@ export default function Visitors() {
                       <SelectValue placeholder="Select purpose" />
                     </SelectTrigger>
                     <SelectContent>
-                      {VISITOR_PURPOSE_TABS.map((opt) => (
+                      {visitorPurposeTabsFull.map((opt) => (
                         <SelectItem key={opt} value={opt}>
                           {opt}
                         </SelectItem>
@@ -950,7 +1016,7 @@ export default function Visitors() {
                     />
                   ) : null}
                 </div>
-                {formData.purposeOfVisit === 'Visit resident' ? (
+                {formData.purposeOfVisit === residentVisitPurposeLabel ? (
                   <SearchableResidentSelect
                     id="v-visit-resident"
                     label="Resident being visited"
@@ -966,7 +1032,7 @@ export default function Visitors() {
                     label="Rented / Location"
                     requiredMark
                     placeholder="Search facility…"
-                    options={RENTED_OPTIONS}
+                    options={rentedLocationOptions}
                     value={formData.rented}
                     onChange={(v) => setFormData((prev) => ({ ...prev, rented: v }))}
                   />
@@ -998,7 +1064,7 @@ export default function Visitors() {
             >
               {VISITOR_LIST_TAB_ALL} ({nonResidentVehicles.length})
             </TabsTrigger>
-            {VISITOR_PURPOSE_TABS.map((tab) => (
+            {visitorPurposeTabsFull.map((tab) => (
               <TabsTrigger
                 key={tab}
                 value={tab}
@@ -1064,7 +1130,7 @@ export default function Visitors() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__all__">All types</SelectItem>
-                  {VEHICLE_TYPE_OPTIONS.map((opt) => (
+                  {vehicleTypeOptions.map((opt) => (
                     <SelectItem key={opt.value} value={opt.value}>
                       {opt.label}
                     </SelectItem>
@@ -1125,7 +1191,9 @@ export default function Visitors() {
                       <Info className="h-4 w-4" />
                     </Button>
                   </div>
-                  <div className="text-sm text-muted-foreground">{formatVehicleTypeLabel(vehicle.vehicleType)}</div>
+                  <div className="text-sm text-muted-foreground">
+                    {formatVehicleTypeLabel(vehicle.vehicleType, vehicleTypeOptions)}
+                  </div>
                   <div className="text-sm font-medium">{vehicle.ownerName}</div>
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <Phone className="h-4 w-4 shrink-0" />
@@ -1133,10 +1201,10 @@ export default function Visitors() {
                   </div>
                   {vehicle.rented ? (
                     <div className="text-xs text-muted-foreground">
-                      {(vehicle.purposeOfVisit || '').trim() === 'Visit resident'
+                      {(vehicle.purposeOfVisit || '').trim() === residentVisitPurposeLabel
                         ? 'Resident visited'
                         : 'Location'}
-                      : {locationOrVisitedResidentLabel(vehicle, residents)}
+                      : {locationOrVisitedResidentLabel(vehicle, residents, residentVisitPurposeLabel)}
                     </div>
                   ) : null}
                   <div className="text-xs text-muted-foreground">
@@ -1180,7 +1248,7 @@ export default function Visitors() {
                     {displayedRows.map((vehicle) => (
                       <TableRow key={vehicle.id} className="border-border">
                         <TableCell className="font-mono font-medium">{vehicle.plateNumber}</TableCell>
-                        <TableCell>{formatVehicleTypeLabel(vehicle.vehicleType)}</TableCell>
+                        <TableCell>{formatVehicleTypeLabel(vehicle.vehicleType, vehicleTypeOptions)}</TableCell>
                         <TableCell>{vehicle.ownerName}</TableCell>
                         <TableCell>
                           <div className="flex items-center gap-2 text-muted-foreground text-sm">
@@ -1255,7 +1323,7 @@ export default function Visitors() {
                     <div>
                       <p className="text-xs uppercase text-muted-foreground">Vehicle type</p>
                       <p className="font-medium text-foreground">
-                        {formatVehicleTypeLabel(viewingVehicle.vehicleType)}
+                        {formatVehicleTypeLabel(viewingVehicle.vehicleType, vehicleTypeOptions)}
                       </p>
                     </div>
                     <div className="flex items-start gap-2">
@@ -1274,12 +1342,16 @@ export default function Visitors() {
                     {viewingVehicle.rented?.trim() ? (
                       <div>
                         <p className="text-xs uppercase text-muted-foreground">
-                          {(viewingVehicle.purposeOfVisit || '').trim() === 'Visit resident'
+                          {(viewingVehicle.purposeOfVisit || '').trim() === residentVisitPurposeLabel
                             ? 'Resident visited'
                             : 'Location / facility'}
                         </p>
                         <p className="font-medium text-foreground">
-                          {locationOrVisitedResidentLabel(viewingVehicle, residents)}
+                          {locationOrVisitedResidentLabel(
+                            viewingVehicle,
+                            residents,
+                            residentVisitPurposeLabel,
+                          )}
                         </p>
                       </div>
                     ) : null}
@@ -1361,7 +1433,7 @@ export default function Visitors() {
             <UserPlus className="h-12 w-12 sm:h-16 sm:w-16 text-muted-foreground mx-auto mb-4" />
             <h3 className="text-lg font-semibold text-foreground mb-2">No visitor vehicles yet</h3>
             <p className="text-muted-foreground mb-6 text-sm max-w-md mx-auto">
-              Use the tabs to register by purpose: {VISITOR_PURPOSE_TABS.join(', ')}. Resident-linked vehicles stay on the
+              Use the tabs to register by purpose: {visitorPurposeTabsFull.join(', ')}. Resident-linked vehicles stay on the
               Vehicles page.
             </p>
             {!isBarangayUser && (

@@ -376,6 +376,11 @@ export const healthAPI = {
     ownerSmsDelayDisabledForDemo?: boolean;
     gracePeriodMinutes?: number;
     postGraceVerificationMinutes?: number;
+    vehicleTypeOptions?: Array<{ value: string; label: string }>;
+    visitorPurposes?: Array<{ label: string; category: 'guest' | 'delivery' | 'rental' }>;
+    residentVisitPurposeLabel?: string;
+    rentedLocationOptions?: string[];
+    residentStreets?: string[];
   }) =>
     fetchAPI('/health/runtime-config', {
       method: 'POST',

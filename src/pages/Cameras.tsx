@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Plus, Camera as CameraIcon } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
@@ -22,12 +22,15 @@ import { Camera } from '@/types/parking';
 import { toast } from '@/hooks/use-toast';
 import { camerasAPI } from '@/lib/api';
 import { useAuth } from '@/hooks/useAuth';
-import { RESIDENT_STREET_OPTIONS } from '@/lib/residentStreets';
+import { useFormOptions } from '@/hooks/useFormOptions';
 
 export default function Cameras() {
   usePageTracking();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
+  const { config: formOptions } = useFormOptions();
+  const residentStreets = formOptions.residentStreets;
+  const streetSet = useMemo(() => new Set(residentStreets), [residentStreets]);
   const [cameras, setCameras] = useState<Camera[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -117,7 +120,7 @@ export default function Cameras() {
       return;
     }
     
-    if (!RESIDENT_STREET_OPTIONS.includes(newCamera.locationId.trim() as any)) {
+    if (!streetSet.has(newCamera.locationId.trim())) {
       toast({
         title: "Validation Error",
         description: "Please choose a valid street/zone from the list.",
@@ -291,7 +294,7 @@ export default function Cameras() {
                       <SelectValue placeholder="Select a street/zone" />
                     </SelectTrigger>
                     <SelectContent>
-                      {RESIDENT_STREET_OPTIONS.map((street) => (
+                      {residentStreets.map((street) => (
                         <SelectItem key={street} value={street}>
                           {street}
                         </SelectItem>

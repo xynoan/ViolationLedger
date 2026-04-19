@@ -2,5 +2,79 @@
   "ownerSmsDelayMinutes": 1,
   "ownerSmsDelayDisabledForDemo": false,
   "gracePeriodMinutes": 1,
-  "postGraceVerificationMinutes": 1
+  "postGraceVerificationMinutes": 1,
+  "vehicleTypeOptions": [
+    {
+      "value": "motorcycle",
+      "label": "Motorcycle"
+    },
+    {
+      "value": "truck",
+      "label": "Truck"
+    },
+    {
+      "value": "van",
+      "label": "Van"
+    },
+    {
+      "value": "suv",
+      "label": "SUV"
+    },
+    {
+      "value": "tricycle",
+      "label": "Tricycle"
+    },
+    {
+      "value": "other",
+      "label": "Other"
+    },
+    {
+      "value": "car",
+      "label": "Car"
+    }
+  ],
+  "visitorPurposes": [
+    {
+      "label": "Barangay hall",
+      "category": "guest"
+    },
+    {
+      "label": "Reservation",
+      "category": "rental"
+    },
+    {
+      "label": "Drop-off",
+      "category": "delivery"
+    },
+    {
+      "label": "Delivery",
+      "category": "delivery"
+    },
+    {
+      "label": "Visit resident",
+      "category": "guest"
+    }
+  ],
+  "residentVisitPurposeLabel": "Visit resident",
+  "rentedLocationOptions": [
+    "Community Center",
+    "Barangay Hall",
+    "Court"
+  ],
+  "residentStreets": [
+    "Twin Peaks Drive",
+    "Milky Way Drive",
+    "Moonlight Loop",
+    "Comet's Loop",
+    "Hillside Loop",
+    "Starline Road",
+    "Evening Glow Road",
+    "Milky Way Lane",
+    "Hillside Lane",
+    "Starline Road Alley",
+    "Promenade Lane",
+    "Riverside Drive",
+    "Riverview Drive",
+    "Union Lane"
+  ]
 }

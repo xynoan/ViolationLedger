@@ -1,22 +1,8 @@
-/** Keep in sync with src/lib/residentStreets.ts */
-export const RESIDENT_STREET_OPTIONS = [
-  'Twin Peaks Drive',
-  'Milky Way Drive',
-  'Moonlight Loop',
-  "Comet's Loop",
-  'Hillside Loop',
-  'Starline Road',
-  'Evening Glow Road',
-  'Milky Way Lane',
-  'Hillside Lane',
-  'Starline Road Alley',
-  'Promenade Lane',
-  'Riverside Drive',
-  'Riverview Drive',
-  'Union Lane',
-];
+import { getResidentStreetOptions } from './runtime_config.js';
 
-export const RESIDENT_STREET_SET = new Set(RESIDENT_STREET_OPTIONS);
+export function getResidentStreetSet() {
+  return new Set(getResidentStreetOptions());
+}
 
 export function composeResidentAddress(houseNumber, streetName, barangay, city) {
   const h = typeof houseNumber === 'string' ? houseNumber.trim() : '';

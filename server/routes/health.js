@@ -16,6 +16,7 @@ import {
   setGracePeriodMinutes,
   setOwnerSmsDelayMinutes,
   setPostGraceVerificationMinutes,
+  updateRuntimeConfig,
 } from '../runtime_config.js';
 
 function readEnvFile() {
@@ -298,6 +299,11 @@ router.post('/runtime-config', (req, res) => {
       ownerSmsDelayDisabledForDemo,
       gracePeriodMinutes,
       postGraceVerificationMinutes,
+      vehicleTypeOptions,
+      visitorPurposes,
+      residentVisitPurposeLabel,
+      rentedLocationOptions,
+      residentStreets,
     } = req.body || {};
     if (ownerSmsDelayMinutes !== undefined) {
       const parsedOwnerDelay = Number.parseInt(String(ownerSmsDelayMinutes), 10);
@@ -325,6 +331,40 @@ router.post('/runtime-config', (req, res) => {
         return res.status(400).json({ error: 'postGraceVerificationMinutes must be a positive integer' });
       }
       setPostGraceVerificationMinutes(parsed);
+    }
+    const formPatch = {};
+    if (vehicleTypeOptions !== undefined) {
+      if (!Array.isArray(vehicleTypeOptions)) {
+        return res.status(400).json({ error: 'vehicleTypeOptions must be an array' });
+      }
+      formPatch.vehicleTypeOptions = vehicleTypeOptions;
+    }
+    if (visitorPurposes !== undefined) {
+      if (!Array.isArray(visitorPurposes)) {
+        return res.status(400).json({ error: 'visitorPurposes must be an array' });
+      }
+      formPatch.visitorPurposes = visitorPurposes;
+    }
+    if (residentVisitPurposeLabel !== undefined) {
+      if (typeof residentVisitPurposeLabel !== 'string') {
+        return res.status(400).json({ error: 'residentVisitPurposeLabel must be a string' });
+      }
+      formPatch.residentVisitPurposeLabel = residentVisitPurposeLabel;
+    }
+    if (rentedLocationOptions !== undefined) {
+      if (!Array.isArray(rentedLocationOptions)) {
+        return res.status(400).json({ error: 'rentedLocationOptions must be an array' });
+      }
+      formPatch.rentedLocationOptions = rentedLocationOptions;
+    }
+    if (residentStreets !== undefined) {
+      if (!Array.isArray(residentStreets)) {
+        return res.status(400).json({ error: 'residentStreets must be an array' });
+      }
+      formPatch.residentStreets = residentStreets;
+    }
+    if (Object.keys(formPatch).length > 0) {
+      updateRuntimeConfig(formPatch);
     }
     const config = getRuntimeConfig();
     res.json({

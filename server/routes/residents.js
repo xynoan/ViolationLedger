@@ -1,6 +1,6 @@
 import express from 'express';
 import db from '../database.js';
-import { RESIDENT_STREET_SET, composeResidentAddress } from '../residentStreets.js';
+import { getResidentStreetSet, composeResidentAddress } from '../residentStreets.js';
 
 const router = express.Router();
 
@@ -79,7 +79,7 @@ router.post('/', (req, res) => {
     if (!sn) {
       return res.status(400).json({ error: 'Street name is required' });
     }
-    if (!RESIDENT_STREET_SET.has(sn)) {
+    if (!getResidentStreetSet().has(sn)) {
       return res.status(400).json({ error: 'Invalid street name' });
     }
     const hn = typeof houseNumber === 'string' ? houseNumber.trim() : '';
@@ -176,7 +176,7 @@ router.put('/:id', (req, res) => {
     if (!nextS) {
       return res.status(400).json({ error: 'Street name is required' });
     }
-    if (!RESIDENT_STREET_SET.has(nextS)) {
+    if (!getResidentStreetSet().has(nextS)) {
       return res.status(400).json({ error: 'Invalid street name' });
     }
 

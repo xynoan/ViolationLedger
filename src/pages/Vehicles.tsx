@@ -47,22 +47,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from '@/hooks/use-toast';
 import { vehiclesAPI, residentsAPI, violationsAPI } from '@/lib/api';
 import { useAuth } from '@/hooks/useAuth';
+import { useFormOptions } from '@/hooks/useFormOptions';
 import { useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { formatResidentAddressLine } from '@/lib/residentStreets';
-
-const VEHICLE_TYPE_OPTIONS = [
-  { value: 'car', label: 'Car' },
-  { value: 'motorcycle', label: 'Motorcycle' },
-  { value: 'truck', label: 'Truck' },
-  { value: 'van', label: 'Van' },
-  { value: 'suv', label: 'SUV' },
-  { value: 'tricycle', label: 'Tricycle' },
-  { value: 'other', label: 'Other' },
-] as const;
-const VEHICLE_TYPE_OTHER = 'other';
 
 function errMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
@@ -86,25 +76,7 @@ const digitsOnly = (value: string) => value.replace(/\D/g, '');
 const lettersAndSpacesOnly = (value: string) => value.replace(/[^a-zA-Z\s]/g, '');
 const ownerNameValid = (value: string) => /^[a-zA-Z\s]+$/.test(value.trim());
 
-function formatVehicleTypeLabel(value?: string): string {
-  if (!value?.trim()) return '—';
-  const v = value.trim().toLowerCase();
-  const found = VEHICLE_TYPE_OPTIONS.find((o) => o.value === v);
-  return found?.label ?? value;
-}
-
 const normPlate = (p: string) => String(p || '').replace(/\s+/g, '').toUpperCase();
-
-const VEHICLE_TYPE_PRESET_SLUGS = new Set<string>(
-  VEHICLE_TYPE_OPTIONS.filter((o) => o.value !== VEHICLE_TYPE_OTHER).map((o) => o.value),
-);
-
-function vehicleMatchesTypeFilter(vehicle: Vehicle, filterSlug: string): boolean {
-  if (!filterSlug) return true;
-  const t = (vehicle.vehicleType || '').trim().toLowerCase();
-  if (filterSlug === VEHICLE_TYPE_OTHER) return !VEHICLE_TYPE_PRESET_SLUGS.has(t);
-  return t === filterSlug;
-}
 
 function registeredAtMatchesDay(registeredAt: Date | string, isoDay: string): boolean {
   const day = isoDay.trim();
@@ -208,6 +180,40 @@ export default function Vehicles() {
   const [ownerSuggestOpen, setOwnerSuggestOpen] = useState(false);
   const ownerComboRef = useRef<HTMLDivElement>(null);
 
+  const { config: formOptions } = useFormOptions();
+  const vehicleTypeOptions = formOptions.vehicleTypeOptions;
+  const vehicleTypeOtherSlug = useMemo(
+    () => vehicleTypeOptions.find((o) => o.value === 'other')?.value ?? 'other',
+    [vehicleTypeOptions],
+  );
+  const vehicleTypePresetSlugs = useMemo(
+    () =>
+      new Set(
+        vehicleTypeOptions.filter((o) => o.value !== vehicleTypeOtherSlug).map((o) => o.value),
+      ),
+    [vehicleTypeOptions, vehicleTypeOtherSlug],
+  );
+
+  const formatVehicleTypeLabel = useCallback(
+    (value?: string) => {
+      if (!value?.trim()) return '—';
+      const v = value.trim().toLowerCase();
+      const found = vehicleTypeOptions.find((o) => o.value === v);
+      return found?.label ?? value;
+    },
+    [vehicleTypeOptions],
+  );
+
+  const vehicleMatchesTypeFilter = useCallback(
+    (vehicle: Vehicle, filterSlug: string) => {
+      if (!filterSlug) return true;
+      const t = (vehicle.vehicleType || '').trim().toLowerCase();
+      if (filterSlug === vehicleTypeOtherSlug) return !vehicleTypePresetSlugs.has(t);
+      return t === filterSlug;
+    },
+    [vehicleTypeOtherSlug, vehicleTypePresetSlugs],
+  );
+
   // Load vehicles from API
   const loadResidents = useCallback(async () => {
     try {
@@ -297,6 +303,7 @@ export default function Vehicles() {
     filterVehicleType,
     filterOwner,
     filterRegisteredOn,
+    vehicleMatchesTypeFilter,
   ]);
 
   const hasActiveRegistryFilters = useMemo(
@@ -390,7 +397,7 @@ export default function Vehicles() {
       plateNumber: '',
       ownerName: '',
       residentId: '',
-      vehicleType: 'car',
+      vehicleType: vehicleTypeOptions[0]?.value ?? 'car',
       vehicleTypeOther: '',
     });
     setEditingVehicle(null);
@@ -419,13 +426,13 @@ export default function Vehicles() {
     
     if (vehicle) {
       const normalizedVehicleType = (vehicle.vehicleType || '').toLowerCase();
-      const hasPresetVehicleType = VEHICLE_TYPE_OPTIONS.some((opt) => opt.value === normalizedVehicleType);
+      const hasPresetVehicleType = vehicleTypeOptions.some((opt) => opt.value === normalizedVehicleType);
       setEditingVehicle(vehicle);
       setFormData({
         plateNumber: vehicle.plateNumber.toUpperCase(),
         ownerName: vehicle.ownerName,
         residentId: vehicle.residentId || '',
-        vehicleType: hasPresetVehicleType ? normalizedVehicleType : VEHICLE_TYPE_OTHER,
+        vehicleType: hasPresetVehicleType ? normalizedVehicleType : vehicleTypeOtherSlug,
         vehicleTypeOther: hasPresetVehicleType ? '' : vehicle.vehicleType || '',
       });
     } else {
@@ -469,7 +476,7 @@ export default function Vehicles() {
     }
     const customVehicleType = formData.vehicleTypeOther.trim();
     const vehicleTypeValue =
-      formData.vehicleType === VEHICLE_TYPE_OTHER ? customVehicleType : formData.vehicleType;
+      formData.vehicleType === vehicleTypeOtherSlug ? customVehicleType : formData.vehicleType;
     if (!vehicleTypeValue) {
       toast({
         title: "Validation Error",
@@ -718,7 +725,7 @@ export default function Vehicles() {
                     setFormData((prev) => ({
                       ...prev,
                       vehicleType: v,
-                      vehicleTypeOther: v === VEHICLE_TYPE_OTHER ? prev.vehicleTypeOther : '',
+                      vehicleTypeOther: v === vehicleTypeOtherSlug ? prev.vehicleTypeOther : '',
                     }))
                   }
                 >
@@ -726,14 +733,14 @@ export default function Vehicles() {
                     <SelectValue placeholder="Select type" />
                   </SelectTrigger>
                   <SelectContent>
-                    {VEHICLE_TYPE_OPTIONS.map((opt) => (
+                    {vehicleTypeOptions.map((opt) => (
                       <SelectItem key={opt.value} value={opt.value}>
                         {opt.label}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-                {formData.vehicleType === VEHICLE_TYPE_OTHER ? (
+                {formData.vehicleType === vehicleTypeOtherSlug ? (
                   <Input
                     placeholder="Enter vehicle type"
                     value={formData.vehicleTypeOther}
@@ -857,7 +864,7 @@ export default function Vehicles() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__all__">All types</SelectItem>
-                  {VEHICLE_TYPE_OPTIONS.map((opt) => (
+                  {vehicleTypeOptions.map((opt) => (
                     <SelectItem key={opt.value} value={opt.value}>
                       {opt.label}
                     </SelectItem>

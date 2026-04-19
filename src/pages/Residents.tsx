@@ -59,13 +59,10 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { toast } from '@/hooks/use-toast';
 import { residentsAPI, vehiclesAPI, violationsAPI } from '@/lib/api';
 import { useAuth } from '@/hooks/useAuth';
+import { useFormOptions } from '@/hooks/useFormOptions';
 import { cn } from '@/lib/utils';
 import { SearchNoMatchesEmpty } from '@/components/search/SearchNoMatchesEmpty';
-import {
-  formatResidentAddressLine,
-  RESIDENT_STREET_OPTIONS,
-  RESIDENT_STREET_SET,
-} from '@/lib/residentStreets';
+import { formatResidentAddressLine, buildResidentStreetSet } from '@/lib/residentStreets';
 
 type StandingFilter = 'all' | 'active_violations' | 'clean';
 type ResidentSort = 'name_asc' | 'most_vehicles' | 'recent_violation';
@@ -101,9 +98,9 @@ function extractLocationKeysFromAddress(address: string | undefined): string[] {
 }
 
 /** Order filter dropdown: Barangay first, then streets in catalog order, then any other legacy keys. */
-function sortLocationFilterOptions(keys: string[]): string[] {
+function sortLocationFilterOptions(keys: string[], streetCatalog: string[]): string[] {
   const streetOrder = new Map(
-    RESIDENT_STREET_OPTIONS.map((s, i) => [s, i]) as [string, number][],
+    streetCatalog.map((s, i) => [s, i]) as [string, number][],
   );
   return [...keys].sort((a, b) => {
     const ma = a.match(/^Barangay\s+(\d+)$/i);
@@ -122,24 +119,33 @@ function sortLocationFilterOptions(keys: string[]): string[] {
  * Location filter = street when `streetName` is set (current model).
  * Legacy rows: barangay + comma segments, and lines like "12 Twin Peaks Drive" collapse to the known street name.
  */
-function collectResidentLocationKeys(resident: Resident): string[] {
+function collectResidentLocationKeys(
+  resident: Resident,
+  streetCatalog: string[],
+  knownStreetSet: Set<string>,
+): string[] {
   const sn = resident.streetName?.trim();
-  if (sn) return sortLocationFilterOptions([sn]);
+  if (sn) return sortLocationFilterOptions([sn], streetCatalog);
 
   const set = new Set<string>(extractLocationKeysFromAddress(resident.address));
   for (const k of [...set]) {
     const m = k.match(/^\s*\S+\s+(.+)$/);
-    if (m && RESIDENT_STREET_SET.has(m[1].trim())) {
+    if (m && knownStreetSet.has(m[1].trim())) {
       set.add(m[1].trim());
       set.delete(k);
     }
   }
-  return sortLocationFilterOptions([...set]);
+  return sortLocationFilterOptions([...set], streetCatalog);
 }
 
-function residentMatchesLocationFilter(resident: Resident, locationKey: string): boolean {
+function residentMatchesLocationFilter(
+  resident: Resident,
+  locationKey: string,
+  streetCatalog: string[],
+  knownStreetSet: Set<string>,
+): boolean {
   if (locationKey === 'all') return true;
-  return collectResidentLocationKeys(resident).includes(locationKey);
+  return collectResidentLocationKeys(resident, streetCatalog, knownStreetSet).includes(locationKey);
 }
 
 function violationsForResidentLinkedPlates(
@@ -338,6 +344,9 @@ export default function Residents() {
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuth();
+  const { config: formOptions } = useFormOptions();
+  const residentStreets = formOptions.residentStreets;
+  const residentStreetSet = useMemo(() => buildResidentStreetSet(residentStreets), [residentStreets]);
   const isBarangayUser = user?.role === 'barangay_user';
   const [residents, setResidents] = useState<Resident[]>([]);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
@@ -594,12 +603,12 @@ export default function Residents() {
   const uniqueLocationOptions = useMemo(() => {
     const set = new Set<string>();
     for (const r of residents) {
-      for (const k of collectResidentLocationKeys(r)) {
+      for (const k of collectResidentLocationKeys(r, residentStreets, residentStreetSet)) {
         set.add(k);
       }
     }
-    return sortLocationFilterOptions([...set]);
-  }, [residents]);
+    return sortLocationFilterOptions([...set], residentStreets);
+  }, [residents, residentStreets, residentStreetSet]);
 
   useEffect(() => {
     if (locationFilter !== 'all' && !uniqueLocationOptions.includes(locationFilter)) {
@@ -631,7 +640,9 @@ export default function Residents() {
     );
 
     if (locationFilter !== 'all') {
-      list = list.filter((r) => residentMatchesLocationFilter(r, locationFilter));
+      list = list.filter((r) =>
+        residentMatchesLocationFilter(r, locationFilter, residentStreets, residentStreetSet),
+      );
     }
 
     if (standingFilter === 'active_violations') {
@@ -668,6 +679,8 @@ export default function Residents() {
     locationFilter,
     standingFilter,
     sortBy,
+    residentStreets,
+    residentStreetSet,
   ]);
 
   const resetForm = () => {
@@ -756,7 +769,7 @@ export default function Residents() {
       });
       return;
     }
-    if (!RESIDENT_STREET_SET.has(street)) {
+    if (!residentStreetSet.has(street)) {
       toast({
         title: 'Validation Error',
         description: 'Please choose a street from the list',
@@ -1113,7 +1126,7 @@ export default function Residents() {
                           <SelectItem value="__unset__" className="text-muted-foreground">
                             Select street
                           </SelectItem>
-                          {RESIDENT_STREET_OPTIONS.map((s) => (
+                          {residentStreets.map((s) => (
                             <SelectItem key={s} value={s}>
                               {s}
                             </SelectItem>
