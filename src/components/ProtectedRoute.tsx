@@ -36,6 +36,14 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
     return <Navigate to="/" replace />;
   }
 
+  if (
+    user?.role === 'encoder' &&
+    !user.mustResetPassword &&
+    location.pathname !== '/visitors'
+  ) {
+    return <Navigate to="/visitors" replace />;
+  }
+
   return <>{children}</>;
 }
 

@@ -51,7 +51,7 @@ export default function Login() {
             title: "Login Successful",
             description: "Welcome back!",
           });
-          navigate(user.role === 'encoder' ? '/vehicles' : '/');
+          navigate(user.role === 'encoder' ? '/visitors' : '/');
         }
       } else {
         throw new Error('Invalid response from server');
@@ -96,7 +96,7 @@ export default function Login() {
       if (user.mustResetPassword) {
         navigate('/reset-password');
       } else {
-        navigate(user.role === 'encoder' ? '/vehicles' : '/');
+        navigate(user.role === 'encoder' ? '/visitors' : '/');
       }
     } catch (error: any) {
       toast({
