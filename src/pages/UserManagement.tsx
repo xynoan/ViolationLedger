@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Users, Plus, Edit, Trash2, Shield, User, RefreshCw, Eye, EyeOff, CheckCircle2, XCircle } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
@@ -33,6 +33,7 @@ import { trackAction } from '@/lib/auditTracking';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
 import { isValidEmail, sanitizeEmail } from '@/lib/emailValidation';
+import { useDropdownOptions } from '@/hooks/useDropdownOptions';
 
 const digitsOnly = (value: string) => value.replace(/\D/g, '');
 const lettersAndSpacesOnly = (value: string) => value.replace(/[^a-zA-Z\s]/g, '');
@@ -50,6 +51,19 @@ interface User {
 export default function UserManagement() {
   usePageTracking();
   const { user: currentUser } = useAuth();
+  const { options: catalog } = useDropdownOptions();
+  const userRoleOptions = catalog.userRoles;
+  const userStatusOptions = catalog.userStatuses;
+  const INVITE_ROLE_VALUES = useMemo(() => new Set(['encoder', 'barangay_user']), []);
+  const INVITE_STATUS_VALUES = useMemo(() => new Set(['active', 'inactive']), []);
+  const inviteRoleOptions = useMemo(
+    () => userRoleOptions.filter((r) => INVITE_ROLE_VALUES.has(r.value)),
+    [userRoleOptions, INVITE_ROLE_VALUES],
+  );
+  const inviteStatusOptions = useMemo(
+    () => userStatusOptions.filter((r) => INVITE_STATUS_VALUES.has(r.value)),
+    [userStatusOptions, INVITE_STATUS_VALUES],
+  );
   const [users, setUsers] = useState<User[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -618,7 +632,11 @@ export default function UserManagement() {
                 <>
                   <Input
                     id="role"
-                    value={selectedUser.role === 'admin' ? 'Admin' : selectedUser.role === 'encoder' ? 'Encoder' : 'Barangay User'}
+                    value={
+                      selectedUser.role === 'admin'
+                        ? 'Admin'
+                        : userRoleOptions.find((r) => r.value === selectedUser.role)?.label ?? selectedUser.role
+                    }
                     disabled
                     className="bg-secondary"
                   />
@@ -637,8 +655,11 @@ export default function UserManagement() {
                       <SelectValue placeholder="Select role" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="encoder">Encoder</SelectItem>
-                      <SelectItem value="barangay_user">Barangay User</SelectItem>
+                      {inviteRoleOptions.map((row) => (
+                        <SelectItem key={row.value} value={row.value}>
+                          {row.label}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">
@@ -660,8 +681,11 @@ export default function UserManagement() {
                   <SelectValue placeholder="Select status" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="active">Active</SelectItem>
-                  <SelectItem value="inactive">Inactive</SelectItem>
+                  {inviteStatusOptions.map((row) => (
+                    <SelectItem key={row.value} value={row.value}>
+                      {row.label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>

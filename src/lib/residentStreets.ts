@@ -1,24 +1,16 @@
-/** Allowed street names for resident address (house number is separate). */
-export const RESIDENT_STREET_OPTIONS = [
-  'Twin Peaks Drive',
-  'Milky Way Drive',
-  'Moonlight Loop',
-  "Comet's Loop",
-  'Hillside Loop',
-  'Starline Road',
-  'Evening Glow Road',
-  'Milky Way Lane',
-  'Hillside Lane',
-  'Starline Road Alley',
-  'Promenade Lane',
-  'Riverside Drive',
-  'Riverview Drive',
-  'Union Lane',
-] as const;
+import { DEFAULT_DROPDOWN_CATALOG } from '@/types/dropdownCatalog';
 
-export type ResidentStreetName = (typeof RESIDENT_STREET_OPTIONS)[number];
+/** Default street names when the server catalog is unavailable. */
+export const RESIDENT_STREET_OPTIONS = DEFAULT_DROPDOWN_CATALOG.residentStreets;
 
-export const RESIDENT_STREET_SET = new Set<string>(RESIDENT_STREET_OPTIONS);
+export type ResidentStreetName = string;
+
+export function residentStreetSetFromList(streets: readonly string[]) {
+  return new Set<string>(streets);
+}
+
+/** @deprecated Use `residentStreetSetFromList` with streets from `useDropdownOptions`. */
+export const RESIDENT_STREET_SET = residentStreetSetFromList(RESIDENT_STREET_OPTIONS);
 
 export function formatResidentAddressLine(r: {
   houseNumber?: string;

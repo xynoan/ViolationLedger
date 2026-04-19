@@ -1,11 +1,11 @@
 import express from 'express';
 import db from '../database.js';
-import { RESIDENT_STREET_SET, composeResidentAddress } from '../residentStreets.js';
+import { getResidentStreetSet, composeResidentAddress } from '../residentStreets.js';
+import { getDropdownConfig } from '../dropdown_config.js';
 
 const router = express.Router();
 
 const ALLOWED_RESIDENT_STATUS = new Set(['verified', 'guest']);
-const ALLOWED_RESIDENT_TYPE = new Set(['homeowner', 'tenant']);
 
 function normalizeResidentStatus(value) {
   const v = typeof value === 'string' ? value.toLowerCase().trim() : '';
@@ -14,9 +14,13 @@ function normalizeResidentStatus(value) {
 }
 
 function normalizeResidentType(value) {
-  const v = typeof value === 'string' ? value.toLowerCase().trim() : '';
-  if (ALLOWED_RESIDENT_TYPE.has(v)) return v;
-  return 'homeowner';
+  const types = getDropdownConfig().residentOccupancyTypes;
+  const list = Array.isArray(types) && types.length ? types : [{ value: 'homeowner', label: 'Homeowner' }];
+  const v = typeof value === 'string' ? value.trim() : '';
+  const vl = v.toLowerCase();
+  const hit = list.find((x) => String(x.value).toLowerCase() === vl);
+  if (hit) return String(hit.value);
+  return String(list[0]?.value || 'homeowner');
 }
 
 router.get('/', (req, res) => {
@@ -72,7 +76,7 @@ router.post('/', (req, res) => {
     if (!sn) {
       return res.status(400).json({ error: 'Street name is required' });
     }
-    if (!RESIDENT_STREET_SET.has(sn)) {
+    if (!getResidentStreetSet().has(sn)) {
       return res.status(400).json({ error: 'Invalid street name' });
     }
     const hn = typeof houseNumber === 'string' ? houseNumber.trim() : '';
@@ -143,7 +147,7 @@ router.put('/:id', (req, res) => {
     if (!nextS) {
       return res.status(400).json({ error: 'Street name is required' });
     }
-    if (!RESIDENT_STREET_SET.has(nextS)) {
+    if (!getResidentStreetSet().has(nextS)) {
       return res.status(400).json({ error: 'Invalid street name' });
     }
 

@@ -20,8 +20,13 @@ import { usePageTracking } from '@/hooks/usePageTracking';
 import { trackAction } from '@/lib/auditTracking';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
 import { Violation, ViolationStatus } from '@/types/parking';
+import type { LabeledValue } from '@/types/dropdownCatalog';
+import {
+  defaultViolationStatusHex,
+  resolvedViolationStatusHex,
+  violationStatusBadgeSurface,
+} from '@/lib/violationStatusStyle';
 import { violationsAPI, camerasAPI, residentsAPI } from '@/lib/api';
 import { toast } from '@/hooks/use-toast';
 import {
@@ -40,16 +45,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Camera } from '@/types/parking';
-
-const STATUS_OPTIONS: { value: ViolationStatus | 'all'; label: string }[] = [
-  { value: 'all', label: 'All Statuses' },
-  { value: 'warning', label: 'Warning' },
-  { value: 'issued', label: 'Issued' },
-  { value: 'resolved', label: 'Resolved' },
-  { value: 'cleared', label: 'Cleared' },
-  { value: 'pending', label: 'Pending' },
-  { value: 'cancelled', label: 'Cancelled' },
-];
+import { useDropdownOptions } from '@/hooks/useDropdownOptions';
 
 interface ViolationStats {
   total: number;
@@ -73,6 +69,15 @@ function errMessage(error: unknown, fallback: string) {
 
 export default function ViolationsHistory() {
   usePageTracking();
+  const { options: catalog } = useDropdownOptions();
+  const statusFilterOptions = catalog.violationStatusFilters;
+  const violationStatusByValue = useMemo(() => {
+    const m = new Map<string, LabeledValue>();
+    for (const row of catalog.violationStatusFilters) {
+      m.set(row.value, row);
+    }
+    return m;
+  }, [catalog.violationStatusFilters]);
   const [searchParams, setSearchParams] = useSearchParams();
   const location = useLocation();
   const appliedPlatePresetRef = useRef(false);
@@ -84,7 +89,17 @@ export default function ViolationsHistory() {
   const [isLoadingStats, setIsLoadingStats] = useState(true);
   
   // Filters
-  const [statusFilter, setStatusFilter] = useState<ViolationStatus | 'all'>('all');
+  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const statusFilterValues = useMemo(
+    () => new Set(statusFilterOptions.map((o) => o.value)),
+    [statusFilterOptions],
+  );
+
+  useEffect(() => {
+    if (!statusFilterValues.has(statusFilter)) {
+      setStatusFilter('all');
+    }
+  }, [statusFilter, statusFilterValues]);
   const [locationFilter, setLocationFilter] = useState<string>('all');
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
@@ -295,16 +310,25 @@ export default function ViolationsHistory() {
   };
 
   const getStatusBadge = (status: ViolationStatus) => {
-    const configs: Record<ViolationStatus, { variant: 'default' | 'secondary' | 'destructive' | 'warning' | 'success'; label: string }> = {
-      warning: { variant: 'warning', label: 'Warning' },
-      issued: { variant: 'destructive', label: 'Issued' },
-      resolved: { variant: 'success', label: 'Resolved' },
-      cleared: { variant: 'secondary', label: 'Cleared' },
-      pending: { variant: 'default', label: 'Pending' },
-      cancelled: { variant: 'secondary', label: 'Cancelled' },
+    const entry = violationStatusByValue.get(status);
+    const fallbackLabels: Record<ViolationStatus, string> = {
+      warning: 'Warning',
+      issued: 'Issued',
+      resolved: 'Resolved',
+      cleared: 'Cleared',
+      pending: 'Pending',
+      cancelled: 'Cancelled',
     };
-    const config = configs[status] || { variant: 'default', label: status };
-    return <Badge variant={config.variant}>{config.label}</Badge>;
+    const label = entry?.label ?? fallbackLabels[status] ?? status;
+    const hex = entry ? resolvedViolationStatusHex(entry) : defaultViolationStatusHex(status);
+    return (
+      <span
+        className="inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold"
+        style={violationStatusBadgeSurface(hex)}
+      >
+        {label}
+      </span>
+    );
   };
 
   const exportToCSV = async () => {
@@ -478,14 +502,21 @@ export default function ViolationsHistory() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
             <div className="space-y-2">
               <label className="text-sm font-medium text-foreground">Status</label>
-              <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value as ViolationStatus | 'all')}>
+              <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value)}>
                 <SelectTrigger className="bg-secondary">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {STATUS_OPTIONS.map(option => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
+                  {statusFilterOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value} textValue={option.label}>
+                      <span className="flex items-center gap-2">
+                        <span
+                          className="h-2 w-2 shrink-0 rounded-full ring-1 ring-border/40"
+                          style={{ backgroundColor: resolvedViolationStatusHex(option) }}
+                          aria-hidden
+                        />
+                        {option.label}
+                      </span>
                     </SelectItem>
                   ))}
                 </SelectContent>

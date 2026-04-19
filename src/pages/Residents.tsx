@@ -6,6 +6,8 @@ import {
   Trash2,
   Phone,
   Home,
+  User,
+  Users,
   MapPin,
   Info,
   MessageSquare,
@@ -61,13 +63,15 @@ import { residentsAPI, vehiclesAPI, violationsAPI } from '@/lib/api';
 import { useAuth } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
 import { SearchNoMatchesEmpty } from '@/components/search/SearchNoMatchesEmpty';
+import { formatResidentAddressLine, residentStreetSetFromList } from '@/lib/residentStreets';
+import { useDropdownOptions } from '@/hooks/useDropdownOptions';
 import {
-  formatResidentAddressLine,
-  RESIDENT_STREET_OPTIONS,
-  RESIDENT_STREET_SET,
-} from '@/lib/residentStreets';
+  residentOccupancyBadgeClass,
+  residentOccupancyLabel,
+  resolveResidentTypeForDisplay,
+} from '@/lib/residentOccupancy';
 
-type StandingFilter = 'all' | 'active_violations' | 'clean';
+type StandingFilter = string;
 type ResidentSort = 'name_asc' | 'most_vehicles' | 'recent_violation';
 
 const normPlate = (p: string) => String(p || '').replace(/\s+/g, '').toUpperCase();
@@ -101,8 +105,8 @@ function extractLocationKeysFromAddress(address: string | undefined): string[] {
 }
 
 /** Order filter dropdown: Barangay first, then streets in catalog order, then any other legacy keys. */
-function sortLocationFilterOptions(keys: string[]): string[] {
-  const streetOrder = new Map(RESIDENT_STREET_OPTIONS.map((s, i) => [s, i]));
+function sortLocationFilterOptions(keys: string[], streets: readonly string[]): string[] {
+  const streetOrder = new Map(streets.map((s, i) => [s, i]));
   return [...keys].sort((a, b) => {
     const ma = a.match(/^Barangay\s+(\d+)$/i);
     const mb = b.match(/^Barangay\s+(\d+)$/i);
@@ -120,24 +124,33 @@ function sortLocationFilterOptions(keys: string[]): string[] {
  * Location filter = street when `streetName` is set (current model).
  * Legacy rows: barangay + comma segments, and lines like "12 Twin Peaks Drive" collapse to the known street name.
  */
-function collectResidentLocationKeys(resident: Resident): string[] {
+function collectResidentLocationKeys(
+  resident: Resident,
+  streets: readonly string[],
+  streetSet: Set<string>,
+): string[] {
   const sn = resident.streetName?.trim();
-  if (sn) return sortLocationFilterOptions([sn]);
+  if (sn) return sortLocationFilterOptions([sn], streets);
 
   const set = new Set<string>(extractLocationKeysFromAddress(resident.address));
   for (const k of [...set]) {
     const m = k.match(/^\s*\S+\s+(.+)$/);
-    if (m && RESIDENT_STREET_SET.has(m[1].trim())) {
+    if (m && streetSet.has(m[1].trim())) {
       set.add(m[1].trim());
       set.delete(k);
     }
   }
-  return sortLocationFilterOptions([...set]);
+  return sortLocationFilterOptions([...set], streets);
 }
 
-function residentMatchesLocationFilter(resident: Resident, locationKey: string): boolean {
+function residentMatchesLocationFilter(
+  resident: Resident,
+  locationKey: string,
+  streets: readonly string[],
+  streetSet: Set<string>,
+): boolean {
   if (locationKey === 'all') return true;
-  return collectResidentLocationKeys(resident).includes(locationKey);
+  return collectResidentLocationKeys(resident, streets, streetSet).includes(locationKey);
 }
 
 function violationsForResidentLinkedPlates(
@@ -172,16 +185,11 @@ function lastViolationActivityMs(residentId: string, vehicles: Vehicle[], violat
   return Math.max(...list.map((vi) => new Date(vi.timeDetected).getTime()));
 }
 
-function resolveResidentType(r: Resident): ResidentType {
-  const t = r.residentType?.toLowerCase?.();
-  if (t === 'tenant') return 'tenant';
-  return 'homeowner';
-}
-
-function residentTypeBadgeClass(type: ResidentType): string {
-  return type === 'tenant'
-    ? 'border-purple-600/55 bg-purple-600 text-white shadow-none hover:bg-purple-600/95 dark:bg-purple-700'
-    : 'border-blue-600/55 bg-blue-600 text-white shadow-none hover:bg-blue-600/95 dark:bg-blue-700';
+function residentTypeOptionIcon(value: string): LucideIcon {
+  const v = value.toLowerCase();
+  if (v === 'homeowner') return Home;
+  if (v === 'tenant') return User;
+  return Users;
 }
 
 /** Issued + pending violations on linked plates (unpaid / open enforcement). */
@@ -323,6 +331,15 @@ export default function Residents() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuth();
   const isBarangayUser = user?.role === 'barangay_user';
+  const { options: catalog } = useDropdownOptions();
+  const residentStreets = catalog.residentStreets;
+  const streetSet = useMemo(() => residentStreetSetFromList(residentStreets), [residentStreets]);
+  const residentOccupancyTypes = catalog.residentOccupancyTypes;
+  const residentStandingFilters = catalog.residentStandingFilters;
+  const standingFilterValues = useMemo(
+    () => new Set(residentStandingFilters.map((r) => r.value)),
+    [residentStandingFilters],
+  );
   const [residents, setResidents] = useState<Resident[]>([]);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [violations, setViolations] = useState<Violation[]>([]);
@@ -333,6 +350,12 @@ export default function Residents() {
   const [searchTerm, setSearchTerm] = useState('');
   const [locationFilter, setLocationFilter] = useState<string>('all');
   const [standingFilter, setStandingFilter] = useState<StandingFilter>('all');
+
+  useEffect(() => {
+    if (!standingFilterValues.has(standingFilter)) {
+      setStandingFilter('all');
+    }
+  }, [standingFilter, standingFilterValues]);
   const [sortBy, setSortBy] = useState<ResidentSort>('name_asc');
   const [registryHasResidents, setRegistryHasResidents] = useState(false);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -578,12 +601,12 @@ export default function Residents() {
   const uniqueLocationOptions = useMemo(() => {
     const set = new Set<string>();
     for (const r of residents) {
-      for (const k of collectResidentLocationKeys(r)) {
+      for (const k of collectResidentLocationKeys(r, residentStreets, streetSet)) {
         set.add(k);
       }
     }
-    return sortLocationFilterOptions([...set]);
-  }, [residents]);
+    return sortLocationFilterOptions([...set], residentStreets);
+  }, [residents, residentStreets, streetSet]);
 
   useEffect(() => {
     if (locationFilter !== 'all' && !uniqueLocationOptions.includes(locationFilter)) {
@@ -615,7 +638,7 @@ export default function Residents() {
     );
 
     if (locationFilter !== 'all') {
-      list = list.filter((r) => residentMatchesLocationFilter(r, locationFilter));
+      list = list.filter((r) => residentMatchesLocationFilter(r, locationFilter, residentStreets, streetSet));
     }
 
     if (standingFilter === 'active_violations') {
@@ -652,6 +675,8 @@ export default function Residents() {
     locationFilter,
     standingFilter,
     sortBy,
+    residentStreets,
+    streetSet,
   ]);
 
   const resetForm = () => {
@@ -663,7 +688,7 @@ export default function Residents() {
       contactNumber: '',
       houseNumber: '',
       streetName: '',
-      residentType: 'homeowner',
+      residentType: (residentOccupancyTypes[0]?.value ?? 'homeowner') as ResidentType,
     });
     setEditingResident(null);
   };
@@ -688,7 +713,7 @@ export default function Residents() {
         contactNumber: resident.contactNumber,
         houseNumber: resident.houseNumber || '',
         streetName: resident.streetName || '',
-        residentType: resolveResidentType(resident),
+        residentType: resolveResidentTypeForDisplay(resident, residentOccupancyTypes),
       });
     } else {
       resetForm();
@@ -740,7 +765,7 @@ export default function Residents() {
       });
       return;
     }
-    if (!RESIDENT_STREET_SET.has(street)) {
+    if (!streetSet.has(street)) {
       toast({
         title: 'Validation Error',
         description: 'Please choose a street from the list',
@@ -911,7 +936,9 @@ export default function Residents() {
   ]);
   const profileSms = profileResident ? smsHrefForNumber(profileResident.contactNumber) : null;
   const profileTel = profileResident ? telHrefForNumber(profileResident.contactNumber) : null;
-  const profileResidentType = profileResident ? resolveResidentType(profileResident) : null;
+  const profileResidentType = profileResident
+    ? resolveResidentTypeForDisplay(profileResident, residentOccupancyTypes)
+    : null;
   const profileStandingPresentation = profileResident
     ? getStandingPresentation(profileOpenViolationCount)
     : null;
@@ -1067,7 +1094,7 @@ export default function Residents() {
                           <SelectItem value="__unset__" className="text-muted-foreground">
                             Select street
                           </SelectItem>
-                          {RESIDENT_STREET_OPTIONS.map((s) => (
+                          {residentStreets.map((s) => (
                             <SelectItem key={s} value={s}>
                               {s}
                             </SelectItem>
@@ -1086,8 +1113,11 @@ export default function Residents() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="homeowner">Homeowner</SelectItem>
-                        <SelectItem value="tenant">Tenant</SelectItem>
+                        {residentOccupancyTypes.map((row) => (
+                          <SelectItem key={row.value} value={row.value}>
+                            {row.label}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
@@ -1112,15 +1142,17 @@ export default function Residents() {
               </Label>
               <Select
                 value={standingFilter}
-                onValueChange={(v) => setStandingFilter(v as StandingFilter)}
+                onValueChange={(v) => setStandingFilter(v)}
               >
                 <SelectTrigger id="filter-standing" className="bg-secondary">
                   <SelectValue placeholder="Violation record" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All</SelectItem>
-                  <SelectItem value="active_violations">Active Violations</SelectItem>
-                  <SelectItem value="clean">Clean Record</SelectItem>
+                  {residentStandingFilters.map((row) => (
+                    <SelectItem key={row.value} value={row.value}>
+                      {row.label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
               <p className="text-[11px] text-muted-foreground leading-snug">
@@ -1174,7 +1206,8 @@ export default function Residents() {
               aria-label="Residents"
             >
               {filteredResidents.map((resident) => {
-                const rt = resolveResidentType(resident);
+                const rt = resolveResidentTypeForDisplay(resident, residentOccupancyTypes);
+                const RtIcon = residentTypeOptionIcon(rt);
                 const unpaidCount = countUnpaidViolationsForResident(resident.id, vehicles, violations);
                 const standing = getStandingPresentation(unpaidCount);
                 const StandingIcon = standing.Icon;
@@ -1212,12 +1245,12 @@ export default function Residents() {
                           <Badge
                             className={cn(
                               'border font-semibold text-xs capitalize shadow-none',
-                              residentTypeBadgeClass(rt),
+                              residentOccupancyBadgeClass(rt),
                             )}
                           >
                             <span className="inline-flex items-center gap-1">
-                              {rt === 'homeowner' ? <Home className="h-3 w-3 shrink-0" aria-hidden /> : null}
-                              {rt === 'homeowner' ? 'Homeowner' : 'Tenant'}
+                              <RtIcon className="h-3 w-3 shrink-0" aria-hidden />
+                              {residentOccupancyLabel(rt, residentOccupancyTypes)}
                             </span>
                           </Badge>
                           <Badge
@@ -1327,14 +1360,15 @@ export default function Residents() {
                         <Badge
                           className={cn(
                             'border font-semibold capitalize shadow-none',
-                            residentTypeBadgeClass(profileResidentType),
+                            residentOccupancyBadgeClass(profileResidentType),
                           )}
                         >
                           <span className="inline-flex items-center gap-1">
-                            {profileResidentType === 'homeowner' ? (
-                              <Home className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                            ) : null}
-                            {profileResidentType === 'homeowner' ? 'Homeowner' : 'Tenant'}
+                            {(() => {
+                              const PIcon = residentTypeOptionIcon(profileResidentType);
+                              return <PIcon className="h-3.5 w-3.5 shrink-0" aria-hidden />;
+                            })()}
+                            {residentOccupancyLabel(profileResidentType, residentOccupancyTypes)}
                           </span>
                         </Badge>
                         <Badge

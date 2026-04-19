@@ -1,5 +1,6 @@
-/** Keep in sync with src/lib/residentStreets.ts */
-export const RESIDENT_STREET_OPTIONS = [
+import { getDropdownConfig } from './dropdown_config.js';
+
+const FALLBACK_STREETS = [
   'Twin Peaks Drive',
   'Milky Way Drive',
   'Moonlight Loop',
@@ -16,7 +17,24 @@ export const RESIDENT_STREET_OPTIONS = [
   'Union Lane',
 ];
 
-export const RESIDENT_STREET_SET = new Set(RESIDENT_STREET_OPTIONS);
+export function getAllowedResidentStreets() {
+  try {
+    const streets = getDropdownConfig().residentStreets;
+    return Array.isArray(streets) && streets.length ? streets : FALLBACK_STREETS;
+  } catch {
+    return FALLBACK_STREETS;
+  }
+}
+
+export function getResidentStreetSet() {
+  return new Set(getAllowedResidentStreets());
+}
+
+/** @deprecated Use `getAllowedResidentStreets()` (catalog may change at runtime). */
+export const RESIDENT_STREET_OPTIONS = FALLBACK_STREETS;
+
+/** @deprecated Use `getResidentStreetSet()`. */
+export const RESIDENT_STREET_SET = new Set(FALLBACK_STREETS);
 
 export function composeResidentAddress(houseNumber, streetName, barangay, city) {
   const h = typeof houseNumber === 'string' ? houseNumber.trim() : '';

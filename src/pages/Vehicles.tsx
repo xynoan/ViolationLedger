@@ -6,6 +6,8 @@ import {
   Car,
   Info,
   Home,
+  User,
+  Users,
   ChevronDown,
   MapPin,
   Shield,
@@ -17,7 +19,7 @@ import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Vehicle, Resident, ResidentType, Violation } from '@/types/parking';
+import { Vehicle, Resident, Violation } from '@/types/parking';
 import {
   Table,
   TableBody,
@@ -53,16 +55,13 @@ import { useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { formatResidentAddressLine } from '@/lib/residentStreets';
+import { useDropdownOptions } from '@/hooks/useDropdownOptions';
+import {
+  residentOccupancyBadgeClass,
+  residentOccupancyLabel,
+  resolveResidentTypeForDisplay,
+} from '@/lib/residentOccupancy';
 
-const VEHICLE_TYPE_OPTIONS = [
-  { value: 'car', label: 'Car' },
-  { value: 'motorcycle', label: 'Motorcycle' },
-  { value: 'truck', label: 'Truck' },
-  { value: 'van', label: 'Van' },
-  { value: 'suv', label: 'SUV' },
-  { value: 'tricycle', label: 'Tricycle' },
-  { value: 'other', label: 'Other' },
-] as const;
 const VEHICLE_TYPE_OTHER = 'other';
 
 function errMessage(error: unknown, fallback: string) {
@@ -73,23 +72,27 @@ const digitsOnly = (value: string) => value.replace(/\D/g, '');
 const lettersAndSpacesOnly = (value: string) => value.replace(/[^a-zA-Z\s]/g, '');
 const ownerNameValid = (value: string) => /^[a-zA-Z\s]+$/.test(value.trim());
 
-function formatVehicleTypeLabel(value?: string): string {
+function formatVehicleTypeLabel(
+  value: string | undefined,
+  vehicleTypes: readonly { value: string; label: string }[],
+): string {
   if (!value?.trim()) return '—';
   const v = value.trim().toLowerCase();
-  const found = VEHICLE_TYPE_OPTIONS.find((o) => o.value === v);
+  const found = vehicleTypes.find((o) => o.value === v);
   return found?.label ?? value;
 }
 
 const normPlate = (p: string) => String(p || '').replace(/\s+/g, '').toUpperCase();
 
-const VEHICLE_TYPE_PRESET_SLUGS = new Set(
-  VEHICLE_TYPE_OPTIONS.filter((o) => o.value !== VEHICLE_TYPE_OTHER).map((o) => o.value),
-);
-
-function vehicleMatchesTypeFilter(vehicle: Vehicle, filterSlug: string): boolean {
+function vehicleMatchesTypeFilter(
+  vehicle: Vehicle,
+  filterSlug: string,
+  vehicleTypes: readonly { value: string; label: string }[],
+): boolean {
   if (!filterSlug) return true;
   const t = (vehicle.vehicleType || '').trim().toLowerCase();
-  if (filterSlug === VEHICLE_TYPE_OTHER) return !VEHICLE_TYPE_PRESET_SLUGS.has(t);
+  const slugs = new Set(vehicleTypes.filter((o) => o.value !== VEHICLE_TYPE_OTHER).map((o) => o.value));
+  if (filterSlug === VEHICLE_TYPE_OTHER) return !slugs.has(t);
   return t === filterSlug;
 }
 
@@ -151,16 +154,11 @@ function getStandingPresentation(unpaid: number): { label: string; className: st
   };
 }
 
-function resolveResidentType(r: Resident): ResidentType {
-  const t = r.residentType?.toLowerCase?.();
-  if (t === 'tenant') return 'tenant';
-  return 'homeowner';
-}
-
-function residentTypeBadgeClass(type: ResidentType): string {
-  return type === 'tenant'
-    ? 'border-purple-600/55 bg-purple-600 text-white shadow-none hover:bg-purple-600/95 dark:bg-purple-700'
-    : 'border-blue-600/55 bg-blue-600 text-white shadow-none hover:bg-blue-600/95 dark:bg-blue-700';
+function residentTypeOptionIcon(value: string): LucideIcon {
+  const v = value.toLowerCase();
+  if (v === 'homeowner') return Home;
+  if (v === 'tenant') return User;
+  return Users;
 }
 
 export default function Vehicles() {
@@ -171,6 +169,9 @@ export default function Vehicles() {
   const isEncoder = user?.role === 'encoder';
    const isBarangayUser = user?.role === 'barangay_user';
    const isAdmin = user?.role === 'admin';
+  const { options: catalog } = useDropdownOptions();
+  const vehicleTypeOptions = catalog.vehicleTypes;
+  const residentOccupancyTypes = catalog.residentOccupancyTypes;
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [residents, setResidents] = useState<Resident[]>([]);
   const [violations, setViolations] = useState<Violation[]>([]);
@@ -274,7 +275,7 @@ export default function Vehicles() {
     const ownerQ = filterOwner.trim().toLowerCase();
     return vehiclesLinkedToRegisteredResidents.filter((v) => {
       if (plateQ && !normPlate(v.plateNumber).includes(plateQ)) return false;
-      if (!vehicleMatchesTypeFilter(v, filterVehicleType)) return false;
+      if (!vehicleMatchesTypeFilter(v, filterVehicleType, vehicleTypeOptions)) return false;
       if (ownerQ && !v.ownerName.toLowerCase().includes(ownerQ)) return false;
       if (!registeredAtMatchesDay(v.registeredAt, filterRegisteredOn)) return false;
       return true;
@@ -285,6 +286,7 @@ export default function Vehicles() {
     filterVehicleType,
     filterOwner,
     filterRegisteredOn,
+    vehicleTypeOptions,
   ]);
 
   const hasActiveRegistryFilters = useMemo(
@@ -407,7 +409,7 @@ export default function Vehicles() {
     
     if (vehicle) {
       const normalizedVehicleType = (vehicle.vehicleType || '').toLowerCase();
-      const hasPresetVehicleType = VEHICLE_TYPE_OPTIONS.some((opt) => opt.value === normalizedVehicleType);
+      const hasPresetVehicleType = vehicleTypeOptions.some((opt) => opt.value === normalizedVehicleType);
       setEditingVehicle(vehicle);
       setFormData({
         plateNumber: vehicle.plateNumber.toUpperCase(),
@@ -684,7 +686,7 @@ export default function Vehicles() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__all__">All types</SelectItem>
-                  {VEHICLE_TYPE_OPTIONS.map((opt) => (
+                  {vehicleTypeOptions.map((opt) => (
                     <SelectItem key={opt.value} value={opt.value}>
                       {opt.label}
                     </SelectItem>
@@ -780,7 +782,7 @@ export default function Vehicles() {
                         <SelectValue placeholder="Select type" />
                       </SelectTrigger>
                       <SelectContent>
-                        {VEHICLE_TYPE_OPTIONS.map((opt) => (
+                        {vehicleTypeOptions.map((opt) => (
                           <SelectItem key={opt.value} value={opt.value}>
                             {opt.label}
                           </SelectItem>
@@ -918,7 +920,7 @@ export default function Vehicles() {
                     </Button>
                   </div>
                   <div className="text-sm text-muted-foreground">
-                    {formatVehicleTypeLabel(vehicle.vehicleType)}
+                    {formatVehicleTypeLabel(vehicle.vehicleType, vehicleTypeOptions)}
                   </div>
                   <div className="text-sm text-foreground font-medium">
                     {getResidentNameForVehicle(vehicle) ?? vehicle.ownerName}
@@ -964,7 +966,7 @@ export default function Vehicles() {
                     {displayedLinkedVehicles.map((vehicle) => (
                       <TableRow key={vehicle.id} className="border-border">
                         <TableCell className="font-mono font-medium">{vehicle.plateNumber}</TableCell>
-                        <TableCell>{formatVehicleTypeLabel(vehicle.vehicleType)}</TableCell>
+                        <TableCell>{formatVehicleTypeLabel(vehicle.vehicleType, vehicleTypeOptions)}</TableCell>
                         <TableCell className="font-medium">
                           {getResidentNameForVehicle(vehicle) ?? vehicle.ownerName}
                         </TableCell>
@@ -1037,14 +1039,25 @@ export default function Vehicles() {
                       <Badge
                         className={cn(
                           'border font-semibold capitalize shadow-none',
-                          residentTypeBadgeClass(resolveResidentType(residentForInfoDialog)),
+                          residentOccupancyBadgeClass(
+                            resolveResidentTypeForDisplay(residentForInfoDialog, residentOccupancyTypes),
+                          ),
                         )}
                       >
                         <span className="inline-flex items-center gap-1">
-                          {resolveResidentType(residentForInfoDialog) === 'homeowner' ? (
-                            <Home className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                          ) : null}
-                          {resolveResidentType(residentForInfoDialog) === 'homeowner' ? 'Homeowner' : 'Tenant'}
+                          {(() => {
+                            const rt = resolveResidentTypeForDisplay(
+                              residentForInfoDialog,
+                              residentOccupancyTypes,
+                            );
+                            const RtIcon = residentTypeOptionIcon(rt);
+                            return (
+                              <>
+                                <RtIcon className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                                {residentOccupancyLabel(rt, residentOccupancyTypes)}
+                              </>
+                            );
+                          })()}
                         </span>
                       </Badge>
                       <Badge

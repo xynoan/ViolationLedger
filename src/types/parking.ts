@@ -24,8 +24,8 @@ export interface Vehicle {
 
 export type ResidentStatus = 'verified' | 'guest';
 
-/** Property relationship; drives registry badges (Homeowner vs Tenant). */
-export type ResidentType = 'homeowner' | 'tenant';
+/** Property / occupancy slug from Settings → Residents (catalog-driven; e.g. homeowner, tenant). */
+export type ResidentType = string;
 
 export interface Resident {
   id: string;

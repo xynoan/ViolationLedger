@@ -1,6 +1,6 @@
 import db from '../database.js';
 import { pathToFileURL } from 'url';
-import { RESIDENT_STREET_OPTIONS, composeResidentAddress } from '../residentStreets.js';
+import { getAllowedResidentStreets, composeResidentAddress } from '../residentStreets.js';
 import { getGracePeriodMinutes } from '../runtime_config.js';
 
 const RESET_MODE = process.argv.includes('--reset');
@@ -68,14 +68,14 @@ function uniquePlate(rng, used, index) {
 }
 
 function mockStreetLocationId(zeroBasedSlot) {
-  const n = RESIDENT_STREET_OPTIONS.length;
-  const street = RESIDENT_STREET_OPTIONS[zeroBasedSlot % n];
+  const n = getAllowedResidentStreets().length;
+  const street = getAllowedResidentStreets()[zeroBasedSlot % n];
   const block = Math.floor(zeroBasedSlot / n) + 1;
   return block === 1 ? street : `${street} (${block})`;
 }
 
 function cameraLocationForIndex(camIndex) {
-  return mockStreetLocationId(camIndex % Math.max(RESIDENT_STREET_OPTIONS.length, 1));
+  return mockStreetLocationId(camIndex % Math.max(getAllowedResidentStreets().length, 1));
 }
 
 const MOCK_FIRST_NAMES = [
@@ -327,7 +327,7 @@ function run() {
   for (let i = 0; i < numResidents; i += 1) {
     const idx = i + 1;
     const residentId = id('RESIDENT', idx);
-    const street = RESIDENT_STREET_OPTIONS[i % RESIDENT_STREET_OPTIONS.length];
+    const street = getAllowedResidentStreets()[i % getAllowedResidentStreets().length];
     const hn = String(100 + randInt(rng, 0, 179));
     const composed = `${composeResidentAddress(hn, street)}, Quezon City`;
     const residentType = rng() < 0.42 ? 'tenant' : 'homeowner';

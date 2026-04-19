@@ -352,6 +352,21 @@ export const healthAPI = {
     }),
 };
 
+export const dropdownOptionsAPI = {
+  get: () => fetchAPI('/dropdown-options', { cache: false }),
+  update: (payload: Record<string, unknown>) =>
+    fetchAPI('/dropdown-options', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+      cache: false,
+    }),
+  reset: () =>
+    fetchAPI('/dropdown-options/reset', {
+      method: 'POST',
+      cache: false,
+    }),
+};
+
 // Analytics API
 export interface AnalyticsResponse {
   users: {

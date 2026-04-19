@@ -1,5 +1,16 @@
-import { useState, useEffect } from 'react';
-import { MessageSquare, XCircle, RefreshCw } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import {
+  MessageSquare,
+  XCircle,
+  RefreshCw,
+  ListTree,
+  Car,
+  Compass,
+  Users,
+  UserCog,
+  Save,
+  RotateCcw,
+} from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -12,6 +23,11 @@ import { healthAPI } from '@/lib/api';
 import { toast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { Navigate } from 'react-router-dom';
+import {
+  DropdownCatalogSettings,
+  type DropdownCatalogSettingsHandle,
+} from '@/components/settings/DropdownCatalogSettings';
+import { cn } from '@/lib/utils';
 
 interface HealthStatus {
   status: 'healthy' | 'degraded' | 'unhealthy' | 'error';
@@ -46,9 +62,23 @@ interface HealthStatus {
   };
 }
 
+const NAV = [
+  { id: 'settings-general', label: 'General' },
+  { id: 'settings-visitors', label: 'Visitors' },
+  { id: 'settings-residents', label: 'Residents' },
+  { id: 'settings-users', label: 'Users' },
+  { id: 'settings-notifications', label: 'SMS' },
+] as const;
+
+function scrollToSection(id: string) {
+  document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 export default function Settings() {
   usePageTracking();
   const { user } = useAuth();
+  const catalogRef = useRef<DropdownCatalogSettingsHandle>(null);
+  const [catalogDirty, setCatalogDirty] = useState(false);
   const [healthStatus, setHealthStatus] = useState<HealthStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [disableSmsDelayForDemo, setDisableSmsDelayForDemo] = useState(false);
@@ -56,6 +86,8 @@ export default function Settings() {
   const [gracePeriodMinutes, setGracePeriodMinutes] = useState(30);
   const [updatingSmsDelay, setUpdatingSmsDelay] = useState(false);
   const [savingRuntimeConfig, setSavingRuntimeConfig] = useState(false);
+
+  const isAdmin = user?.role === 'admin';
 
   if (user?.role === 'barangay_user') {
     return <Navigate to="/" replace />;
@@ -73,9 +105,9 @@ export default function Settings() {
     } catch (error: any) {
       console.error('Failed to fetch health status:', error);
       toast({
-        title: "Failed to Load Health Status",
-        description: error.message || "Could not connect to health check endpoint",
-        variant: "destructive",
+        title: 'Failed to Load Health Status',
+        description: error.message || 'Could not connect to health check endpoint',
+        variant: 'destructive',
       });
       setHealthStatus(null);
     } finally {
@@ -111,7 +143,9 @@ export default function Settings() {
               ownerSmsDelay: {
                 delayMinutes: Number(updated?.delayMinutes ?? 5),
                 disabledForDemo: updatedDisabledState,
-                effectiveDelayMinutes: Number(updated?.effectiveDelayMinutes ?? (updatedDisabledState ? 0 : 5)),
+                effectiveDelayMinutes: Number(
+                  updated?.effectiveDelayMinutes ?? (updatedDisabledState ? 0 : 5),
+                ),
               },
             },
           },
@@ -177,10 +211,22 @@ export default function Settings() {
     }
   };
 
+  const handleDiscardCatalog = useCallback(() => {
+    catalogRef.current?.discard();
+  }, []);
+
+  const handleSaveCatalog = useCallback(() => {
+    catalogRef.current?.saveAll();
+  }, []);
+
+  const handleResetCatalog = useCallback(() => {
+    catalogRef.current?.resetCatalogToDefaults();
+  }, []);
+
   if (loading) {
     return (
-      <div className="min-h-screen">
-        <Header title="Settings" subtitle="SMS and warning timing" />
+      <div className="min-h-screen bg-slate-50/90">
+        <Header title="Settings" subtitle="Forms, lists, and notifications" />
         <div className="p-6 flex items-center justify-center">
           <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>
@@ -190,10 +236,10 @@ export default function Settings() {
 
   if (!healthStatus) {
     return (
-      <div className="min-h-screen">
-        <Header title="Settings" subtitle="SMS and warning timing" />
+      <div className="min-h-screen bg-slate-50/90">
+        <Header title="Settings" subtitle="Forms, lists, and notifications" />
         <div className="p-6">
-          <Card>
+          <Card className="border border-border/80 bg-card shadow-none max-w-lg mx-auto">
             <CardContent className="pt-6">
               <div className="text-center py-8">
                 <XCircle className="h-12 w-12 text-destructive mx-auto mb-4" />
@@ -210,90 +256,225 @@ export default function Settings() {
     );
   }
 
-  return (
-    <div className="min-h-screen">
-      <Header title="Settings" subtitle="SMS and warning timing" />
+  const navIcon = (id: string) => {
+    switch (id) {
+      case 'settings-general':
+        return Car;
+      case 'settings-visitors':
+        return Compass;
+      case 'settings-residents':
+        return Users;
+      case 'settings-users':
+        return UserCog;
+      default:
+        return MessageSquare;
+    }
+  };
 
-      <div className="p-4 sm:p-6 space-y-6 max-w-3xl">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <MessageSquare className="h-5 w-5" />
-              SMS Behavior
-            </CardTitle>
-            <CardDescription>
-              Configure the warning flow for demos: owner SMS timer first, then warning grace period.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="owner-sms-delay-minutes">Owner SMS timer (minutes)</Label>
-                <Input
-                  id="owner-sms-delay-minutes"
-                  type="number"
-                  min={1}
-                  value={ownerSmsDelayMinutes}
-                  onChange={(event) => setOwnerSmsDelayMinutes(Math.max(1, Number(event.target.value || 1)))}
-                  disabled={savingRuntimeConfig}
-                />
-                <p className="text-xs text-muted-foreground">
-                  This runs first after detection before owner SMS is sent.
-                </p>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="grace-period-minutes">Warning grace period (minutes)</Label>
-                <Input
-                  id="grace-period-minutes"
-                  type="number"
-                  min={1}
-                  value={gracePeriodMinutes}
-                  onChange={(event) => setGracePeriodMinutes(Math.max(1, Number(event.target.value || 1)))}
-                  disabled={savingRuntimeConfig}
-                />
-                <p className="text-xs text-muted-foreground">
-                  After this expires, the warning escalates for Barangay action.
-                </p>
-              </div>
+  return (
+    <div className="min-h-screen bg-slate-50/90 text-foreground">
+      <Header title="Settings" subtitle="Forms, lists, and notifications" />
+
+      <div
+        className={cn(
+          'mx-auto flex w-full max-w-[1600px]',
+          isAdmin && catalogDirty && 'pb-28',
+          !isAdmin && 'pb-10',
+        )}
+      >
+        {isAdmin ? (
+          <aside className="sticky top-16 z-20 hidden h-[calc(100vh-4rem)] w-52 shrink-0 overflow-y-auto border-r border-border/80 bg-white/95 px-3 py-6 lg:block">
+            <p className="mb-3 px-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Jump to
+            </p>
+            <nav className="space-y-0.5" aria-label="Settings sections">
+              {NAV.map(({ id, label }) => {
+                const Icon = navIcon(id);
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => scrollToSection(id)}
+                    className={cn(
+                      'flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm font-medium text-muted-foreground transition-colors',
+                      'hover:bg-muted hover:text-foreground',
+                    )}
+                  >
+                    <Icon className="h-4 w-4 shrink-0 opacity-70" aria-hidden />
+                    {label}
+                  </button>
+                );
+              })}
+            </nav>
+            <div className="mt-6 border-t border-border/60 pt-4 px-2">
+              <p className="text-[11px] leading-snug text-muted-foreground">
+                Tip: use <span className="font-medium text-foreground">Reset catalog</span> in the bar below if lists
+                get out of hand—it restores built-in defaults.
+              </p>
             </div>
-            <div className="flex items-center justify-between rounded-md border p-4">
-              <div className="space-y-1 pr-4">
-                <Label htmlFor="disable-sms-delay-demo" className="text-sm font-medium">
-                  Disable owner SMS delay (demo mode)
-                </Label>
-                <p className="text-xs text-muted-foreground">
-                  When enabled, owner SMS reminders are sent immediately instead of after 5 minutes.
-                </p>
-              </div>
-              <Switch
-                id="disable-sms-delay-demo"
-                checked={disableSmsDelayForDemo}
-                disabled={updatingSmsDelay}
-                onCheckedChange={handleToggleSmsDelay}
-              />
+          </aside>
+        ) : null}
+
+        <div className="min-w-0 flex-1">
+          {isAdmin ? (
+            <div className="sticky top-16 z-10 flex gap-2 overflow-x-auto border-b border-border/80 bg-slate-50/95 px-3 py-2.5 lg:hidden">
+              {NAV.map(({ id, label }) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => scrollToSection(id)}
+                  className={cn(
+                    'shrink-0 rounded-full border border-border/80 bg-background px-3 py-1.5 text-xs font-medium text-foreground shadow-sm',
+                    'hover:bg-muted/80',
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
-            <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <span>
-                Effective owner SMS delay:
-                {' '}
-                {disableSmsDelayForDemo ? '0 minute (immediate)' : `${ownerSmsDelayMinutes} minute(s)`}
-              </span>
-              <Badge variant={disableSmsDelayForDemo ? 'secondary' : 'outline'}>
-                {disableSmsDelayForDemo ? 'Demo Mode' : 'Standard Mode'}
-              </Badge>
-            </div>
-            <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-dashed p-3 text-xs text-muted-foreground">
-              <span>
-                Order of timers: Owner SMS timer ({disableSmsDelayForDemo ? 0 : ownerSmsDelayMinutes}m)
-                {' '}→ Warning grace period ({gracePeriodMinutes}m)
-              </span>
-              <Button size="sm" onClick={handleSaveDemoTimers} disabled={savingRuntimeConfig || updatingSmsDelay}>
-                {savingRuntimeConfig ? 'Saving…' : 'Save demo timers'}
+          ) : null}
+
+          <div className="space-y-10 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+            {isAdmin ? (
+              <DropdownCatalogSettings ref={catalogRef} onDirtyChange={setCatalogDirty} />
+            ) : (
+              <Card className="border border-border/80 bg-card shadow-none">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <ListTree className="h-5 w-5" />
+                    Form options
+                  </CardTitle>
+                  <CardDescription>Catalog editing is limited to administrators.</CardDescription>
+                </CardHeader>
+              </Card>
+            )}
+
+            <section id="settings-notifications" className="scroll-mt-24">
+              <Card className="border border-border/80 bg-card shadow-none">
+                <CardHeader className="space-y-1 pb-4">
+                  <CardTitle className="text-lg font-semibold tracking-tight flex items-center gap-2">
+                    <MessageSquare className="h-5 w-5 text-muted-foreground" />
+                    SMS &amp; warning timers
+                  </CardTitle>
+                  <CardDescription className="text-sm leading-relaxed max-w-2xl">
+                    Automation used after a vehicle is detected: owner SMS delay, then warning grace period. These
+                    settings use the health API and save separately from form lists.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-6 pt-0">
+                  <div className="grid gap-6 sm:grid-cols-2">
+                    <div className="flex flex-col gap-3 rounded-lg border border-border/60 bg-muted/20 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="min-w-0 space-y-1">
+                        <Label htmlFor="owner-sms-delay-minutes" className="text-sm font-medium">
+                          Owner SMS timer (minutes)
+                        </Label>
+                        <p className="text-xs text-muted-foreground">
+                          Runs after detection before the owner SMS is sent.
+                        </p>
+                      </div>
+                      <Input
+                        id="owner-sms-delay-minutes"
+                        type="number"
+                        min={1}
+                        className="h-10 w-full max-w-[8rem] sm:shrink-0"
+                        value={ownerSmsDelayMinutes}
+                        onChange={(event) => setOwnerSmsDelayMinutes(Math.max(1, Number(event.target.value || 1)))}
+                        disabled={savingRuntimeConfig}
+                      />
+                    </div>
+                    <div className="flex flex-col gap-3 rounded-lg border border-border/60 bg-muted/20 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="min-w-0 space-y-1">
+                        <Label htmlFor="grace-period-minutes" className="text-sm font-medium">
+                          Warning grace period (minutes)
+                        </Label>
+                        <p className="text-xs text-muted-foreground">After this, the warning escalates for Barangay.</p>
+                      </div>
+                      <Input
+                        id="grace-period-minutes"
+                        type="number"
+                        min={1}
+                        className="h-10 w-full max-w-[8rem] sm:shrink-0"
+                        value={gracePeriodMinutes}
+                        onChange={(event) => setGracePeriodMinutes(Math.max(1, Number(event.target.value || 1)))}
+                        disabled={savingRuntimeConfig}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-4 rounded-lg border border-border/60 bg-muted/15 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="space-y-1 pr-4">
+                      <Label htmlFor="disable-sms-delay-demo" className="text-sm font-medium">
+                        Disable owner SMS delay (demo mode)
+                      </Label>
+                      <p className="text-xs text-muted-foreground">
+                        When enabled, owner SMS is sent immediately instead of after the delay.
+                      </p>
+                    </div>
+                    <Switch
+                      id="disable-sms-delay-demo"
+                      checked={disableSmsDelayForDemo}
+                      disabled={updatingSmsDelay}
+                      onCheckedChange={handleToggleSmsDelay}
+                    />
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground">
+                    <span>
+                      Effective owner SMS delay:{' '}
+                      {disableSmsDelayForDemo ? '0 minute (immediate)' : `${ownerSmsDelayMinutes} minute(s)`}
+                    </span>
+                    <Badge variant={disableSmsDelayForDemo ? 'secondary' : 'outline'}>
+                      {disableSmsDelayForDemo ? 'Demo Mode' : 'Standard Mode'}
+                    </Badge>
+                  </div>
+
+                  <div className="flex flex-col gap-3 border-t border-border/60 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="text-xs text-muted-foreground">
+                      Order: Owner SMS ({disableSmsDelayForDemo ? 0 : ownerSmsDelayMinutes}m) → Grace period (
+                      {gracePeriodMinutes}m)
+                    </p>
+                    <Button
+                      size="sm"
+                      onClick={handleSaveDemoTimers}
+                      disabled={savingRuntimeConfig || updatingSmsDelay}
+                    >
+                      {savingRuntimeConfig ? 'Saving…' : 'Save timer settings'}
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            </section>
+          </div>
+        </div>
+      </div>
+
+      {isAdmin && catalogDirty ? (
+        <div
+          className="fixed bottom-0 left-0 right-0 z-50 border-t border-border bg-background/95 shadow-[0_-8px_30px_rgba(15,23,42,0.08)] backdrop-blur-md supports-[backdrop-filter]:bg-background/85"
+          role="region"
+          aria-label="Unsaved catalog changes"
+        >
+          <div className="mx-auto flex max-w-4xl flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+            <p className="text-sm text-muted-foreground">
+              <span className="font-medium text-foreground">Unsaved changes</span> to form lists and labels. Discard
+              restores the last saved catalog on this device session.
+            </p>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <Button type="button" variant="outline" size="sm" onClick={handleResetCatalog}>
+                <RotateCcw className="h-4 w-4 mr-1" />
+                Reset catalog
+              </Button>
+              <Button type="button" variant="ghost" size="sm" onClick={handleDiscardCatalog}>
+                Discard
+              </Button>
+              <Button type="button" size="sm" onClick={handleSaveCatalog}>
+                <Save className="h-4 w-4 mr-1" />
+                Save all settings
               </Button>
             </div>
-          </CardContent>
-        </Card>
-      </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

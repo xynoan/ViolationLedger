@@ -10,20 +10,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { residentsAPI, vehiclesAPI } from '@/lib/api';
 import { toast } from '@/hooks/use-toast';
 import { Resident } from '@/types/parking';
+import { useDropdownOptions } from '@/hooks/useDropdownOptions';
 
-const VEHICLE_TYPE_OPTIONS = [
-  { value: 'car', label: 'Car' },
-  { value: 'motorcycle', label: 'Motorcycle' },
-  { value: 'truck', label: 'Truck' },
-  { value: 'van', label: 'Van' },
-  { value: 'suv', label: 'SUV' },
-  { value: 'tricycle', label: 'Tricycle' },
-  { value: 'other', label: 'Other' },
-] as const;
 const VEHICLE_TYPE_OTHER = 'other';
 
 export default function AddVehicleQuick() {
   usePageTracking();
+  const { options: catalog } = useDropdownOptions();
+  const vehicleTypeOptions = catalog.vehicleTypes;
   const plateInputRef = useRef<HTMLInputElement | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [residents, setResidents] = useState<Resident[]>([]);
@@ -218,7 +212,7 @@ export default function AddVehicleQuick() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {VEHICLE_TYPE_OPTIONS.map((opt) => (
+                  {vehicleTypeOptions.map((opt) => (
                     <SelectItem key={opt.value} value={opt.value}>
                       {opt.label}
                     </SelectItem>
