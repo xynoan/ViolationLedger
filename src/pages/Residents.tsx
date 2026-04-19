@@ -102,7 +102,9 @@ function extractLocationKeysFromAddress(address: string | undefined): string[] {
 
 /** Order filter dropdown: Barangay first, then streets in catalog order, then any other legacy keys. */
 function sortLocationFilterOptions(keys: string[]): string[] {
-  const streetOrder = new Map(RESIDENT_STREET_OPTIONS.map((s, i) => [s, i]));
+  const streetOrder = new Map(
+    RESIDENT_STREET_OPTIONS.map((s, i) => [s, i]) as [string, number][],
+  );
   return [...keys].sort((a, b) => {
     const ma = a.match(/^Barangay\s+(\d+)$/i);
     const mb = b.match(/^Barangay\s+(\d+)$/i);
@@ -484,7 +486,7 @@ export default function Residents() {
       if (!cancelled) void loadViolationsForRegistry();
     };
     let idleHandle: number | undefined;
-    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    let timeoutHandle: number | undefined;
     if (typeof window.requestIdleCallback === 'function') {
       idleHandle = window.requestIdleCallback(run, { timeout: 5000 });
     } else {
