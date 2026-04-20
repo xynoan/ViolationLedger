@@ -40,6 +40,9 @@ const workerStatuses = new Map();
 /** cameraId -> epoch ms last vehicle-only Barangay alert */
 const lastNoPlateAlertAt = new Map();
 const NO_PLATE_ALERT_COOLDOWN_MS = 5 * 60 * 1000;
+/** cameraId:normalizedPlate -> epoch ms; throttle unregistered plate notifications */
+const lastUnregisteredPlateAlertAt = new Map();
+const UNREGISTERED_PLATE_ALERT_COOLDOWN_MS = 2 * 60 * 1000;
 
 /** HTTP server for WebSocket upgrade */
 let wss = null;
@@ -57,6 +60,50 @@ function normalizePlateForMatch(plateNumber) {
   return String(plateNumber).replace(/\s+/g, '').toUpperCase();
 }
 
+function createUnregisteredPlateNotification(cameraId, normalizedPlate, msg) {
+  const cooldownKey = `${cameraId}:${normalizedPlate}`;
+  const lastSentAt = lastUnregisteredPlateAlertAt.get(cooldownKey) || 0;
+  if (Date.now() - lastSentAt < UNREGISTERED_PLATE_ALERT_COOLDOWN_MS) return;
+
+  const camera = db.prepare('SELECT id, locationId, name FROM cameras WHERE id = ?').get(cameraId);
+  const locationLabel = camera?.locationId || 'Unknown location';
+  const cameraLabel = camera?.name || cameraId;
+  const nowIso = new Date().toISOString();
+  const notificationId = `NOTIF-UNREG-${cameraId}-${normalizedPlate}-${Date.now()}`;
+
+  try {
+    db.prepare(`
+      INSERT INTO notifications (
+        id, type, title, message, cameraId, locationId,
+        incidentId, detectionId, imageUrl, imageBase64,
+        plateNumber, timeDetected, reason, timestamp, read
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      notificationId,
+      'incident_created',
+      `Unregistered plate detected: ${normalizedPlate}`,
+      `Detected unregistered plate ${normalizedPlate} at ${locationLabel} (${cameraLabel}). Barangay verification is required.`,
+      camera?.id || cameraId,
+      locationLabel,
+      null,
+      null,
+      msg?.imageUrl || null,
+      null,
+      normalizedPlate,
+      nowIso,
+      'unregistered_plate_detected',
+      nowIso,
+      0
+    );
+    lastUnregisteredPlateAlertAt.set(cooldownKey, Date.now());
+  } catch (error) {
+    console.error(
+      '[Detection] Failed to create unregistered plate notification:',
+      error?.message || error
+    );
+  }
+}
+
 async function handlePlateDetections(cameraId, msg) {
   const plates = Array.isArray(msg?.plates) ? msg.plates : [];
   if (!plates.length) return;
@@ -71,6 +118,14 @@ async function handlePlateDetections(cameraId, msg) {
 
   for (const normalized of uniquePlates) {
     try {
+      const vehicle = db
+        .prepare(`SELECT id FROM vehicles WHERE REPLACE(UPPER(plateNumber), ' ', '') = ?`)
+        .get(normalized);
+      if (!vehicle) {
+        createUnregisteredPlateNotification(cameraId, normalized, msg);
+        continue;
+      }
+
       // Look up camera to get locationId for violation creation
       const camera = db
         .prepare('SELECT id, locationId FROM cameras WHERE id = ?')
