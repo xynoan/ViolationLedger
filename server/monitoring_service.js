@@ -4,7 +4,10 @@ import {
   escalateWarningToForTicketIfEligible,
   hasPostGracePlatePresence,
 } from './violation_escalation.js';
-import { sendViolationSms } from './utils/smsService.js';
+import {
+  sendUnregisteredViolationSmsToBarangay,
+  sendViolationSms,
+} from './utils/smsService.js';
 import {
   getOwnerSmsDelayConfig,
   getPostGraceVerificationMinutes,
@@ -250,6 +253,10 @@ class MonitoringService {
           warning.plateNumber !== 'BLUR';
 
         if (hasReadablePlate) {
+          const normalizedPlate = normalizePlateForMatch(warning.plateNumber);
+          const registeredVehicle = db
+            .prepare(`SELECT 1 FROM vehicles WHERE REPLACE(UPPER(plateNumber), ' ', '') = ? LIMIT 1`)
+            .get(normalizedPlate);
           const alreadySent = db.prepare(`
             SELECT 1 FROM sms_logs
             WHERE violationId = ?
@@ -265,23 +272,33 @@ class MonitoringService {
           const smsDue = smsDelayConfig.disabledForDemo ? true : now >= smsScheduleAt;
           if (!alreadySent && smsDue) {
             try {
-              const smsResult = await sendViolationSms(
-                warning.plateNumber,
-                warning.cameraLocationId,
-                warning.id,
-              );
+              const smsResult = registeredVehicle
+                ? await sendViolationSms(
+                    warning.plateNumber,
+                    warning.cameraLocationId,
+                    warning.id,
+                  )
+                : await sendUnregisteredViolationSmsToBarangay(
+                    warning.plateNumber,
+                    warning.cameraLocationId,
+                    warning.id,
+                  );
               if (smsResult?.success) {
                 ownerSmsSentCount += 1;
                 console.log(
-                  `✅ Delayed owner SMS sent for violation ${warning.id} (plate ${warning.plateNumber})`
+                  registeredVehicle
+                    ? `✅ Delayed owner SMS sent for violation ${warning.id} (plate ${warning.plateNumber})`
+                    : `✅ Delayed Barangay SMS sent for unregistered violation ${warning.id} (plate ${warning.plateNumber})`,
                 );
               } else {
                 console.log(
-                  `⚠️  Delayed owner SMS failed for violation ${warning.id}: ${smsResult?.error || 'unknown error'}`
+                  registeredVehicle
+                    ? `⚠️  Delayed owner SMS failed for violation ${warning.id}: ${smsResult?.error || 'unknown error'}`
+                    : `⚠️  Delayed Barangay SMS failed for unregistered violation ${warning.id}: ${smsResult?.error || 'unknown error'}`,
                 );
               }
             } catch (smsError) {
-              console.error(`❌ Delayed owner SMS error for violation ${warning.id}:`, smsError);
+              console.error(`❌ Delayed scheduled SMS error for violation ${warning.id}:`, smsError);
             }
           }
         }

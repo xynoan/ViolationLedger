@@ -101,13 +101,15 @@ export async function createViolationFromDetection(plateNumber, cameraLocationId
     const vehicle = db
       .prepare(`SELECT * FROM vehicles WHERE REPLACE(UPPER(plateNumber), ' ', '') = ?`)
       .get(normalizedPlate);
-    if (!vehicle) {
-      console.log(`ℹ️  Vehicle ${plateNumber} not registered - skipping automatic violation creation`);
-      return null;
+    const isRegisteredVehicle = Boolean(vehicle);
+    if (!isRegisteredVehicle) {
+      console.log(
+        `ℹ️  Vehicle ${plateNumber} not registered - creating warning and scheduling Barangay SMS follow-up`,
+      );
     }
 
-    // Use the stored plate number (may include spaces) as canonical everywhere downstream.
-    const canonicalPlateNumber = vehicle.plateNumber;
+    // Use stored plate for registered vehicles; otherwise use normalized detected value.
+    const canonicalPlateNumber = isRegisteredVehicle ? vehicle.plateNumber : normalizedPlate;
 
     // Check if there's already an active violation for this plate at this location.
     // If found, re-use it and DO NOT reset the warning timer.
@@ -137,7 +139,7 @@ export async function createViolationFromDetection(plateNumber, cameraLocationId
       };
     }
 
-    if (isVisitorDeliveryExemptFromAutoViolation(vehicle)) {
+    if (isRegisteredVehicle && isVisitorDeliveryExemptFromAutoViolation(vehicle)) {
       console.log(
         `ℹ️  Skipping automatic violation for ${canonicalPlateNumber} at ${cameraLocationId} — ` +
           'visitor registered as delivery / drop-off (exempt from auto warnings).',
@@ -186,7 +188,9 @@ export async function createViolationFromDetection(plateNumber, cameraLocationId
         const warningNotificationId = `NOTIF-WARNING-${violationId}-${Date.now()}`;
         const warningTitle = `New Warning - ${canonicalPlateNumber}`;
         const ownerSmsDelayConfig = getOwnerSmsDelayConfig();
-        const warningMessage = `Illegal parking detected for vehicle ${canonicalPlateNumber} at ${cameraLocationId}. ${gracePeriodMinutes}-minute grace period started. Owner SMS is scheduled in ${ownerSmsDelayConfig.effectiveDelayMinutes} minute(s) if the warning remains active.`;
+        const warningMessage = isRegisteredVehicle
+          ? `Illegal parking detected for vehicle ${canonicalPlateNumber} at ${cameraLocationId}. ${gracePeriodMinutes}-minute grace period started. Owner SMS is scheduled in ${ownerSmsDelayConfig.effectiveDelayMinutes} minute(s) if the warning remains active.`
+          : `Illegal parking detected for unregistered vehicle ${canonicalPlateNumber} at ${cameraLocationId}. ${gracePeriodMinutes}-minute grace period started. Barangay SMS is scheduled in ${ownerSmsDelayConfig.effectiveDelayMinutes} minute(s) if the warning remains active.`;
         
         db.prepare(`
           INSERT INTO notifications (
