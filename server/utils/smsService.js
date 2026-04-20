@@ -156,105 +156,6 @@ export async function sendViolationSms(plateNumber, locationId, violationId) {
   }
 }
 
-export async function sendUnregisteredViolationSmsToBarangay(plateNumber, locationId, violationId) {
-  try {
-    const enforcers = db
-      .prepare(`
-        SELECT id, name, contactNumber
-        FROM users
-        WHERE role = 'barangay_user'
-          AND status = 'active'
-          AND contactNumber IS NOT NULL
-          AND TRIM(contactNumber) != ''
-      `)
-      .all();
-
-    if (!enforcers.length) {
-      return {
-        success: false,
-        error: 'No active barangay users with contact numbers found',
-      };
-    }
-
-    const shortWhen = new Date().toLocaleString('en-US', {
-      timeZone: 'Asia/Manila',
-      month: 'short',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true,
-    });
-
-    const graceMin = getGracePeriodMinutes();
-    const message =
-      `Unregistered vehicle ${plateNumber} is illegally parked at ${locationId} ` +
-      `(${shortWhen}). Grace period is ${graceMin} min. Please verify and respond.`;
-
-    let sentCount = 0;
-    let failedCount = 0;
-    const firstMessageLogId = `SMS-${violationId}-BRGY-${Date.now()}-0`;
-
-    for (let i = 0; i < enforcers.length; i += 1) {
-      const enforcer = enforcers[i];
-      const smsResult = await sendSmsMessage(enforcer.contactNumber, message);
-      const messageLogId = `SMS-${violationId}-BRGY-${Date.now()}-${i}`;
-      const sentAt = new Date().toISOString();
-
-      if (smsResult.success) sentCount += 1;
-      else failedCount += 1;
-
-      try {
-        db.prepare(`
-          INSERT INTO sms_logs (
-            id, violationId, plateNumber, contactNumber, message,
-            status, statusMessage, sentAt, error
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          messageLogId,
-          violationId,
-          plateNumber,
-          enforcer.contactNumber,
-          message,
-          smsResult.success ? 'sent' : 'failed',
-          smsResult.success
-            ? `Barangay user ${enforcer.id} (${enforcer.name || 'N/A'}) notified`
-            : smsResult.error,
-          sentAt,
-          smsResult.success ? null : smsResult.error,
-        );
-      } catch (logErr) {
-        console.error('❌ [SMS] Failed to log barangay message to database:', {
-          error: logErr.message,
-          messageLogId,
-          violationId,
-          userId: enforcer.id,
-        });
-      }
-    }
-
-    return sentCount > 0
-      ? { success: true, messageLogId: firstMessageLogId, sentCount, failedCount }
-      : {
-          success: false,
-          messageLogId: firstMessageLogId,
-          sentCount,
-          failedCount,
-          error: 'Failed to send SMS to all barangay users',
-        };
-  } catch (err) {
-    console.error('❌ [SMS] sendUnregisteredViolationSmsToBarangay exception:', {
-      plateNumber,
-      violationId,
-      error: err.message,
-      stack: err.stack,
-    });
-    return {
-      success: false,
-      error: err.message || 'Unexpected error in sendUnregisteredViolationSmsToBarangay',
-    };
-  }
-}
-
 export function getSmsServiceStatus() {
   const configCheck = validateConfig();
 
@@ -272,7 +173,6 @@ export function getSmsServiceStatus() {
 
 export default {
   sendSmsMessage,
-  sendViolationSms,
-  sendUnregisteredViolationSmsToBarangay,
+  sendViolationSms
 };
 
