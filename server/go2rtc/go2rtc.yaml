@@ -1,7 +1,7 @@
 # Stream keys must match each camera's deviceId in the app (e.g. cam1 -> rtsp://127.0.0.1:8554/cam1).
 # On a cloud VPS, the camera URL must be reachable FROM THIS SERVER (not only from your home LAN).
 streams:
-  cam1: "rtsp://ncmorva:12345678@10.180.152.14:554/stream2"
+  cam1: "rtsp://ncmorva:12345678@172.28.151.14:554/stream2"
   cam2: "rtsp://Adrian123:AdrianCinco16@10.180.152.228/live0"
 api:
   listen: ":1984"

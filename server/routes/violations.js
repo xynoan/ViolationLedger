@@ -102,6 +102,53 @@ export async function createViolationFromDetection(plateNumber, cameraLocationId
       .prepare(`SELECT * FROM vehicles WHERE REPLACE(UPPER(plateNumber), ' ', '') = ?`)
       .get(normalizedPlate);
     if (!vehicle) {
+      // Unregistered vehicles should still alert Barangay through notifications.
+      // Guard against noisy duplicate inserts from repeated frame detections.
+      try {
+        const camera = db.prepare('SELECT * FROM cameras WHERE locationId = ?').get(cameraLocationId);
+        const cameraId = camera?.id || null;
+        const nowIso = new Date().toISOString();
+        const fiveMinutesAgoIso = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+
+        const recentUnregistered = db.prepare(`
+          SELECT id FROM notifications
+          WHERE type = 'unregistered_vehicle_urgent'
+            AND REPLACE(UPPER(plateNumber), ' ', '') = ?
+            AND locationId = ?
+            AND timestamp >= ?
+          ORDER BY timestamp DESC
+          LIMIT 1
+        `).get(normalizedPlate, cameraLocationId, fiveMinutesAgoIso);
+
+        if (!recentUnregistered) {
+          const notificationId = `NOTIF-UNREG-${cameraLocationId}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+          db.prepare(`
+            INSERT INTO notifications (
+              id, type, title, message, cameraId, locationId,
+              incidentId, detectionId, imageUrl, imageBase64,
+              plateNumber, timeDetected, reason, timestamp, read
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(
+            notificationId,
+            'unregistered_vehicle_urgent',
+            'URGENT: Unregistered Vehicle Detected',
+            `Vehicle with plate ${plateNumber} detected at ${cameraLocationId}. Vehicle is not registered in the system. Immediate Barangay attention required.`,
+            cameraId,
+            cameraLocationId,
+            null,
+            detectionId,
+            null,
+            null,
+            plateNumber,
+            nowIso,
+            'Unregistered vehicle detected',
+            nowIso,
+            0,
+          );
+        }
+      } catch (notifError) {
+        console.error('Error creating unregistered vehicle notification:', notifError);
+      }
       console.log(`ℹ️  Vehicle ${plateNumber} not registered - skipping automatic violation creation`);
       return null;
     }
