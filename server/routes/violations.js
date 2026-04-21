@@ -93,6 +93,62 @@ function clampWarningExpiresAtForResponse(violation) {
 export async function createViolationFromDetection(plateNumber, cameraLocationId, detectionId = null) {
   try {
     if (!plateNumber || plateNumber.toUpperCase() === 'NONE' || plateNumber.toUpperCase() === 'BLUR') {
+      // Unreadable/missing plates should notify Barangay, but never create warnings/SMS flows.
+      try {
+        const unreadableToken = String(plateNumber || '').toUpperCase() === 'BLUR' ? 'BLUR' : 'NONE';
+        const unreadableType = 'unreadable_plate_urgent';
+        const camera = db.prepare('SELECT * FROM cameras WHERE locationId = ?').get(cameraLocationId);
+        const cameraId = camera?.id || null;
+        const nowIso = new Date().toISOString();
+        const fiveMinutesAgoIso = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+
+        const recentUnreadable = db.prepare(`
+          SELECT id FROM notifications
+          WHERE type = ?
+            AND locationId = ?
+            AND timestamp >= ?
+          ORDER BY timestamp DESC
+          LIMIT 1
+        `).get(unreadableType, cameraLocationId, fiveMinutesAgoIso);
+
+        if (!recentUnreadable) {
+          const notificationId = `NOTIF-UNREAD-${cameraLocationId}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+          const title =
+            unreadableToken === 'BLUR'
+              ? 'URGENT: Blurry Plate Detected'
+              : 'URGENT: Plate Not Readable';
+          const message =
+            unreadableToken === 'BLUR'
+              ? `Vehicle detected at ${cameraLocationId}, but the plate is blurry/unreadable. Immediate Barangay attention required.`
+              : `Vehicle detected at ${cameraLocationId}, but no readable plate was captured. Immediate Barangay attention required.`;
+
+          db.prepare(`
+            INSERT INTO notifications (
+              id, type, title, message, cameraId, locationId,
+              incidentId, detectionId, imageUrl, imageBase64,
+              plateNumber, timeDetected, reason, timestamp, read
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(
+            notificationId,
+            unreadableType,
+            title,
+            message,
+            cameraId,
+            cameraLocationId,
+            null,
+            detectionId,
+            null,
+            null,
+            unreadableToken,
+            nowIso,
+            'Unreadable plate detected',
+            nowIso,
+            0,
+          );
+        }
+      } catch (notifError) {
+        console.error('Error creating unreadable plate notification:', notifError);
+      }
       return null;
     }
 
