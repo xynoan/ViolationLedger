@@ -47,7 +47,7 @@ function buildResidentViolationMessage(visitedResident, vehicle, locationId, gra
 
   const msg =
     `Hi ${residentName}, your visitor's car ${plate} is illegally parked at ${loc}. ` +
-    `Please ask them to move to a legal parking area within ${grace} ${graceUnit} to avoid a ticket. Thanks!`;
+    `Please ask them to move to designated area within ${grace} ${graceUnit} to avoid a ticket. Thanks!`;
   if (msg.length <= MAX_SMS_LENGTH) return msg;
 
   const fallbackName = compactWords(residentName, 10) || 'Resident';
@@ -55,7 +55,7 @@ function buildResidentViolationMessage(visitedResident, vehicle, locationId, gra
   const fallbackLoc = compactWords(loc, 14) || 'the area';
   const fallback =
     `Hi ${fallbackName}, visitor car ${fallbackPlate} is illegally parked at ${fallbackLoc}. ` +
-    `Move to legal parking area within ${grace} ${graceUnit} to avoid ticket. Thanks!`;
+    `Move to designated area within ${grace} ${graceUnit} to avoid ticket. Thanks!`;
   return fitSmsMessage(fallback, MAX_SMS_LENGTH);
 }
 
