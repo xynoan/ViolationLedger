@@ -19,12 +19,11 @@ let db = null;
 let SQL = null;
 
 /**
- * Legacy DBs used UNIQUE(plateNumber) globally. Visitors and resident vehicles are separate domains:
- * the same plate may exist once as a visitor row and once as a resident-linked row.
- * Rebuilds the table when the old constraint is present, then adds partial unique indexes.
+ * Enforces global plate uniqueness across all vehicles (resident-linked and visitors).
+ * Cleans up existing cross-domain conflicts first, then creates one normalized unique index.
  * @param {import('sql.js').Database} database
  */
-function migrateVehiclesPlateUniqueScope(database) {
+function migrateVehiclesPlateGlobalUnique(database) {
   const master = database.exec(
     "SELECT sql FROM sqlite_master WHERE type='table' AND name='vehicles'",
   );
@@ -82,15 +81,65 @@ function migrateVehiclesPlateUniqueScope(database) {
     database.run('PRAGMA foreign_keys = ON');
   }
 
-  database.run(`
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_vehicles_plate_visitor
-    ON vehicles(plateNumber)
-    WHERE residentId IS NULL OR TRIM(COALESCE(residentId, '')) = ''
+  // Remove old split-domain uniqueness indexes if present.
+  database.run('DROP INDEX IF EXISTS idx_vehicles_plate_visitor');
+  database.run('DROP INDEX IF EXISTS idx_vehicles_plate_resident');
+
+  // Clean conflicting rows before adding global unique index.
+  // Keep row priority:
+  // 1) resident-linked rows
+  // 2) newest registeredAt
+  // 3) highest id (stable tie-break)
+  const conflictGroups = database.exec(`
+    SELECT
+      REPLACE(UPPER(TRIM(COALESCE(plateNumber, ''))), ' ', '') AS normalizedPlate,
+      COUNT(*) AS rowCount
+    FROM vehicles
+    WHERE TRIM(COALESCE(plateNumber, '')) != ''
+    GROUP BY REPLACE(UPPER(TRIM(COALESCE(plateNumber, ''))), ' ', '')
+    HAVING COUNT(*) > 1
   `);
+
+  if (conflictGroups.length && conflictGroups[0].values?.length) {
+    const normalizedPlateIdx = conflictGroups[0].columns.indexOf('normalizedPlate');
+
+    for (const group of conflictGroups[0].values) {
+      const normalizedPlate = String(group[normalizedPlateIdx] || '');
+      const rowsForPlate = database.exec(
+        `
+          SELECT id
+          FROM vehicles
+          WHERE REPLACE(UPPER(TRIM(COALESCE(plateNumber, ''))), ' ', '') = ?
+          ORDER BY
+            CASE
+              WHEN residentId IS NOT NULL AND TRIM(COALESCE(residentId, '')) != '' THEN 1
+              ELSE 0
+            END DESC,
+            COALESCE(registeredAt, '') DESC,
+            id DESC
+        `,
+        [normalizedPlate],
+      );
+      if (!rowsForPlate.length || !rowsForPlate[0].values?.length) continue;
+
+      const idIdx = rowsForPlate[0].columns.indexOf('id');
+      const ids = rowsForPlate[0].values.map((row) => String(row[idIdx]));
+      const keepId = ids[0];
+      const removeIds = ids.slice(1);
+
+      for (const removeId of removeIds) {
+        database.run('DELETE FROM vehicles WHERE id = ?', [removeId]);
+      }
+      console.log(
+        `vehicles plate dedupe: kept ${keepId} for plate ${normalizedPlate}, removed ${removeIds.length} row(s)`,
+      );
+    }
+  }
+
   database.run(`
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_vehicles_plate_resident
-    ON vehicles(plateNumber)
-    WHERE residentId IS NOT NULL AND TRIM(COALESCE(residentId, '')) != ''
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_vehicles_plate_global_normalized
+    ON vehicles(REPLACE(UPPER(TRIM(COALESCE(plateNumber, ''))), ' ', ''))
+    WHERE TRIM(COALESCE(plateNumber, '')) != ''
   `);
 }
 
@@ -252,7 +301,7 @@ async function initDatabase() {
     /* ignore */
   }
 
-  // Create tables (plate uniqueness is enforced by partial indexes — see migrateVehiclesPlateUniqueScope)
+  // Create tables (plate uniqueness is enforced globally — see migrateVehiclesPlateGlobalUnique)
   db.run(`
     CREATE TABLE IF NOT EXISTS vehicles (
       id TEXT PRIMARY KEY,
@@ -319,6 +368,14 @@ async function initDatabase() {
     const errorMsg = error?.message || String(error);
     if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
       console.log('Note: purposeOfVisit column migration:', errorMsg);
+    }
+  }
+  try {
+    db.run('ALTER TABLE vehicles ADD COLUMN residentVisitedId TEXT');
+  } catch (error) {
+    const errorMsg = error?.message || String(error);
+    if (!errorMsg.includes('duplicate column name') && !errorMsg.includes('no such table')) {
+      console.log('Note: residentVisitedId column migration:', errorMsg);
     }
   }
 
@@ -425,7 +482,7 @@ async function initDatabase() {
   }
 
   try {
-    migrateVehiclesPlateUniqueScope(db);
+    migrateVehiclesPlateGlobalUnique(db);
   } catch (error) {
     const errorMsg = error?.message || String(error);
     console.log('Note: vehicles plate uniqueness migration:', errorMsg);

@@ -1,5 +1,5 @@
 import db from '../database.js';
-import { getGracePeriodMinutes } from '../runtime_config.js';
+import { getGracePeriodMinutes, getRuntimeConfig } from '../runtime_config.js';
 
 // iProgSMS configuration
 const IPROGSMS_API_TOKEN = process.env.IPROGSMS_API_TOKEN || '';
@@ -27,6 +27,36 @@ function fitSmsMessage(text, maxLen = MAX_SMS_LENGTH) {
   if (normalized.length <= maxLen) return normalized;
   if (maxLen <= 3) return normalized.slice(0, Math.max(0, maxLen));
   return `${normalized.slice(0, maxLen - 3)}...`;
+}
+
+function compactWords(value, maxLen) {
+  const clean = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!clean) return '';
+  if (clean.length <= maxLen) return clean;
+  const words = clean.split(' ');
+  return words[0].slice(0, maxLen);
+}
+
+function buildResidentViolationMessage(visitedResident, vehicle, locationId, graceMin) {
+  const residentName = compactWords(visitedResident?.name, 14) || 'Resident';
+  const visitorName = compactWords(vehicle?.ownerName, 16) || 'Visitor';
+  const plate = String(vehicle?.plateNumber || '').trim() || 'Unknown';
+  const loc = compactWords(locationId, 18) || 'the area';
+  const grace = Number.isFinite(Number(graceMin)) ? Number(graceMin) : 30;
+  const graceUnit = grace === 1 ? 'minute' : 'minutes';
+
+  const msg =
+    `Hi ${residentName}, your visitor's car ${plate} is illegally parked at ${loc}. ` +
+    `Please ask them to move to a legal parking area within ${grace} ${graceUnit} to avoid a ticket. Thanks!`;
+  if (msg.length <= MAX_SMS_LENGTH) return msg;
+
+  const fallbackName = compactWords(residentName, 10) || 'Resident';
+  const fallbackPlate = compactWords(plate, 12) || 'Unknown';
+  const fallbackLoc = compactWords(loc, 14) || 'the area';
+  const fallback =
+    `Hi ${fallbackName}, visitor car ${fallbackPlate} is illegally parked at ${fallbackLoc}. ` +
+    `Move to legal parking area within ${grace} ${graceUnit} to avoid ticket. Thanks!`;
+  return fitSmsMessage(fallback, MAX_SMS_LENGTH);
 }
 
 export async function sendSmsMessage(recipient, message) {
@@ -113,6 +143,32 @@ export async function sendViolationSms(plateNumber, locationId, violationId) {
       `(${shortWhen}). Please move it within ${graceMin} min to avoid ticket.`;
 
     const smsResult = await sendSmsMessage(vehicle.contactNumber, message);
+    let residentSmsResult = null;
+
+    const residentVisitPurpose = String(getRuntimeConfig()?.residentVisitPurposeLabel || 'Visit resident')
+      .trim()
+      .toLowerCase();
+    const isVisitResident =
+      String(vehicle.purposeOfVisit || '').trim().toLowerCase() === residentVisitPurpose;
+    const visitedResidentId =
+      vehicle.residentVisitedId != null && String(vehicle.residentVisitedId).trim() !== ''
+        ? String(vehicle.residentVisitedId).trim()
+        : null;
+
+    if (isVisitResident && visitedResidentId) {
+      const visitedResident = db
+        .prepare('SELECT id, name, contactNumber FROM residents WHERE id = ?')
+        .get(visitedResidentId);
+      if (visitedResident?.contactNumber) {
+        const residentMessage = buildResidentViolationMessage(
+          visitedResident,
+          vehicle,
+          locationId,
+          graceMin,
+        );
+        residentSmsResult = await sendSmsMessage(visitedResident.contactNumber, residentMessage);
+      }
+    }
 
     const messageLogId = `SMS-${violationId}-${Date.now()}`;
     const sentAt = new Date().toISOString();
@@ -134,6 +190,36 @@ export async function sendViolationSms(plateNumber, locationId, violationId) {
         sentAt,
         smsResult.success ? null : smsResult.error
       );
+      if (residentSmsResult) {
+        const residentLogId = `SMS-${violationId}-RES-${Date.now()}`;
+        const visitedResident = db
+          .prepare('SELECT name, contactNumber FROM residents WHERE id = ?')
+          .get(visitedResidentId);
+        const residentMessage = buildResidentViolationMessage(
+          visitedResident,
+          vehicle,
+          locationId,
+          graceMin,
+        );
+        db.prepare(`
+          INSERT INTO sms_logs (
+            id, violationId, plateNumber, contactNumber, message,
+            status, statusMessage, sentAt, error
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          residentLogId,
+          violationId,
+          vehicle.plateNumber,
+          visitedResident?.contactNumber || '',
+          residentMessage,
+          residentSmsResult.success ? 'sent' : 'failed',
+          residentSmsResult.success
+            ? `Resident notified, Status: ${residentSmsResult.status || 'N/A'}`
+            : residentSmsResult.error,
+          sentAt,
+          residentSmsResult.success ? null : residentSmsResult.error,
+        );
+      }
     } catch (logErr) {
       console.error('❌ [SMS] Failed to log message to database:', {
         error: logErr.message,

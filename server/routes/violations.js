@@ -757,6 +757,138 @@ router.post('/test-seed-active-warning', (req, res) => {
 });
 
 /**
+ * Insert a random VISITOR active warning (non-resident vehicle).
+ * Disabled in production unless ALLOW_TEST_VIOLATION_SEED=true.
+ */
+router.post('/test-seed-visitor-warning', (req, res) => {
+  try {
+    if (!isTestViolationSeedAllowed()) {
+      return res.status(403).json({
+        error: 'Test warning seed is disabled (production). Set ALLOW_TEST_VIOLATION_SEED=true to enable.',
+      });
+    }
+
+    const vehicles = db
+      .prepare(
+        `SELECT plateNumber, residentId, visitorCategory, purposeOfVisit
+         FROM vehicles
+         WHERE plateNumber IS NOT NULL AND TRIM(plateNumber) != ''
+           AND (residentId IS NULL OR TRIM(residentId) = '')`,
+      )
+      .all()
+      .filter((v) => !isVisitorDeliveryExemptFromAutoViolation(v));
+    if (!vehicles.length) {
+      return res.status(400).json({
+        error: 'No visitor vehicles eligible for warning seed (non-resident, non-delivery).',
+      });
+    }
+
+    const cameras = db
+      .prepare(
+        `SELECT id, locationId FROM cameras
+         WHERE locationId IS NOT NULL AND TRIM(locationId) != ''`,
+      )
+      .all();
+
+    const hasActiveConflict = db.prepare(`
+      SELECT 1 FROM violations
+      WHERE plateNumber = ? AND cameraLocationId = ? AND status IN ('warning', 'pending', 'for_ticket')
+    `);
+
+    const locationEntries = [];
+    const seenLocationIds = new Set();
+    for (const cam of cameras) {
+      const loc = cam.locationId;
+      if (!loc || !String(loc).trim()) continue;
+      if (seenLocationIds.has(loc)) continue;
+      seenLocationIds.add(loc);
+      locationEntries.push({ locationId: loc, cameraId: cam.id });
+    }
+
+    let locCandidates;
+    if (locationEntries.length > 0) {
+      locCandidates = locationEntries.map((e) => ({
+        cameraLocationId: e.locationId,
+        cameraId: e.cameraId,
+      }));
+    } else {
+      const locRows = db
+        .prepare(
+          `SELECT DISTINCT cameraLocationId as loc FROM violations
+           WHERE cameraLocationId IS NOT NULL AND TRIM(cameraLocationId) != '' LIMIT 100`,
+        )
+        .all();
+      const locs = locRows.map((r) => r.loc).filter(Boolean);
+      locCandidates =
+        locs.length > 0
+          ? locs.map((loc) => ({ cameraLocationId: loc, cameraId: null }))
+          : [{ cameraLocationId: 'TEST-VISITOR-LOCATION-1', cameraId: null }];
+    }
+
+    let plateNumber;
+    let cameraLocationId;
+    let cameraId = null;
+    let picked = false;
+    outer: for (const v of vehicles) {
+      for (const cand of locCandidates) {
+        if (!hasActiveConflict.get(v.plateNumber, cand.cameraLocationId)) {
+          plateNumber = v.plateNumber;
+          cameraLocationId = cand.cameraLocationId;
+          cameraId = cand.cameraId;
+          picked = true;
+          break outer;
+        }
+      }
+    }
+
+    if (!picked) {
+      return res.status(409).json({
+        error:
+          'Could not pick a visitor/location pair without an active warning; clear one or add visitor vehicles.',
+      });
+    }
+
+    const now = Date.now();
+    const timeDetected = new Date(now).toISOString();
+    const ownerSmsScheduledAt = computeOwnerSmsScheduledAtFromDetectedMs(now);
+    const warningExpiresAt = computeSequentialWarningExpiresAtFromDetectedMs(now);
+    const violationId = `VIOL-VISITOR-TEST-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+    db.prepare(`
+      INSERT INTO violations (id, ticketId, plateNumber, cameraLocationId, timeDetected, status, warningExpiresAt, ownerSmsScheduledAt)
+      VALUES (?, NULL, ?, ?, ?, 'warning', ?, ?)
+    `).run(violationId, plateNumber, cameraLocationId, timeDetected, warningExpiresAt, ownerSmsScheduledAt);
+
+    let detectionId = null;
+    if (cameraId) {
+      detectionId = `DET-VISITOR-TEST-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      try {
+        db.prepare(`
+          INSERT INTO detections (id, cameraId, plateNumber, timestamp, confidence, imageUrl, bbox, class_name, imageBase64)
+          VALUES (?, ?, ?, ?, ?, NULL, NULL, 'car', NULL)
+        `).run(detectionId, cameraId, plateNumber, timeDetected, 1.0);
+      } catch (detErr) {
+        console.warn('test-seed-visitor-warning: could not insert synthetic detection:', detErr.message);
+        detectionId = null;
+      }
+    }
+
+    const violation = db.prepare('SELECT * FROM violations WHERE id = ?').get(violationId);
+    return res.status(201).json({
+      ...violation,
+      timeDetected: new Date(violation.timeDetected),
+      warningExpiresAt: violation.warningExpiresAt ? new Date(violation.warningExpiresAt) : null,
+      ownerSmsScheduledAt: violation.ownerSmsScheduledAt ? new Date(violation.ownerSmsScheduledAt) : null,
+      elapsedMinutesSinceDetection: 0,
+      syntheticDetectionId: detectionId,
+      note: 'Test data — visitor warning seed',
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
  * Insert a random UNREGISTERED active warning (immediate urgent / overdue).
  * Disabled in production unless ALLOW_TEST_VIOLATION_SEED=true.
  */

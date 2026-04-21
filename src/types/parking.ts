@@ -14,6 +14,7 @@ export interface Vehicle {
   registeredAt: Date;
   dataSource?: string;
   residentId?: string;
+  residentVisitedId?: string;
   rented?: string;
   purposeOfVisit?: string;
   /** Normalized slug: car, motorcycle, truck, etc. */

@@ -102,6 +102,7 @@ router.post('/', (req, res) => {
       residentId,
       rented,
       purposeOfVisit,
+      residentVisitedId,
       vehicleType,
       visitorCategory: visitorCategoryRaw,
     } = req.body;
@@ -125,6 +126,10 @@ router.post('/', (req, res) => {
     const vehicleDataSource = dataSource || 'barangay';
     const vt = normalizeVehicleType(vehicleType);
     const purpose = purposeOfVisit != null && purposeOfVisit !== '' ? String(purposeOfVisit) : null;
+    const visitResidentId =
+      residentVisitedId != null && String(residentVisitedId).trim() !== ''
+        ? String(residentVisitedId).trim()
+        : null;
 
     const rid = residentId ? String(residentId).trim() : null;
     let visitorCategory = rid ? null : normalizeVisitorCategory(visitorCategoryRaw);
@@ -159,6 +164,15 @@ router.post('/', (req, res) => {
       if (!cleanedContact || cleanedContact.length === 0) {
         return res.status(400).json({ error: 'Contact number is required' });
       }
+      if (purpose && purpose.toLowerCase() === 'visit resident' && !visitResidentId) {
+        return res.status(400).json({ error: 'Visited resident is required for Visit resident purpose' });
+      }
+      if (visitResidentId) {
+        const visitedResident = db.prepare('SELECT id FROM residents WHERE id = ?').get(visitResidentId);
+        if (!visitedResident) {
+          return res.status(400).json({ error: 'Invalid visited resident' });
+        }
+      }
       if (visitorCategory === 'rental' && (!rented || String(rented).trim() === '')) {
         return res.status(400).json({ error: 'Rental location is required for short-term rentals' });
       }
@@ -176,8 +190,8 @@ router.post('/', (req, res) => {
     }
 
     db.prepare(`
-      INSERT INTO vehicles (id, plateNumber, ownerName, ownerFirstName, ownerMiddleName, ownerLastName, ownerSuffix, contactNumber, houseNumber, streetName, barangay, city, registeredAt, dataSource, residentId, rented, purposeOfVisit, vehicleType, visitorCategory)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO vehicles (id, plateNumber, ownerName, ownerFirstName, ownerMiddleName, ownerLastName, ownerSuffix, contactNumber, houseNumber, streetName, barangay, city, registeredAt, dataSource, residentId, rented, purposeOfVisit, residentVisitedId, vehicleType, visitorCategory)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       plateNumber,
@@ -196,6 +210,7 @@ router.post('/', (req, res) => {
       rid,
       rented || null,
       purpose,
+      visitResidentId,
       vt,
       visitorCategory,
     );
@@ -231,6 +246,7 @@ router.put('/:id', requireRole('admin', 'barangay_user'), (req, res) => {
       residentId,
       rented,
       purposeOfVisit,
+      residentVisitedId,
       vehicleType,
       visitorCategory: visitorCategoryRaw,
     } = req.body;
@@ -243,6 +259,12 @@ router.put('/:id', requireRole('admin', 'barangay_user'), (req, res) => {
     const nextResidentId =
       residentId !== undefined ? residentId || null : vehicle.residentId;
     const nextRented = rented !== undefined ? rented || null : vehicle.rented;
+    const nextPurposeOfVisit =
+      purposeOfVisit !== undefined ? (purposeOfVisit != null ? String(purposeOfVisit) : null) : vehicle.purposeOfVisit;
+    const nextResidentVisitedId =
+      residentVisitedId !== undefined
+        ? residentVisitedId || null
+        : vehicle.residentVisitedId || null;
 
     // If residentId is provided and not rented, fetch the resident's contact number
     let finalContactNumber = contactNumber !== undefined ? contactNumber : vehicle.contactNumber;
@@ -293,6 +315,21 @@ router.put('/:id', requireRole('admin', 'barangay_user'), (req, res) => {
         return res.status(400).json({ error: 'Purpose of visit is required' });
       }
     }
+    if (
+      !nextResidentId &&
+      String(nextPurposeOfVisit || '').trim().toLowerCase() === 'visit resident' &&
+      !String(nextResidentVisitedId || '').trim()
+    ) {
+      return res.status(400).json({ error: 'Visited resident is required for Visit resident purpose' });
+    }
+    if (!nextResidentId && String(nextResidentVisitedId || '').trim()) {
+      const visitedResident = db
+        .prepare('SELECT id FROM residents WHERE id = ?')
+        .get(String(nextResidentVisitedId).trim());
+      if (!visitedResident) {
+        return res.status(400).json({ error: 'Invalid visited resident' });
+      }
+    }
     if (!nextResidentId && nextVisitorCategory === 'rental') {
       const r = rented !== undefined ? rented : vehicle.rented;
       if (!r || String(r).trim() === '') {
@@ -336,7 +373,7 @@ router.put('/:id', requireRole('admin', 'barangay_user'), (req, res) => {
 
     db.prepare(`
       UPDATE vehicles 
-      SET plateNumber = ?, ownerName = ?, ownerFirstName = ?, ownerMiddleName = ?, ownerLastName = ?, ownerSuffix = ?, contactNumber = ?, houseNumber = ?, streetName = ?, barangay = ?, city = ?, residentId = ?, rented = ?, purposeOfVisit = ?, vehicleType = ?, visitorCategory = ?
+      SET plateNumber = ?, ownerName = ?, ownerFirstName = ?, ownerMiddleName = ?, ownerLastName = ?, ownerSuffix = ?, contactNumber = ?, houseNumber = ?, streetName = ?, barangay = ?, city = ?, residentId = ?, rented = ?, purposeOfVisit = ?, residentVisitedId = ?, vehicleType = ?, visitorCategory = ?
       WHERE id = ?
     `).run(
       plateNumber !== undefined ? plateNumber : vehicle.plateNumber,
@@ -353,6 +390,7 @@ router.put('/:id', requireRole('admin', 'barangay_user'), (req, res) => {
       residentId !== undefined ? (residentId || null) : vehicle.residentId,
       rented !== undefined ? (rented || null) : vehicle.rented,
       purposeOfVisit !== undefined ? purposeOfVisit : vehicle.purposeOfVisit,
+      residentVisitedId !== undefined ? residentVisitedId || null : vehicle.residentVisitedId || null,
       nextVt,
       nextVisitorCategory,
       req.params.id

@@ -219,6 +219,12 @@ function residentVisitedStorageDisplayName(stored: string, residents: Resident[]
   return rented;
 }
 
+function residentVisitedStorageValueById(id: string, residents: Resident[]): string {
+  const resident = residents.find((r) => r.id === id);
+  if (!resident) return '';
+  return residentVisitedStorageValue(resident, residents);
+}
+
 /** For resident-visit purpose, show the resident name only (storage may append ` · ` disambiguation). Otherwise return `rented` as stored (e.g. facility). */
 function locationOrVisitedResidentLabel(
   vehicle: Vehicle,
@@ -627,12 +633,17 @@ export default function Visitors() {
         defaultFirstPurposeLabel,
       );
       const profile = vehicleProfileFieldsForForm(vehicle, vehicleTypeOptions, vehicleTypeOtherSlug);
+      const selectedResidentStorage =
+        vehicle.residentVisitedId && String(vehicle.residentVisitedId).trim() !== ''
+          ? residentVisitedStorageValueById(String(vehicle.residentVisitedId), residents)
+          : (vehicle.rented || '');
       setEditingVehicle(vehicle);
       setFormData({
         plateNumber: vehicle.plateNumber.toUpperCase(),
         ...profile,
         purposeOfVisit,
         purposeOfVisitOther,
+        rented: selectedResidentStorage,
       });
     } else {
       resetForm(activeTab);
@@ -717,6 +728,10 @@ export default function Visitors() {
       residentId: null as string | null,
       rented: persistRented ? formData.rented : null,
       purposeOfVisit: purposeValue,
+      residentVisitedId:
+        formData.purposeOfVisit === residentVisitPurposeLabel
+          ? residents.find((r) => residentVisitedStorageValue(r, residents) === formData.rented)?.id || null
+          : null,
       vehicleType: vehicleTypeValue,
       visitorCategory: apiCat,
     };

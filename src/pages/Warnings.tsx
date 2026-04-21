@@ -16,6 +16,7 @@ export default function Warnings() {
   const [violations, setViolations] = useState<Violation[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [testSeedLoading, setTestSeedLoading] = useState(false);
+  const [testSeedVisitorLoading, setTestSeedVisitorLoading] = useState(false);
   const [testSeedUnregLoading, setTestSeedUnregLoading] = useState(false);
   const [assigningViolationId, setAssigningViolationId] = useState<string | null>(null);
   const activeWarnings = violations
@@ -236,6 +237,30 @@ export default function Warnings() {
     }
   };
 
+  const handleSeedVisitorWarning = async () => {
+    setTestSeedVisitorLoading(true);
+    try {
+      const result = await violationsAPI.seedTestVisitorWarning();
+      const graceEnd =
+        result.warningExpiresAt != null
+          ? new Date(result.warningExpiresAt as Date | string).toLocaleString()
+          : "—";
+      toast({
+        title: "Test visitor warning added",
+        description: `Visitor plate ${result.plateNumber} at ${result.cameraLocationId}. Grace ends ${graceEnd}.`,
+      });
+      await loadViolations();
+    } catch (error: any) {
+      toast({
+        title: "Test visitor warning failed",
+        description: error?.message || "Failed to add visitor test warning",
+        variant: "destructive",
+      });
+    } finally {
+      setTestSeedVisitorLoading(false);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="min-h-screen">
@@ -264,6 +289,17 @@ export default function Warnings() {
               </div>
               {showTestWarningSeed && (
                 <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleSeedVisitorWarning}
+                    disabled={testSeedVisitorLoading}
+                    title="Random visitor warning (non-resident, non-delivery) (dev / test only)"
+                  >
+                    <FlaskConical className="h-4 w-4 mr-1 shrink-0" />
+                    {testSeedVisitorLoading ? "Adding…" : "Add test visitor"}
+                  </Button>
                   <Button
                     type="button"
                     variant="outline"
@@ -315,6 +351,16 @@ export default function Warnings() {
             <p className="text-muted-foreground text-sm sm:text-base">No active parking warnings at this time</p>
             {showTestWarningSeed && (
               <div className="flex justify-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleSeedVisitorWarning}
+                  disabled={testSeedVisitorLoading}
+                >
+                  <FlaskConical className="h-4 w-4 mr-1 shrink-0" />
+                  {testSeedVisitorLoading ? "Adding…" : "Add test visitor"}
+                </Button>
                 <Button
                   type="button"
                   variant="outline"
