@@ -22,6 +22,7 @@ import Settings from "./pages/Settings";
 import RecentPlateDetections from "./pages/RecentPlateDetections";
 import UserManagement from "./pages/UserManagement";
 import AuditLogs from "./pages/AuditLogs";
+import Notifications from "./pages/Notifications";
 import NotFound from "./pages/NotFound";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 
@@ -70,6 +71,7 @@ const App = () => (
                       <Route path="/residents" element={<Residents />} />
                       <Route path="/cameras" element={<Cameras />} />
                       <Route path="/recent-plates" element={<RecentPlateDetections />} />
+                      <Route path="/notifications" element={<Notifications />} />
                       <Route path="/warnings" element={<Warnings />} />
                       <Route path="/tickets" element={<Tickets />} />
                       <Route path="/violations" element={<ViolationsHistory />} />

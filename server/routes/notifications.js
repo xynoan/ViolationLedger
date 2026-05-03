@@ -5,6 +5,9 @@ import { auditLog } from '../middleware/audit.js';
 
 const router = express.Router();
 
+// JSON API for in-app notification UI (bell dropdown + `/notifications` page). List: GET / with
+// optional `?unread=true` and `?limit=` (default 100, max 500).
+
 // All notification routes require authentication
 router.use(authenticateToken);
 router.use(auditLog);

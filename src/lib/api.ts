@@ -305,9 +305,16 @@ export const capturesAPI = {
 
 // Notifications API
 export const notificationsAPI = {
-  getAll: (unread?: boolean) => {
-    const query = unread ? '?unread=true' : '';
-    return fetchAPI(`/notifications${query}`);
+  getAll: (options?: boolean | { unread?: boolean; limit?: number }) => {
+    if (typeof options === 'boolean') {
+      return fetchAPI(`/notifications${options ? '?unread=true' : ''}`);
+    }
+    const { unread, limit } = options || {};
+    const params = new URLSearchParams();
+    if (unread) params.set('unread', 'true');
+    if (limit != null) params.set('limit', String(limit));
+    const q = params.toString();
+    return fetchAPI(`/notifications${q ? `?${q}` : ''}`);
   },
   getById: (id: string) => fetchAPI(`/notifications/${id}`),
   markAsRead: (id: string) => fetchAPI(`/notifications/${id}/read`, {
