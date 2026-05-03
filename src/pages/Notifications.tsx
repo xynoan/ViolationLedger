@@ -96,7 +96,7 @@ export default function Notifications() {
     if (!n.read) {
       try {
         await notificationsAPI.markAsRead(n.id);
-        await loadNotifications();
+        await loadNotifications({ silent: true });
       } catch (e) {
         console.error('Error marking notification as read:', e);
       }
@@ -108,7 +108,7 @@ export default function Notifications() {
       setMarkingAll(true);
       await notificationsAPI.markAllAsRead();
       toast({ title: 'Updated', description: 'All notifications marked as read.' });
-      await loadNotifications();
+      await loadNotifications({ silent: true });
     } catch (e) {
       console.error(e);
       toast({
@@ -124,7 +124,7 @@ export default function Notifications() {
   const handleIssueTicket = async (n: NotificationDisplayModel) => {
     try {
       await notificationsAPI.handle(n.id);
-      await loadNotifications();
+      await loadNotifications({ silent: true });
     } catch (e) {
       console.error('Error handling notification:', e);
       toast({
