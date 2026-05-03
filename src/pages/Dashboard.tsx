@@ -39,6 +39,19 @@ const VEHICLE_TYPE_COLORS: Record<string, string> = {
   van: '#10b981',
 };
 const UNKNOWN_VEHICLE_COLOR = '#94a3b8';
+
+function isUnknownVehicleTypeLabel(vehicleType: string | undefined | null): boolean {
+  const t = String(vehicleType ?? '').trim().toLowerCase();
+  return t === '' || t === 'unknown';
+}
+
+function isUnknownViolatorDisplayName(name: string): boolean {
+  const t = name.trim().toLowerCase();
+  if (!t) return true;
+  if (t === 'unknown') return true;
+  return t.startsWith('unknown (');
+}
+
 type TrendData = { currentTotal: number; previousTotal: number; delta: number; deltaPct: number };
 
 function getTrendMeta(trend?: TrendData | null) {
@@ -257,10 +270,13 @@ export default function Dashboard({ embedded = false }: DashboardProps) {
     count: byHourMap.get(hour) || 0,
   }));
   const hasPeakHoursData = peakHoursData.some((item) => item.count > 0);
-  const byVehicleTypeData = descriptive?.byVehicleType || [];
+  const byVehicleTypeData = (descriptive?.byVehicleType || []).filter(
+    (item) => !isUnknownVehicleTypeLabel(item.vehicleType),
+  );
   const hasVehicleTypeData = byVehicleTypeData.some((item) => item.count > 0);
-  const topVehicleTypeLabel = descriptive?.topVehicleType
-    ? `${descriptive.topVehicleType.vehicleType} (${descriptive.topVehicleType.count})`
+  const topKnownVehicleType = byVehicleTypeData.find((item) => item.count > 0);
+  const topVehicleTypeLabel = topKnownVehicleType
+    ? `${topKnownVehicleType.vehicleType} (${topKnownVehicleType.count})`
     : 'No data';
 
   const violationTrendMeta = getTrendMeta(descriptive?.sevenDayComparison);
@@ -285,7 +301,10 @@ export default function Dashboard({ embedded = false }: DashboardProps) {
       }
     }
 
-    return [...grouped.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)).slice(0, 8);
+    return [...grouped.values()]
+      .filter((entry) => !isUnknownViolatorDisplayName(entry.name))
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+      .slice(0, 8);
   }, [activeAlerts, vehicles]);
 
   const frequentViolators = useMemo(() => {
