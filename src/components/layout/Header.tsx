@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Bell, LogOut, User } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useAuth } from '@/hooks/useAuth';
 import { notificationsAPI } from '@/lib/api';
+import { NOTIFICATIONS_CHANGED_EVENT } from '@/lib/notificationSync';
 import type { NotificationDisplayModel } from '@/lib/notificationDisplay';
 import { NotificationListItem } from '@/components/notifications/NotificationListItem';
 
@@ -36,16 +37,10 @@ export function Header({ title, subtitle, action, autoRefreshNotifications = tru
   const [notifications, setNotifications] = useState<NotificationDisplayModel[]>([]);
   const [isLoadingNotifications, setIsLoadingNotifications] = useState(true);
 
-  useEffect(() => {
-    loadNotifications();
-    if (!autoRefreshNotifications) return;
-    const interval = setInterval(loadNotifications, 30000);
-    return () => clearInterval(interval);
-  }, [autoRefreshNotifications]);
-
-  const loadNotifications = async () => {
+  const loadNotifications = useCallback(async (opts?: { silent?: boolean }) => {
+    const silent = opts?.silent ?? false;
     try {
-      setIsLoadingNotifications(true);
+      if (!silent) setIsLoadingNotifications(true);
       const data = (await notificationsAPI.getAll(true)) as NotificationApiRecord[];
       const processedNotifications = data.map((notif) => ({
         ...notif,
@@ -55,19 +50,39 @@ export function Header({ title, subtitle, action, autoRefreshNotifications = tru
       setNotifications(processedNotifications);
     } catch (error) {
       console.error('Error loading notifications:', error);
-      setNotifications([]);
+      if (!silent) setNotifications([]);
     } finally {
-      setIsLoadingNotifications(false);
+      if (!silent) setIsLoadingNotifications(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    void loadNotifications();
+    if (!autoRefreshNotifications) return;
+    const interval = setInterval(() => {
+      void loadNotifications({ silent: true });
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [autoRefreshNotifications, loadNotifications]);
+
+  useEffect(() => {
+    const onChanged = () => {
+      void loadNotifications({ silent: true });
+    };
+    window.addEventListener(NOTIFICATIONS_CHANGED_EVENT, onChanged);
+    return () => window.removeEventListener(NOTIFICATIONS_CHANGED_EVENT, onChanged);
+  }, [loadNotifications]);
 
   const handleNotificationClick = async (notification: NotificationDisplayModel) => {
     if (!notification.read) {
+      const id = notification.id;
+      // Optimistic: unread list + badge count update immediately on click
+      setNotifications((prev) => prev.filter((n) => n.id !== id));
       try {
-        await notificationsAPI.markAsRead(notification.id);
-        loadNotifications();
+        await notificationsAPI.markAsRead(id);
       } catch (error) {
         console.error('Error marking notification as read:', error);
+        void loadNotifications({ silent: true });
       }
     }
   };
@@ -114,14 +129,6 @@ export function Header({ title, subtitle, action, autoRefreshNotifications = tru
                       serverBaseUrl={SERVER_BASE_URL}
                       layout="menu"
                       onInteraction={handleNotificationClick}
-                      onIssueTicket={async (n) => {
-                        try {
-                          await notificationsAPI.handle(n.id);
-                          await loadNotifications();
-                        } catch (error) {
-                          console.error('Error handling notification:', error);
-                        }
-                      }}
                     />
                   ))}
                 </div>

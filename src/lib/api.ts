@@ -305,16 +305,17 @@ export const capturesAPI = {
 
 // Notifications API
 export const notificationsAPI = {
+  /** List is user-specific and changes on read/mark; never use the default GET cache. */
   getAll: (options?: boolean | { unread?: boolean; limit?: number }) => {
     if (typeof options === 'boolean') {
-      return fetchAPI(`/notifications${options ? '?unread=true' : ''}`);
+      return fetchAPI(`/notifications${options ? '?unread=true' : ''}`, { cache: false });
     }
     const { unread, limit } = options || {};
     const params = new URLSearchParams();
     if (unread) params.set('unread', 'true');
     if (limit != null) params.set('limit', String(limit));
     const q = params.toString();
-    return fetchAPI(`/notifications${q ? `?${q}` : ''}`);
+    return fetchAPI(`/notifications${q ? `?${q}` : ''}`, { cache: false });
   },
   /** Newest notification row (id + timestamp) for change detection without loading the full list. */
   getLatestMeta: () => fetchAPI('/notifications/latest-meta', { cache: false }),

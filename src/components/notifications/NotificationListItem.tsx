@@ -8,7 +8,6 @@ import {
   getTimestampText,
 } from '@/lib/notificationDisplay';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
-import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
 interface NotificationListItemProps {
@@ -16,7 +15,6 @@ interface NotificationListItemProps {
   serverBaseUrl: string;
   layout: 'menu' | 'page';
   onInteraction?: (notification: NotificationDisplayModel) => void;
-  onIssueTicket?: (notification: NotificationDisplayModel) => void | Promise<void>;
 }
 
 export function NotificationListItem({
@@ -24,7 +22,6 @@ export function NotificationListItem({
   serverBaseUrl,
   layout,
   onInteraction,
-  onIssueTicket,
 }: NotificationListItemProps) {
   const imageSrc = getImageSrc(notification, serverBaseUrl);
   const statusTitle = getStatusTitle(notification);
@@ -55,20 +52,6 @@ export function NotificationListItem({
           <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
             {metaLocation && <span>{metaLocation}</span>}
             {metaTime && <span>{metaTime}</span>}
-          </div>
-        )}
-        {notification.type === 'warning_expired' && (!notification.handledBy || notification.status === 'open') && (
-          <div className="mt-2">
-            <Button
-              size="xs"
-              className="bg-red-600 text-white hover:bg-red-700"
-              onClick={async (e) => {
-                e.stopPropagation();
-                await onIssueTicket?.(notification);
-              }}
-            >
-              Issue Ticket
-            </Button>
           </div>
         )}
         {imageSrc && (

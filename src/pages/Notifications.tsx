@@ -3,6 +3,7 @@ import { Bell } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
 import { notificationsAPI } from '@/lib/api';
+import { notifyNotificationsChanged } from '@/lib/notificationSync';
 import type { NotificationDisplayModel } from '@/lib/notificationDisplay';
 import { NotificationListItem } from '@/components/notifications/NotificationListItem';
 import { Button } from '@/components/ui/button';
@@ -50,6 +51,7 @@ export default function Notifications() {
       ]);
       setNotifications(data.map(toModel));
       lastListMetaRef.current = latestMeta;
+      notifyNotificationsChanged();
     } catch (e) {
       console.error('Error loading notifications:', e);
       if (!silent) {
@@ -121,20 +123,6 @@ export default function Notifications() {
     }
   };
 
-  const handleIssueTicket = async (n: NotificationDisplayModel) => {
-    try {
-      await notificationsAPI.handle(n.id);
-      await loadNotifications({ silent: true });
-    } catch (e) {
-      console.error('Error handling notification:', e);
-      toast({
-        title: 'Error',
-        description: 'Could not update notification.',
-        variant: 'destructive',
-      });
-    }
-  };
-
   return (
     <div className="min-h-screen bg-background">
       <Header
@@ -189,7 +177,6 @@ export default function Notifications() {
                   serverBaseUrl={SERVER_BASE_URL}
                   layout="page"
                   onInteraction={handleNotificationInteraction}
-                  onIssueTicket={handleIssueTicket}
                 />
               </li>
             ))}
