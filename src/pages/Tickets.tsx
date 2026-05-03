@@ -31,6 +31,12 @@ import {
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 const SERVER_BASE_URL = API_BASE_URL.replace('/api', '');
 
+function isReadablePlate(pn: unknown): boolean {
+  if (pn == null || typeof pn !== 'string') return false;
+  const u = pn.trim().toUpperCase();
+  return u !== '' && u !== 'NONE' && u !== 'BLUR';
+}
+
 interface CaptureResult {
   cameraId: string;
   cameraName: string;
@@ -43,6 +49,7 @@ interface CaptureResult {
   detections: Array<{
     class_name: string;
     bbox: number[];
+    plateNumber?: string;
   }>;
 }
 
@@ -121,7 +128,8 @@ export default function Tickets() {
                 imageBase64: detectionWithImage?.imageBase64 || null,
                 detections: validDetections.map((d: any) => ({
                   class_name: d.class_name || 'vehicle',
-                  bbox: d.bbox || []
+                  bbox: d.bbox || [],
+                  plateNumber: d.plateNumber,
                 }))
               });
             }
@@ -165,13 +173,20 @@ export default function Tickets() {
     return counts;
   };
 
-  const filteredCaptureResults = useMemo(
-    () =>
-      captureResults.filter((result) =>
-        result.locationId.toLowerCase().includes(searchTerm.trim().toLowerCase()),
-      ),
-    [captureResults, searchTerm],
-  );
+  const filteredCaptureResults = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    if (!q) return captureResults;
+    const normPlate = (p: string) => p.replace(/\s+/g, '').toLowerCase();
+    const qPlate = normPlate(q);
+    return captureResults.filter((result) => {
+      if (result.locationId.toLowerCase().includes(q)) return true;
+      return result.detections.some(
+        (d) =>
+          isReadablePlate(d.plateNumber) &&
+          normPlate(String(d.plateNumber)).includes(qPlate),
+      );
+    });
+  }, [captureResults, searchTerm]);
 
   const getImageSrc = (result: CaptureResult): string | null => {
     if (result.imageBase64) {
@@ -198,6 +213,7 @@ export default function Tickets() {
 
   const renderCaptureResult = (result: CaptureResult) => {
     const counts = getVehicleCounts(result.detections);
+    const readablePlates = result.detections.filter((d) => isReadablePlate(d.plateNumber));
     const captureDate = new Date(result.timestamp);
     const dwellStatus = getDwellStatus(getDwellMinutes(result.firstDetected, result.lastSeen));
     
@@ -317,6 +333,18 @@ export default function Tickets() {
               {counts.total > 0 ? (
                 <div className="space-y-2">
                   <p className="text-sm font-medium text-foreground mb-2">Detected Vehicles:</p>
+                  {readablePlates.length > 0 && (
+                    <div className="mb-3 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs">
+                      <p className="font-medium text-foreground mb-1.5">Plate reads</p>
+                      <ul className="space-y-1 text-muted-foreground">
+                        {readablePlates.map((d, idx) => (
+                          <li key={idx} className="font-mono">
+                            {String(d.plateNumber).trim().toUpperCase()}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                     {counts.car > 0 && (
                       <div className="flex items-center gap-2 p-2 rounded-lg bg-blue-500/10 border border-blue-500/20">
@@ -381,7 +409,7 @@ export default function Tickets() {
             <Input
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Search location (e.g., Twin Peaks Drive)"
+              placeholder="Search location or plate"
               className="pl-9"
             />
           </div>
