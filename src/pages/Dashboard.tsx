@@ -8,7 +8,6 @@ import {
   FileText,
   Calendar,
   RefreshCw,
-  Clock3,
   Repeat,
   ArrowUpRight,
   ArrowDownRight,
@@ -522,24 +521,7 @@ export default function Dashboard({ embedded = false }: DashboardProps) {
         </div>
 
         {/* Descriptive Insights */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Clock3 className="h-5 w-5" />
-                Average Duration of Infraction
-              </CardTitle>
-              <CardDescription>{descriptive?.avgInfractionToActionLabel || 'Average time from first detection to action in minutes'}</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-bold">
-                {descriptive?.avgInfractionToActionMinutes != null
-                  ? `${Math.round(descriptive.avgInfractionToActionMinutes)} min`
-                  : 'No data'}
-              </div>
-            </CardContent>
-          </Card>
-
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
