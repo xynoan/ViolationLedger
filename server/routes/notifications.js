@@ -28,6 +28,26 @@ function getStatements() {
   };
 }
 
+// Lightweight poll target: newest row by sort order (matches list ordering).
+router.get('/latest-meta', (req, res) => {
+  try {
+    const row = db
+      .prepare(
+        'SELECT id, timestamp FROM notifications ORDER BY timestamp DESC, id DESC LIMIT 1',
+      )
+      .get();
+    if (!row) {
+      return res.json({ id: null, timestamp: null });
+    }
+    res.json({
+      id: row.id,
+      timestamp: new Date(row.timestamp).toISOString(),
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 router.get('/', (req, res) => {
   try {
     const { unread, limit } = req.query;

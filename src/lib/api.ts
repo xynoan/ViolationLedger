@@ -316,6 +316,8 @@ export const notificationsAPI = {
     const q = params.toString();
     return fetchAPI(`/notifications${q ? `?${q}` : ''}`);
   },
+  /** Newest notification row (id + timestamp) for change detection without loading the full list. */
+  getLatestMeta: () => fetchAPI('/notifications/latest-meta', { cache: false }),
   getById: (id: string) => fetchAPI(`/notifications/${id}`),
   markAsRead: (id: string) => fetchAPI(`/notifications/${id}/read`, {
     method: 'PUT',

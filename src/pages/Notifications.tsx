@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Bell } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { usePageTracking } from '@/hooks/usePageTracking';
@@ -27,38 +27,69 @@ function toModel(row: NotificationApiRecord): NotificationDisplayModel {
   };
 }
 
+type NotificationLatestMeta = { id: string | null; timestamp: string | null };
+
 export default function Notifications() {
   usePageTracking();
   const [filter, setFilter] = useState<Filter>('all');
   const [notifications, setNotifications] = useState<NotificationDisplayModel[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [markingAll, setMarkingAll] = useState(false);
+  const lastListMetaRef = useRef<NotificationLatestMeta | null>(null);
 
-  const loadNotifications = useCallback(async () => {
+  const loadNotifications = useCallback(async (opts?: { silent?: boolean }) => {
+    const silent = opts?.silent ?? false;
     try {
-      setIsLoading(true);
-      const data = (await notificationsAPI.getAll({
-        limit: 500,
-        unread: filter === 'unread' ? true : undefined,
-      })) as NotificationApiRecord[];
+      if (!silent) setIsLoading(true);
+      const [data, latestMeta] = await Promise.all([
+        notificationsAPI.getAll({
+          limit: 500,
+          unread: filter === 'unread' ? true : undefined,
+        }) as Promise<NotificationApiRecord[]>,
+        notificationsAPI.getLatestMeta() as Promise<NotificationLatestMeta>,
+      ]);
       setNotifications(data.map(toModel));
+      lastListMetaRef.current = latestMeta;
     } catch (e) {
       console.error('Error loading notifications:', e);
-      toast({
-        title: 'Error',
-        description: 'Failed to load notifications.',
-        variant: 'destructive',
-      });
-      setNotifications([]);
+      if (!silent) {
+        toast({
+          title: 'Error',
+          description: 'Failed to load notifications.',
+          variant: 'destructive',
+        });
+        setNotifications([]);
+      }
     } finally {
-      setIsLoading(false);
+      if (!silent) setIsLoading(false);
     }
   }, [filter]);
 
   useEffect(() => {
-    loadNotifications();
-    const interval = setInterval(loadNotifications, 30000);
-    return () => clearInterval(interval);
+    let cancelled = false;
+    void loadNotifications();
+
+    const interval = setInterval(async () => {
+      if (cancelled) return;
+      try {
+        const meta = (await notificationsAPI.getLatestMeta()) as NotificationLatestMeta;
+        if (cancelled) return;
+        const prev = lastListMetaRef.current;
+        const changed =
+          (meta.id ?? null) !== (prev?.id ?? null) ||
+          (meta.timestamp ?? null) !== (prev?.timestamp ?? null);
+        if (changed) {
+          await loadNotifications({ silent: true });
+        }
+      } catch (e) {
+        console.error('Error checking for new notifications:', e);
+      }
+    }, 30000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, [loadNotifications]);
 
   const handleNotificationInteraction = async (n: NotificationDisplayModel) => {
