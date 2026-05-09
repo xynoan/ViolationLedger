@@ -99,7 +99,7 @@ The SQLite database (`server/parking.db`) is automatically created on first serv
 ## Image Analysis Service
 
 The system includes an automated image analysis service that:
-- Captures images from online cameras every 5 minutes
+- Captures images from online cameras when vehicles are detected and stationary
 - Analyzes images for illegally parked vehicles using Hugging Face ML models
 - Recognizes license plates (when visible)
 - Automatically creates violations/warnings in the system
