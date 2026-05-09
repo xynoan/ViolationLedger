@@ -395,7 +395,40 @@ def _run_full_frame_ocr(image: np.ndarray, img_width: int, img_height: int) -> L
     return plates
 
 
-def run_ocr(image: np.ndarray, img_width: int, img_height: int) -> List[Dict[str, Any]]:
+def preprocess_image_for_ocr(image: np.ndarray) -> np.ndarray:
+    """
+    Preprocess image for better OCR accuracy.
+    Applies CLAHE, Gaussian blur, and thresholding.
+    """
+    try:
+        # Convert to grayscale
+        if len(image.shape) == 3:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = image
+
+        # Apply CLAHE
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        enhanced = clahe.apply(gray)
+
+        # Gaussian blur
+        blurred = cv2.GaussianBlur(enhanced, (5, 5), 0)
+
+        # Thresholding
+        _, binary = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+        # Invert
+        binary = cv2.bitwise_not(binary)
+
+        return binary
+
+    except Exception as e:
+        print(f"Preprocessing OCR error: {e}", file=sys.stderr)
+        # Return original image if preprocessing fails
+        return image
+
+
+def run_ocr(image: np.ndarray, img_width: int, img_height: int, preprocess: bool = True) -> List[Dict[str, Any]]:
     """
     Detect plate regions first (if model available), then OCR each crop.
     Fallback to full-frame OCR when detector is off or finds no plates.
@@ -405,7 +438,13 @@ def run_ocr(image: np.ndarray, img_width: int, img_height: int) -> List[Dict[str
         plates = []
         for bbox_norm in bboxes:
             crop = crop_by_bbox(image, bbox_norm, img_width, img_height)
-            ocr_result = run_ocr_on_crop(crop)
+            # Apply preprocessing to cropped plate for better OCR
+            if preprocess:
+                preprocessed_crop = preprocess_image_for_ocr(crop)
+                ocr_result = run_ocr_on_crop(preprocessed_crop)
+            else:
+                ocr_result = run_ocr_on_crop(crop)
+
             if ocr_result:
                 plate_number, conf = ocr_result
                 plates.append({

@@ -42,10 +42,6 @@ const PORT = process.env.PORT || 3001;
 const GO2RTC_PROXY_TARGET = process.env.GO2RTC_PROXY_TARGET || 'http://127.0.0.1:1984';
 const GO2RTC_PROXY_WS_TARGET = GO2RTC_PROXY_TARGET.replace(/^http/i, 'ws').replace(/\/+$/, '');
 const GO2RTC_STARTUP_HEALTHCHECK = process.env.GO2RTC_STARTUP_HEALTHCHECK !== '0';
-if (!process.env.GEMINI_API_KEY) {
-  console.warn('⚠️  GEMINI_API_KEY not set - using fallback');
-}
-
 if (!process.env.IPROGSMS_API_TOKEN) {
   console.warn('⚠️  IPROGSMS_API_TOKEN not set - SMS notifications will be disabled');
   console.warn('   To enable SMS notifications: Add IPROGSMS_API_TOKEN to your .env file in the server directory');

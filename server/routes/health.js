@@ -96,68 +96,13 @@ async function checkDatabase() {
 
 async function checkAIService() {
   try {
-    const AI_SERVICE_PATH = join(__dirname, '..', 'ai_service.py');
-    const pythonExists = fs.existsSync(AI_SERVICE_PATH);
-    
-    if (!pythonExists) {
-      return {
-        status: 'unhealthy',
-        available: false,
-        message: 'AI service file not found',
-        error: 'ai_service.py not found'
-      };
-    }
-    
-    const pythonCmd = getPythonExecutable();
-
-    return new Promise((resolve) => {
-      const testProcess = spawn(pythonCmd, ['--version'], { timeout: 5000 });
-      let pythonAvailable = false;
-      
-      testProcess.on('close', (code) => {
-        pythonAvailable = code === 0;
-        
-        const envVars = readEnvFile();
-        const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || envVars.GEMINI_API_KEY || envVars.GOOGLE_API_KEY;
-        const hasApiKey = !!apiKey || true;
-        
-        resolve({
-          status: pythonAvailable ? 'healthy' : 'degraded',
-          available: pythonAvailable,
-          serviceFile: pythonExists,
-          apiKeyConfigured: true,
-          apiKeySource: apiKey ? (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY ? 'environment' : 'env_file') : 'hardcoded_fallback',
-          pythonCommand: pythonCmd,
-          message: pythonAvailable 
-            ? 'AI service is ready' 
-            : 'Python not available'
-        });
-      });
-      
-      testProcess.on('error', () => {
-        const envVars = readEnvFile();
-        const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || envVars.GEMINI_API_KEY || envVars.GOOGLE_API_KEY;
-        resolve({
-          status: 'unhealthy',
-          available: false,
-          serviceFile: pythonExists,
-          apiKeyConfigured: true,
-          apiKeySource: apiKey ? (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY ? 'environment' : 'env_file') : 'hardcoded_fallback',
-          message: 'Python not available',
-          error: 'Python command not found'
-        });
-      });
-      
-      setTimeout(() => {
-        testProcess.kill();
-        resolve({
-          status: 'degraded',
-          available: false,
-          serviceFile: pythonExists,
-          message: 'Python check timed out'
-        });
-      }, 5000);
-    });
+    console.log('[Health Check] AI detection is disabled, skipping check');
+    return {
+      status: 'healthy',
+      available: true,
+      message: 'AI detection is disabled - using OCR only',
+      note: 'AI detection has been removed from this installation'
+    };
   } catch (error) {
     return {
       status: 'unhealthy',

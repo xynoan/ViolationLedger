@@ -20,10 +20,13 @@ const YOLO_DETECTION_SERVICE_PATH = join(__dirname, 'yolo_detection_service.py')
  * @returns {Promise<Object>} Detection results with vehicles array
  */
 export async function analyzeImageWithAI(imageBase64 = null, imagePath = null) {
-  return new Promise(async (resolve, reject) => {
-    if (!imageBase64 && !imagePath) {
-      return reject(new Error('Either imageBase64 or imagePath must be provided'));
-    }
+  console.log('🤖 AI detection disabled - using OCR only');
+  return {
+    vehicles: [],
+    error: 'AI detection disabled - using OCR only',
+    timestamp: new Date().toISOString()
+  };
+}
 
     // Check if Python service exists
     if (!fs.existsSync(AI_SERVICE_PATH)) {
@@ -101,14 +104,12 @@ export async function analyzeImageWithAI(imageBase64 = null, imagePath = null) {
     });
     
     console.log(`🤖 Starting AI analysis with ${pythonCmd}...`);
-    
+
     // Spawn Python process
     const pythonProcess = spawn(pythonCmd, [AI_SERVICE_PATH, ...args], {
       cwd: __dirname,
       env: {
         ...process.env,
-        // Use environment variable if set, otherwise use fallback (matches Python service)
-        GEMINI_API_KEY: process.env.GEMINI_API_KEY,
         PYTHONUNBUFFERED: '1' // Ensure real-time output
       }
     });
@@ -222,14 +223,14 @@ Full error: ${stderr.substring(0, 300)}`;
 }
 
 /**
- * Plate recognition via PlateRecognizer Snapshot API (no local OCR/Gemini).
+ * Plate recognition via PlateRecognizer Snapshot Cloud (no local OCR/Gemini).
  * @param {string} imageBase64 - Base64 encoded image data (raw or data URL)
  * @returns {Promise<{ plates: Array<{ plateNumber: string, confidence: number, bbox: number[] }>, error: string | null }>}
  */
 export async function runOCROnly(imageBase64) {
-  if (!imageBase64) {
-    return { plates: [], error: 'imageBase64 required' };
-  }
+  console.log('🤖 OCR detection disabled - no plates detected');
+  return { plates: [], error: 'OCR detection disabled' };
+}
 
   const token = process.env.PLATERECOGNIZER_TOKEN || process.env.PLATE_RECOGNIZER_TOKEN;
   const endpoint =
@@ -312,238 +313,17 @@ export async function runOCROnly(imageBase64) {
  * @returns {Promise<{ vehicles: Array, plates: Array }>}
  */
 export async function runYoloDetection(imageBase64) {
-  return new Promise(async (resolve) => {
-    if (!imageBase64) {
-      return resolve({ vehicles: [], plates: [], error: 'imageBase64 required' });
-    }
-
-    if (!fs.existsSync(YOLO_DETECTION_SERVICE_PATH)) {
-      console.warn('⚠️  yolo_detection_service.py not found, returning empty detections');
-      return resolve({ vehicles: [], plates: [], error: 'YOLO detection service not available' });
-    }
-
-    const raw = imageBase64.includes(',') ? imageBase64.split(',')[1] : imageBase64;
-    let tempBase64File = null;
-    const YOLO_TIMEOUT_MS = 60000; // 60s - model load + inference can take 30s+ on first run
-    let timeoutId = null;
-    let processCompleted = false;
-
-    const cleanup = async () => {
-      if (tempBase64File) {
-        try { await fs.remove(tempBase64File); } catch (e) { /* ignore */ }
-      }
-      if (timeoutId) clearTimeout(timeoutId);
-    };
-
-    try {
-      tempBase64File = join(tmpdir(), `yolo-base64-${randomUUID()}.txt`);
-      await fs.writeFile(tempBase64File, raw, 'utf8');
-    } catch (e) {
-      return resolve({ vehicles: [], plates: [], error: e.message });
-    }
-
-    const VEHICLE_MODEL_PATH = join(__dirname, 'models', 'weights', 'yolov8n.pt');
-    if (!fs.existsSync(VEHICLE_MODEL_PATH)) {
-      console.warn(`[YOLO] Vehicle model weights not found at ${VEHICLE_MODEL_PATH}. Python may fall back to default weights.`);
-    }
-
-    const pythonCmd = getPythonExecutable();
-    console.log('[YOLO] Spawning Python process...');
-    const pythonProcess = spawn(pythonCmd, [YOLO_DETECTION_SERVICE_PATH, '--base64-file', tempBase64File], {
-      cwd: __dirname,
-      env: {
-        ...process.env,
-        PYTHONUNBUFFERED: '1',
-        YOLO_VEHICLE_WEIGHTS: VEHICLE_MODEL_PATH,
-      },
-    });
-
-    let stdout = '';
-    let stderr = '';
-
-    timeoutId = setTimeout(async () => {
-      if (!processCompleted) {
-        processCompleted = true;
-        console.warn('[YOLO] Timeout after 60s, killing Python process');
-        try { pythonProcess.kill('SIGTERM'); } catch (_) {}
-        await cleanup();
-        resolve({ vehicles: [], plates: [], error: 'YOLO detection timeout' });
-      }
-    }, YOLO_TIMEOUT_MS);
-
-    pythonProcess.stdout.on('data', (data) => { stdout += data.toString(); });
-    pythonProcess.stderr.on('data', (data) => {
-      stderr += data.toString();
-      // Forward stderr to console so plate logs appear in server output
-      const str = data.toString().trim();
-      if (str) console.log(str);
-    });
-
-    pythonProcess.on('close', async (code) => {
-      if (processCompleted) return;
-      processCompleted = true;
-      await cleanup();
-
-      try {
-        const out = stdout.trim();
-        if (!out) {
-          console.warn('[YOLO] Empty stdout from yolo_detection_service.py', stderr.slice(0, 200));
-          return resolve({
-            vehicles: [],
-            plates: [],
-            error: stderr.slice(0, 200) || 'Empty YOLO output',
-          });
-        }
-        const result = JSON.parse(out);
-        const vehicles = Array.isArray(result.vehicles) ? result.vehicles : [];
-        const plates = Array.isArray(result.plates) ? result.plates : [];
-        console.log(`[YOLO] Python finished: ${vehicles.length} vehicles, ${plates.length} plates`);
-        resolve({
-          vehicles,
-          plates,
-          error: result.error || null,
-        });
-      } catch (e) {
-        console.warn('[YOLO] Parse error:', e.message, 'stdout preview:', stdout.slice(0, 300));
-        resolve({ vehicles: [], plates: [], error: e.message });
-      }
-    });
-
-    pythonProcess.on('error', async (err) => {
-      if (!processCompleted) {
-        processCompleted = true;
-        await cleanup();
-        resolve({ vehicles: [], plates: [], error: err.message });
-      }
-    });
-  });
+  console.log('🤖 YOLO detection disabled - no vehicles detected');
+  return { vehicles: [], plates: [], error: 'YOLO detection disabled' };
 }
 
 export async function analyzeVideoStream(videoStreamUrl, cameraConfig) {
-  return new Promise(async (resolve, reject) => {
-    // Check if Python service exists
-    if (!fs.existsSync(VIDEO_ANALYSIS_SERVICE_PATH)) {
-      console.warn('⚠️  Video analysis service not found, skipping');
-      return resolve({
-        detections: [],
-        error: 'Video analysis service not available',
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    const args = ['--stream-url', videoStreamUrl, '--config', JSON.stringify(cameraConfig)];
-    const AI_PROCESS_TIMEOUT = 300000; // 5 minutes timeout for video analysis
-    let timeoutId = null;
-    let processCompleted = false;
-
-    const cleanup = () => {
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
-    };
-
-    const pythonCmd = getPythonExecutable();
-
-    console.log(`📹 Starting video analysis with ${pythonCmd}...`);
-    
-    // Spawn Python process
-    const pythonProcess = spawn(pythonCmd, [VIDEO_ANALYSIS_SERVICE_PATH, ...args], {
-      cwd: __dirname,
-      env: {
-        ...process.env,
-        PYTHONUNBUFFERED: '1' // Ensure real-time output
-      }
-    });
-
-    let stdout = '';
-    let stderr = '';
-
-    // Set timeout for the process
-    timeoutId = setTimeout(async () => {
-      if (!processCompleted) {
-        processCompleted = true;
-        console.error('⏱️  Video analysis timeout after 5 minutes');
-        
-        try {
-          pythonProcess.kill('SIGTERM');
-          setTimeout(() => {
-            if (!pythonProcess.killed) {
-              pythonProcess.kill('SIGKILL');
-            }
-          }, 5000);
-        } catch (killError) {
-          console.error('Error killing Python process:', killError);
-        }
-        
-        cleanup();
-        resolve({
-          detections: [],
-          error: 'Video analysis timed out after 5 minutes.',
-          timestamp: new Date().toISOString()
-        });
-      }
-    }, AI_PROCESS_TIMEOUT);
-
-    pythonProcess.stdout.on('data', (data) => {
-      stdout += data.toString();
-      console.log('📹 Video Analysis stdout:', data.toString().substring(0, 100));
-    });
-
-    pythonProcess.stderr.on('data', (data) => {
-      stderr += data.toString();
-      console.error('⚠️  Video Analysis stderr:', data.toString().substring(0, 200));
-    });
-
-    pythonProcess.on('close', async (code) => {
-      if (processCompleted) return;
-      processCompleted = true;
-      
-      cleanup();
-
-      if (code !== 0) {
-        console.error(`❌ Video Analysis Error (exit code ${code}):`, stderr);
-        return resolve({
-          detections: [],
-          error: stderr.substring(0, 500),
-          timestamp: new Date().toISOString()
-        });
-      }
-
-      try {
-        if (!stdout || stdout.trim() === '') {
-          throw new Error('Empty response from video analysis service');
-        }
-        const result = JSON.parse(stdout);
-        console.log('✅ Video analysis completed successfully');
-        resolve(result);
-      } catch (parseError) {
-        console.error('❌ Failed to parse video analysis service output:', parseError);
-        console.error('Output was:', stdout.substring(0, 500));
-        resolve({
-          detections: [],
-          error: `Failed to parse video analysis service response: ${parseError.message}`,
-          timestamp: new Date().toISOString()
-        });
-      }
-    });
-
-    pythonProcess.on('error', async (error) => {
-      if (processCompleted) return;
-      processCompleted = true;
-      
-      cleanup();
-
-      console.error('❌ Failed to spawn Python process for video analysis:', error);
-      if (error.code === 'ENOENT') {
-        console.warn('⚠️  Python3 not found. Install Python 3.9+ to enable video analysis.');
-      }
-      resolve({
-        detections: [],
-        error: `Python process error: ${error.message}`,
-        timestamp: new Date().toISOString()
-      });
-    });
-  });
+  console.log('📹 Video analysis disabled - no detections');
+  return {
+    detections: [],
+    error: 'Video analysis disabled',
+    timestamp: new Date().toISOString()
+  };
 }
 
 /**

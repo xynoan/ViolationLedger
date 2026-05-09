@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 ViolationLedger - AI Detection Service
-Uses Google Gemini 2.5 Flash for ILLEGAL PARKING VIOLATION detection on streets/roadways
+Uses OCR (EasyOCR/Tesseract) for license plate detection
 
 Context: Camera mounted on electricity post monitoring a street/roadway no-parking zone.
 All vehicles detected on the street are considered illegally parked violations.
@@ -13,27 +13,21 @@ import json
 import base64
 import argparse
 import re
+import time
 from typing import Dict, List, Optional, Tuple
 from pathlib import Path
 from datetime import datetime, timezone
 
 try:
-    import google.generativeai as genai
-    from PIL import Image
-    import io
     import cv2
     import numpy as np
     import pytesseract
     import easyocr
 except ImportError as e:
-    print(f"Error: Missing required package. Install with: pip install google-generativeai pillow opencv-python numpy pytesseract easyocr", file=sys.stderr)
+    print(f"Error: Missing required package. Install with: pip install opencv-python numpy pytesseract easyocr", file=sys.stderr)
     sys.exit(1)
 
 # --- Constants ---
-# Gemini API Configuration
-# Use environment variable for API key, fallback to default if not set
-GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', 'YOUR_GEMINI_API_KEY')
-GEMINI_MODEL = 'gemini-1.5-flash'  # Using a more advanced model for video analysis
 CONFIDENCE_THRESHOLD = 0.5  # Confidence threshold for YOLO object detection
 NMS_THRESHOLD = 0.4  # Non-Maximum Suppression threshold
 STATIONARY_IOU_THRESHOLD = 0.8  # IOU threshold to consider a vehicle stationary
@@ -43,6 +37,10 @@ VIDEO_STREAM_CAPTURE_INTERVAL = 2  # seconds
 STATIONARY_THRESHOLD_SECONDS = 3  # Lowered for faster detection with YOLO
 ROI_Y_START = 0.4  # Start ROI from 40% down the frame
 ROI_Y_END = 0.9    # End ROI at 90% down the frame
+
+# Frame rate control for real-time processing
+FRAME_RATE = 5  # Process 5 FPS for real-time, minimal delay
+FRAME_INTERVAL = 1.0 / FRAME_RATE  # 0.2 seconds between frames
 
 # YOLOv3-tiny Configuration
 YOLO_DIR = Path(__file__).parent / 'yolo'
@@ -68,25 +66,7 @@ VEHICLE_CLASSES = ['car', 'truck', 'bus', 'motorcycle']
 
 
 
-def get_gemini_model():
-    """
-    Get or create Gemini model instance with proper error handling.
-    This follows the pattern from main.py for better error handling.
-    """
-    if genai is None:
-        raise RuntimeError("google-generativeai is not installed. Install with: pip install google-generativeai")
-    
-    if not GEMINI_API_KEY:
-        raise RuntimeError("GEMINI_API_KEY is not set in environment")
-    
-    try:
-        genai.configure(api_key=GEMINI_API_KEY)
-        return genai.GenerativeModel(GEMINI_MODEL)
-    except Exception as e:
-        raise RuntimeError(f"Failed to initialize Gemini model: {str(e)}")
-
-
-def load_image_from_base64(base64_string: str) -> Image.Image:
+def load_image_from_base64(base64_string: str) -> np.ndarray:
     """Load image from base64 string."""
     try:
         # Remove data URL prefix if present
@@ -149,33 +129,15 @@ def run_local_ocr(image: np.ndarray) -> Optional[str]:
 
 
 
-def analyze_image_with_gemini(image: Image.Image, ocr_plate: Optional[str] = None) -> Dict:
+ def analyze_image_with_gemini(image: Image.Image, ocr_plate: Optional[str] = None) -> Dict:
     """
-    Analyze a single high-resolution image with Gemini, optionally with a pre-detected plate.
+    Analyze a single high-resolution image using OCR.
+    Returns empty vehicles array as Gemini is disabled.
     """
-    # This prompt can be simplified as the heavy lifting is done by the video analysis logic
-    prompt = f"""
-    You are a vehicle detection system. Analyze the image and confirm if there is a parked vehicle.
-    If a vehicle is present, identify its type (car, motorcycle, truck, bus) and, if possible,
-    its license plate.
-
-    A local OCR system suggested the plate might be: {ocr_plate if ocr_plate else "Not available"}.
-    Please verify this or provide the correct plate.
-
-    Return JSON with a single vehicle object if one is confirmed.
-    """
-    # This function is now a placeholder. The core logic is in analyze_video_stream.
-    # In a real scenario, you would call the Gemini API here as in the original script.
-    
-    # For demonstration, we'll simulate a Gemini response.
+    print("[Video Analysis] OCR-only mode active", file=sys.stderr)
     return {
-        "vehicles": [{
-            "plateNumber": ocr_plate or "FROM_GEMINI",
-            "confidence": 0.9,
-            "bbox": [0.1, 0.1, 0.8, 0.8],
-            "class_name": "car",
-            "plateVisible": bool(ocr_plate)
-        }]
+        "vehicles": [],
+        "timestamp": datetime.now(timezone.utc).isoformat()
     }
 
 def calculate_iou(box1, box2):
@@ -211,7 +173,8 @@ def analyze_video_stream(stream_url: str, config: Dict) -> Dict:
     detections = []
     tracked_vehicles = {}  # Stores info about detected vehicles
     last_capture_time = None
-    
+    last_time = time.time()
+
     try:
         cap = cv2.VideoCapture(stream_url)
         if not cap.isOpened():
@@ -221,7 +184,16 @@ def analyze_video_stream(stream_url: str, config: Dict) -> Dict:
             ret, frame = cap.read()
             if not ret:
                 break
-            
+
+            # Apply frame rate control for real-time processing
+            current_time = time.time()
+            time_elapsed = current_time - last_time
+
+            if time_elapsed < FRAME_INTERVAL:
+                time.sleep(FRAME_INTERVAL - time_elapsed)
+
+            last_time = current_time
+
             height, width, _ = frame.shape
 
             # 1. YOLO Vehicle Detection
@@ -285,27 +257,25 @@ def analyze_video_stream(stream_url: str, config: Dict) -> Dict:
                         plate_number = run_local_ocr(high_res_image)
                         if plate_number:
                             print(f"Local OCR detected plate: {plate_number}")
-                        
-                        # 4. Analyze with Gemini
-                        pil_image = Image.fromarray(cv2.cvtColor(high_res_image, cv2.COLOR_BGR2RGB))
-                        gemini_result = analyze_image_with_gemini(pil_image, plate_number)
 
-                        if gemini_result and gemini_result.get("vehicles"):
-                            for vehicle in gemini_result["vehicles"]:
-                                timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-                                img_path = f"captured_images/capture_{vehicle_id}_{timestamp_str}.jpg"
-                                cv2.imwrite(img_path, high_res_image)
+                        # 4. Skip Gemini analysis - using OCR only
+                        print(f"[Video Analysis] Skipping Gemini analysis - using OCR only")
 
-                                vehicle_data = {
-                                    "plateNumber": vehicle.get("plateNumber", plate_number or "UNKNOWN"),
-                                    "confidence": vehicle.get("confidence", 0.8),
-                                    "bbox": vehicle_info['box'],
-                                    "class_name": vehicle_info['class_name'],
-                                    "plateVisible": bool(plate_number),
-                                    "imageUrl": img_path
-                                }
-                                detections.append(vehicle_data)
-                                print(f"Violation detected: {vehicle_data}")
+                        # Create detection from OCR result
+                        timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        img_path = f"captured_images/capture_{vehicle_id}_{timestamp_str}.jpg"
+                        cv2.imwrite(img_path, high_res_image)
+
+                        vehicle_data = {
+                            "plateNumber": plate_number or "UNKNOWN",
+                            "confidence": 0.8,
+                            "bbox": vehicle_info['box'],
+                            "class_name": vehicle_info['class_name'],
+                            "plateVisible": bool(plate_number),
+                            "imageUrl": img_path
+                        }
+                        detections.append(vehicle_data)
+                        print(f"Violation detected: {vehicle_data}")
                         
                         last_capture_time = datetime.now()
                         # Remove vehicle from tracking to avoid immediate re-triggering
