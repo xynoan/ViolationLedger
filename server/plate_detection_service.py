@@ -15,11 +15,10 @@ from PIL import Image
 import io
 
 try:
-    from transformers import YOLOImageDetPipeline
-    import torch
+    from transformers import pipeline, ObjectDetectionPipeline
 except ImportError as e:
     print(f"[Plate Detection] Missing required package: {e}", file=sys.stderr)
-    print(f"[Plate Detection] Install with: pip install transformers torch torchvision", file=sys.stderr)
+    print(f"[Plate Detection] Install with: pip install transformers", file=sys.stderr)
     sys.exit(1)
 
 # Configuration
@@ -30,7 +29,7 @@ USE_GPU = os.getenv("PLATE_DETECTION_USE_GPU", "true").lower() not in ("0", "fal
 # Global model instance
 detector = None
 
-def load_plate_detector() -> "YOLOImageDetPipeline":
+def load_plate_detector() -> ObjectDetectionPipeline:
     """Load YOLOv11 model from Hugging Face (lazy loading)"""
     global detector
 
@@ -39,7 +38,7 @@ def load_plate_detector() -> "YOLOImageDetPipeline":
         print(f"[Plate Detection] Using GPU: {USE_GPU}", file=sys.stderr)
 
         try:
-            detector = YOLOImageDetPipeline.from_pretrained(MODEL_ID)
+            detector = pipeline("object-detection", model=MODEL_ID, trust_remote_code=True)
             if USE_GPU:
                 detector.to("cuda")
                 print("[Plate Detection] Model loaded on GPU", file=sys.stderr)
@@ -154,18 +153,18 @@ def detect_plates(image: np.ndarray, return_crops: bool = True) -> List[Dict]:
             pil_image = image
 
         # Run detection with YOLOv11
-        results = detector(pil_image, threshold=CONFIDENCE_THRESHOLD)
+        results = detector(pil_image, target_sizes=None)
 
         plate_detections = []
 
         for result in results:
-            if result['label'] == 'license plate' and result['score'] >= CONFIDENCE_THRESHOLD:
+            if result.get('label') == 'license plate' and result.get('score', 0) >= CONFIDENCE_THRESHOLD:
                 # Extract detection info
                 detection = {
-                    'text': result['text'] or '',
-                    'score': float(result['score']),
-                    'bbox': result['box'],
-                    'class_name': result['label']
+                    'text': result.get('text') or '',
+                    'score': float(result.get('score', 0)),
+                    'bbox': result.get('box', {}),
+                    'class_name': result.get('label')
                 }
 
                 # Crop plate region for OCR
