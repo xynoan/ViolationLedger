@@ -19,7 +19,7 @@ const YOLO_DETECTION_SERVICE_PATH = join(__dirname, 'yolo_detection_service.py')
  * @param {string} imagePath - Optional file path to image (alternative to base64)
  * @returns {Promise<Object>} Detection results with vehicles array
  */
-export async function analyzeImageWithAI(imageBase64 = null, imagePath = null) {
+export async function analyzeImageWithAI(imageBase64 = null, imagePath = null, resolve) {
   console.log('🤖 AI detection disabled - using OCR only');
   return {
     vehicles: [],
