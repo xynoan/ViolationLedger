@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Plate Detection Service using YOLOv11 from Hugging Face
+Plate Detection Service using YOLOv11 from Ultralytics
 Provides license plate detection and cropped images for OCR
 """
 
@@ -11,26 +11,32 @@ import cv2
 import numpy as np
 from typing import Dict, List, Tuple, Optional
 from pathlib import Path
-from PIL import Image
-import io
+
+# PyTorch 2.6+ defaults to weights_only=True; Ultralytics YOLO .pt files require weights_only=False
+import torch
+_orig_load = torch.load
+def _torch_load(*args, **kwargs):
+    kwargs.setdefault("weights_only", False)
+    return _orig_load(*args, **kwargs)
+torch.load = _torch_load
 
 try:
-    from transformers import pipeline, ObjectDetectionPipeline
+    from ultralytics import YOLO
 except ImportError as e:
     print(f"[Plate Detection] Missing required package: {e}", file=sys.stderr)
-    print(f"[Plate Detection] Install with: pip install transformers", file=sys.stderr)
+    print(f"[Plate Detection] Install with: pip install ultralytics", file=sys.stderr)
     sys.exit(1)
 
 # Configuration
-MODEL_ID = os.getenv("PLATE_DETECTION_MODEL", "morsetechlab/yolov11-license-plate-detection")
+MODEL_ID = os.getenv("PLATE_DETECTION_MODEL", "yolo26n.pt")
 CONFIDENCE_THRESHOLD = float(os.getenv("PLATE_DETECTION_CONFIDENCE", "0.5"))
 USE_GPU = os.getenv("PLATE_DETECTION_USE_GPU", "true").lower() not in ("0", "false", "no")
 
 # Global model instance
 detector = None
 
-def load_plate_detector() -> ObjectDetectionPipeline:
-    """Load YOLOv11 model from Hugging Face (lazy loading)"""
+def load_plate_detector() -> YOLO:
+    """Load YOLOv11 model from Ultralytics (lazy loading)"""
     global detector
 
     if detector is None:
@@ -38,10 +44,10 @@ def load_plate_detector() -> ObjectDetectionPipeline:
         print(f"[Plate Detection] Using GPU: {USE_GPU}", file=sys.stderr)
 
         try:
-            detector = pipeline("object-detection", model=MODEL_ID, trust_remote_code=True)
+            detector = YOLO(MODEL_ID)
             if USE_GPU:
-                detector.to("cuda")
-                print("[Plate Detection] Model loaded on GPU", file=sys.stderr)
+                device = "cuda" if torch.cuda.is_available() else "cpu"
+                print(f"[Plate Detection] Model loaded on {device}", file=sys.stderr)
             else:
                 print("[Plate Detection] Model loaded on CPU", file=sys.stderr)
             print("[Plate Detection] Model loaded successfully", file=sys.stderr)
@@ -143,44 +149,52 @@ def detect_plates(image: np.ndarray, return_crops: bool = True) -> List[Dict]:
     try:
         detector = load_plate_detector()
 
-        # Convert OpenCV image to PIL
-        if isinstance(image, np.ndarray):
-            if len(image.shape) == 3 and image.shape[2] == 3:
-                pil_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
-            else:
-                pil_image = Image.fromarray(image)
-        else:
-            pil_image = image
-
-        # Run detection with YOLOv11
-        results = detector(pil_image, target_sizes=None)
+        # Redirect Ultralytics stdout spam to stderr
+        old_stdout = sys.stdout
+        sys.stdout = sys.stderr
+        try:
+            # Run detection with YOLOv11
+            results = detector(image, conf=CONFIDENCE_THRESHOLD, verbose=False)
+        finally:
+            sys.stdout = old_stdout
 
         plate_detections = []
 
         for result in results:
-            if result.get('label') == 'license plate' and result.get('score', 0) >= CONFIDENCE_THRESHOLD:
-                # Extract detection info
-                detection = {
-                    'text': result.get('text') or '',
-                    'score': float(result.get('score', 0)),
-                    'bbox': result.get('box', {}),
-                    'class_name': result.get('label')
-                }
+            if result.boxes is not None and len(result.boxes) > 0:
+                for box in result.boxes:
+                    if box.conf >= CONFIDENCE_THRESHOLD:
+                        # Get box coordinates
+                        xyxy = box.xyxy[0].cpu().numpy() if hasattr(box.xyxy, 'cpu') else np.array(box.xyxy)
+                        x1, y1, x2, y2 = map(float, xyxy)
+                        conf = float(box.conf.cpu().numpy()) if hasattr(box.conf, 'cpu') else float(box.conf)
+                        cls_id = int(box.cls.cpu().numpy()) if hasattr(box.cls, 'cpu') else int(box.cls)
+                        
+                        # Get class name
+                        class_name = result.names.get(cls_id, 'license plate')
+                        
+                        # Extract detection info
+                        detection = {
+                            'text': result.boxes.data.cpu().numpy().tolist()[0][4].astype(str) if len(result.boxes.data) > 4 else '',
+                            'score': conf,
+                            'bbox': [x1, y1, x2, y2],
+                            'class_name': class_name
+                        }
 
-                # Crop plate region for OCR
-                if return_crops:
-                    crop = crop_plate_region(image, result['box'])
+                        # Crop plate region for OCR
+                        if return_crops:
+                            crop = crop_plate_region(image, [x1, y1, x2, y2])
 
-                    if crop is not None:
-                        # Preprocess for OCR
-                        preprocessed, metadata = preprocess_plate_for_ocr(crop)
+                            if crop is not None:
+                                # Preprocess for OCR
+                                preprocessed, metadata = preprocess_plate_for_ocr(crop)
 
-                        detection['crop'] = preprocessed
-                        detection['preprocessing'] = metadata
-                        detection['original_crop_size'] = crop.shape[:2]
-                        detection['preprocessed_size'] = preprocessed.shape[:2]
+                                detection['crop'] = preprocessed
+                                detection['preprocessing'] = metadata
+                                detection['original_crop_size'] = crop.shape[:2]
+                                detection['preprocessed_size'] = preprocessed.shape[:2]
 
-                plate_detections.append(detection)
+                        plate_detections.append(detection)
 
         return plate_detections
 

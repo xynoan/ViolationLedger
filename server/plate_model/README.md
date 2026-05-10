@@ -11,13 +11,12 @@ Set these environment variables:
 
 ## Model Details
 
-**Model:** morsetechlab/yolov11-license-plate-detection
+**Model:** yolo26n.pt (Ultralytics default model)
 
-- **Type:** YOLOv11 (Ultralytics)
-- **Accuracy:** Precision 0.9893, Recall 0.9508, mAP@50 0.9813
-- **Input Size:** 640x640
-- **License:** AGPLv3 (requires open sourcing code if used commercially)
-- **Downloads:** 25,065/month
+- **Type:** YOLO26n (Ultralytics)
+- **Input Size:** Auto-detected
+- **License:** AGPL-3.0 (requires open sourcing code if used commercially)
+- **Source:** https://github.com/ultralytics/ultralytics
 
 ## OCR Pipeline
 
@@ -31,15 +30,15 @@ Set these environment variables:
 
 ```bash
 # Add to requirements.txt:
-pip install transformers torch torchvision
+pip install ultralytics torch
 
 # Or install from command line:
-pip install transformers torch torchvision
+pip install ultralytics torch
 ```
 
 ## Performance
 
-### YOLOv11 Inference Speed:
+### YOLO26n Inference Speed:
 - **GPU (CUDA):** ~10-15 FPS
 - **CPU:** ~3-5 FPS
 
@@ -79,7 +78,7 @@ python3 plate_detection_service.py --base64-file /path/to/base64.txt
 The service is automatically used in `detection_worker.py`:
 
 1. Worker captures frames from RTSP streams
-2. Runs YOLOv11 to detect plates
+2. Runs YOLO26n to detect plates
 3. Crops detected plate regions
 4. Runs OCR on cropped plates
 5. Returns best result with confidence scores
