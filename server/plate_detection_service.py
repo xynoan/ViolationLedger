@@ -40,7 +40,7 @@ def load_plate_detector() -> YOLO:
     global detector
 
     if detector is None:
-        print(f"[Plate Detection] Loading YOLOv11 model: {MODEL_ID}...")
+        print(f"[Plate Detection] Loading YOLOv11 model: {MODEL_ID}...", file=sys.stderr)
         print(f"[Plate Detection] Using GPU: {USE_GPU}", file=sys.stderr)
 
         try:
@@ -167,8 +167,8 @@ def detect_plates(image: np.ndarray, return_crops: bool = True) -> List[Dict]:
                         # Get box coordinates
                         xyxy = box.xyxy[0].cpu().numpy() if hasattr(box.xyxy, 'cpu') else np.array(box.xyxy)
                         x1, y1, x2, y2 = map(float, xyxy)
-                        conf = float(box.conf.cpu().numpy()) if hasattr(box.conf, 'cpu') else float(box.conf)
-                        cls_id = int(box.cls.cpu().numpy()) if hasattr(box.cls, 'cpu') else int(box.cls)
+                        conf = float(box.conf.cpu().numpy().item()) if hasattr(box.conf, 'cpu') else float(box.conf.item())
+                        cls_id = int(box.cls.cpu().numpy().item()) if hasattr(box.cls, 'cpu') else int(box.cls.item())
                         
                         # Get class name
                         class_name = result.names.get(cls_id, 'license plate')
