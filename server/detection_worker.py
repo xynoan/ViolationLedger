@@ -13,6 +13,8 @@ import os
 import sys
 import time
 
+import requests
+
 import cv2
 
 from yolo_detection_service import load_models, detect_frame
